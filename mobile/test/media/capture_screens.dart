@@ -44,8 +44,16 @@ const double pixelRatio = 3;
 
 const ValueKey<String> _captureKey = ValueKey('capture');
 
-/// A fixed instant, so a re-run does not rewrite every file with a new clock.
-final DateTime capturedAt = DateTime.utc(2026, 8, 26, 21, 14);
+/// The seed's clock.
+///
+/// Real "now" rather than a fixed instant: the seeded request carries a
+/// one-minute validity window, and a pinned timestamp would put every capture
+/// past it — the history would then show an expired request the screenshot
+/// claims was approved.
+final DateTime capturedAt = DateTime.now().toUtc();
+
+// ignore: avoid_print
+void _log(String message) => print('[capture] $message');
 
 void main() {
   setUpAll(_loadRobotoFromSdk);
@@ -118,12 +126,18 @@ void main() {
     );
     await _shoot(tester, 'flow/2-detail');
 
-    final approving = scene.controller.approve('mock-request-1');
+    var finished = false;
+    final approving = scene.controller
+        .approve('mock-request-1')
+        .whenComplete(() => finished = true);
     // FakePhoneAuthenticator holds each phase for 150ms.
     await tester.pump(const Duration(milliseconds: 60));
     await _shoot(tester, 'flow/3-biometric');
     await tester.pump(const Duration(milliseconds: 160));
     await _shoot(tester, 'flow/4-signing');
+    for (var attempt = 0; attempt < 40 && !finished; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     await approving;
     await tester.pumpAndSettle();
     scene.dispose();
@@ -148,7 +162,8 @@ class _Scene {
   AppController get controller =>
       container.read(appControllerProvider.notifier);
 
-  void dispose() => container.dispose();
+  /// The container outlives each capture; the test tears it down.
+  void dispose() {}
 }
 
 /// Pumps [child] inside the real app shell, seeded like the dev flavour.
@@ -161,6 +176,7 @@ Future<_Scene> _open(
   tester.view.devicePixelRatio = pixelRatio;
   addTearDown(tester.view.reset);
 
+  _log('opening');
   final container = ProviderContainer(
     overrides: [
       appConfigProvider.overrideWithValue(
@@ -183,6 +199,10 @@ Future<_Scene> _open(
     ),
   );
   await tester.pumpAndSettle();
+  _log('opened');
+  // Torn down with the test rather than between captures: unmounting a scope
+  // whose container is already gone throws on the way out.
+  addTearDown(container.dispose);
   return _Scene(container);
 }
 
@@ -205,6 +225,7 @@ Future<void> _shoot(WidgetTester tester, String name) async {
   final file = File('$outputDirectory/$name.png');
   file.parent.createSync(recursive: true);
   file.writeAsBytesSync(bytes!.buffer.asUint8List());
+  _log('wrote $name');
 }
 
 /// Produces a history by actually approving and denying requests.
@@ -214,16 +235,7 @@ Future<void> _shoot(WidgetTester tester, String name) async {
 Future<void> _buildAuditTrail(WidgetTester tester, _Scene scene) async {
   final controller = scene.controller;
 
-  // Started, then settled, then awaited. The fake authenticator sleeps between
-  // phases, and those timers only fire while the test pumps — awaiting first
-  // would wait forever on a clock nothing is advancing.
-  Future<void> approve(String id) async {
-    final approving = controller.approve(id);
-    await tester.pumpAndSettle();
-    await approving;
-  }
-
-  await approve('mock-request-1');
+  await _approve(tester, controller, 'mock-request-1');
 
   controller.receive(
     _request(
@@ -233,7 +245,7 @@ Future<void> _buildAuditTrail(WidgetTester tester, _Scene scene) async {
       resource: 'Desktop-NixOS',
     ),
   );
-  await approve('r-2');
+  await _approve(tester, controller, 'r-2');
 
   controller.receive(
     _request(
@@ -246,6 +258,29 @@ Future<void> _buildAuditTrail(WidgetTester tester, _Scene scene) async {
     ),
   );
   controller.deny('r-3');
+  await tester.pumpAndSettle();
+}
+
+/// Runs an approval to completion, pumping the clock along as it goes.
+///
+/// The authenticator sleeps between phases. Those are fake timers: they only
+/// fire while the test pumps, so awaiting the future first would wait forever
+/// on a clock nothing is advancing — and `pumpAndSettle` stops as soon as no
+/// frame is scheduled, which is well before the sleeps are over.
+Future<void> _approve(
+  WidgetTester tester,
+  AppController controller,
+  String requestId,
+) async {
+  var finished = false;
+  final approving = controller
+      .approve(requestId)
+      .whenComplete(() => finished = true);
+
+  for (var attempt = 0; attempt < 40 && !finished; attempt++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  await approving;
   await tester.pumpAndSettle();
 }
 
@@ -302,11 +337,20 @@ Future<void> _loadRobotoFromSdk() async {
     throw StateError('no material fonts at ${fonts.path}');
   }
 
-  final loader = FontLoader('Roboto');
+  final roboto = FontLoader('Roboto');
   for (final weight in const ['regular', 'medium', 'bold']) {
     final file = File('${fonts.path}/roboto-$weight.ttf');
     if (!file.existsSync()) continue;
-    loader.addFont(Future.value(ByteData.sublistView(file.readAsBytesSync())));
+    roboto.addFont(Future.value(ByteData.sublistView(file.readAsBytesSync())));
   }
-  await loader.load();
+  await roboto.load();
+
+  // Without this every `Icon` comes out as an empty square, which is the most
+  // obviously broken thing a screenshot can show.
+  final icons = File('${fonts.path}/materialicons-regular.otf');
+  if (icons.existsSync()) {
+    final loader = FontLoader('MaterialIcons')
+      ..addFont(Future.value(ByteData.sublistView(icons.readAsBytesSync())));
+    await loader.load();
+  }
 }

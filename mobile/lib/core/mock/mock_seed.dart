@@ -29,7 +29,7 @@ AppSeed buildMockSeed([DateTime? at]) {
         verifierName: 'Desktop-Casa',
         credentialId: 'desktop-casa-login-v1',
         challenge: Uint8List.fromList(List<int>.generate(32, (index) => index)),
-        origin: 'Bluetooth LE • pareado',
+        origin: 'QrNetworkTransport • pareado',
         service: 'SSH',
         action: 'Iniciar sessão',
         resource: 'prod-server',

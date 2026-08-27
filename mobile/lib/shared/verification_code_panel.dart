@@ -26,6 +26,10 @@ class VerificationCodePanel extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
         child: Column(
+          // Hugs its content. Without this the card stretches to whatever
+          // height it is given, which is the full screen anywhere outside a
+          // scroll view.
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               'Confira o código em $verifierId',

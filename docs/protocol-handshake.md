@@ -357,19 +357,33 @@ The full ServerHello and ClientHello encodings are pinned in
 `desktop/crates/phone-auth-session/src/handshake.rs`, in the `wire_vectors`
 test module.
 
-## What the mobile side has to build
+## The mobile side
 
-1. **The client half of the handshake.** `ClientHandshake::respond` in
-   `handshake.rs` is the reference; it is under 80 lines.
-2. **A QR scanner** that parses the bootstrap and rejects malformed ones.
-3. **The verification code screen**, with the code from the exporter and an
-   explicit confirm step. Not optional: without it, anyone who photographs the
-   code can pair.
-4. **Enrolment**, reporting `key_kind` truthfully from
-   `KeyInfo.isInsideSecureHardware` and `securityLevel`.
-5. **A second keystore alias** for disk-unlock credentials, if that flow is
-   wanted. The existing `bioauth_authorization_v1` must not be reused.
-6. **A transport.** BLE is the roadmap's phase 1A; the desktop's
-   `QrNetworkTransport` already works over TCP and is the easier first target.
+| | Where |
+|---|---|
+| Client half of the handshake | `mobile/lib/core/transport/authenticated_session_establisher.dart` |
+| Bootstrap parsing | `mobile/lib/core/transport/pairing_bootstrap.dart` |
+| QR scanner | `mobile/lib/shared/pairing_qr_scanner.dart` |
+| Verification code screen | `mobile/lib/shared/verification_code_panel.dart` |
+| Enrolment | `mobile/lib/core/protocol/enrolment.dart` |
+| Transport | `mobile/lib/core/transport/qr_network_transport.dart` |
 
-The desktop side of all six exists and is tested. See `docs/desktop.md`.
+`mobile/test/handshake_vectors_test.dart` asserts every value above, and
+`mobile/test/pairing_flow_test.dart` runs a pairing and an authorization over a
+real socket against a desktop written from this document.
+
+Still open:
+
+- **A second keystore alias** for disk-unlock credentials. The existing
+  `bioauth_authorization_v1` must not be reused: `purpose` enforces key
+  separation, so a phone that wants both must enrol two credentials from two
+  distinct aliases.
+- **BLE.** The phone has a transport; the desktop's GATT adapter does not
+  exist. Both ends must report the transport name `BleTransport`, since it is
+  hashed into the session binding.
+- **A live run against the Rust agent.** The two implementations agree with the
+  vectors above and with a desktop double, but the P-256 SPKI signature
+  exchange between the Android Keystore and the Rust verifier has not been
+  exercised on hardware.
+
+See `docs/desktop.md` for the verifier's side.
