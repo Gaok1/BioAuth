@@ -18,6 +18,16 @@ jobs:
           flutter-version: 3.47.1
           channel: stable
           cache: true
+      # `flutter-action`'s cache covers the SDK, not the packages it resolves.
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock', 'packages/phone_auth_native/pubspec.yaml') }}
+          restore-keys: pub-${{ runner.os }}-
+      # Hooks the Gradle user home into the Actions cache. It applies to every
+      # later gradlew invocation, including the one `flutter build apk` makes.
+      - uses: gradle/actions/setup-gradle@v4
       - name: Flutter checks
         working-directory: mobile
         run: |
@@ -49,6 +59,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
+      # Without this every push recompiles the whole workspace, dependencies
+      # included. Keyed on the lockfile, so it only rebuilds what changed.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
       - name: Rust checks
         working-directory: desktop
         run: |

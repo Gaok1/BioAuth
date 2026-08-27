@@ -42,6 +42,18 @@ jobs:
           channel: stable
           cache: true
 
+      # `flutter-action`'s cache covers the SDK, not the packages it resolves,
+      # and not Gradle's dependency downloads — which are the slow half of an
+      # APK build.
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Resolve dependencies
         working-directory: mobile
         run: flutter pub get
@@ -114,6 +126,18 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/ui/package-lock.json
 
+      # `npm ci` is cached by setup-node, but electron-builder separately pulls
+      # down the Electron runtime and its winCodeSign helper on every run —
+      # roughly 150 MB that never changes between releases.
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('desktop/ui/package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
       - name: Package tray
         working-directory: desktop/ui
         run: |
@@ -175,6 +199,15 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/ui/package-lock.json
 
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-${{ runner.os }}-${{ hashFiles('desktop/ui/package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
       - name: Package tray
         working-directory: desktop/ui
         run: |
@@ -202,6 +235,21 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      # Nix does not share Cargo's cache, so without this the whole Rust
+      # workspace is compiled from source again here — the slowest job of the
+      # five. Caches /nix/store itself, keyed on the inputs that decide what
+      # gets built. The size cap keeps the cache under the 10 GB a repository
+      # gets before GitHub starts evicting other entries.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/*.nix', 'desktop/Cargo.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 604800
+          purge-primary-key: never
 
       # The headless package: agent, CLI and initrd client. This is what the
       # NixOS module installs, and it needs no npm.
