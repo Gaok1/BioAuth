@@ -475,8 +475,7 @@ mod wire_vectors {
         "98a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aa",
     );
 
-    const TRANSCRIPT_HEX: &str =
-        "76b72c40a881574d332adada02a0960e39c3236f4a14b6bd53c42c565e01860d";
+    const TRANSCRIPT_HEX: &str = "76b72c40a881574d332adada02a0960e39c3236f4a14b6bd53c42c565e01860d";
 
     const SESSION_ID: &str = "session-1";
     const VERIFIER_ID: &str = "desktop-1";

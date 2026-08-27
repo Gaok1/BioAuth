@@ -245,10 +245,7 @@ mod tests {
         let mut stranger = SecureChannel::new(Role::Client, &other_schedule, [0xab; KEY_LEN]);
 
         let record = server.seal(b"request").expect("seal");
-        assert!(matches!(
-            stranger.open(&record),
-            Err(SessionError::Decrypt)
-        ));
+        assert!(matches!(stranger.open(&record), Err(SessionError::Decrypt)));
     }
 
     #[test]
@@ -292,7 +289,10 @@ mod tests {
         let (_, mut client) = pair();
         for len in 0..=RECORD_OVERHEAD {
             assert!(
-                matches!(client.open(&vec![0u8; len]), Err(SessionError::InvalidFrame(_))),
+                matches!(
+                    client.open(&vec![0u8; len]),
+                    Err(SessionError::InvalidFrame(_))
+                ),
                 "a {len}-byte record must be refused on size"
             );
         }

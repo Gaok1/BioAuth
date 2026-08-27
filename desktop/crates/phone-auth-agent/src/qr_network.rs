@@ -160,7 +160,12 @@ impl QrNetworkTransport {
 
     /// Takes a completed pairing proposal, if one has arrived.
     pub fn take_proposal(&self) -> Option<PairingProposal> {
-        self.shared.state.lock().expect("state mutex").proposal.take()
+        self.shared
+            .state
+            .lock()
+            .expect("state mutex")
+            .proposal
+            .take()
     }
 
     /// Waits for a pairing to complete.

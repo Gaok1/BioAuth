@@ -101,8 +101,14 @@ mod tests {
         let _ = fs::remove_file(&b);
 
         assert_ne!(
-            load_or_create(&a).expect("a").public_key_spki().expect("spki"),
-            load_or_create(&b).expect("b").public_key_spki().expect("spki")
+            load_or_create(&a)
+                .expect("a")
+                .public_key_spki()
+                .expect("spki"),
+            load_or_create(&b)
+                .expect("b")
+                .public_key_spki()
+                .expect("spki")
         );
 
         fs::remove_file(&a).ok();

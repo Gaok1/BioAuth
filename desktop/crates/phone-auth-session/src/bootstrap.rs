@@ -74,7 +74,9 @@ impl ServerBootstrap {
             return Err(SessionError::InvalidBootstrap("invalid session identifier"));
         }
         if self.verifier_id.is_empty() || self.verifier_id.len() > 64 {
-            return Err(SessionError::InvalidBootstrap("invalid verifier identifier"));
+            return Err(SessionError::InvalidBootstrap(
+                "invalid verifier identifier",
+            ));
         }
         if self.endpoint.len() > 128 {
             return Err(SessionError::InvalidBootstrap("endpoint is too long"));
@@ -138,9 +140,10 @@ impl ServerBootstrap {
                 "k" => hash = Some(fixed_b64(value, "invalid verifier identity hash")?),
                 "ep" => endpoint = Some(value.to_owned()),
                 "exp" => {
-                    expires_at_ms = Some(value.parse::<i64>().map_err(|_| {
-                        SessionError::InvalidBootstrap("invalid bootstrap expiry")
-                    })?)
+                    expires_at_ms =
+                        Some(value.parse::<i64>().map_err(|_| {
+                            SessionError::InvalidBootstrap("invalid bootstrap expiry")
+                        })?)
                 }
                 // Unknown keys fail closed. A future version that adds a
                 // meaningful field must not be silently half-understood.

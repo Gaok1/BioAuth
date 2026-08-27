@@ -256,11 +256,7 @@ fn grant_simulator_permissions(service: &mut Service) -> Result<(), String> {
         .collect();
 
     service
-        .set_permissions(
-            simulator::DEVICE_ID,
-            simulator::CREDENTIAL_ID,
-            permissions,
-        )
+        .set_permissions(simulator::DEVICE_ID, simulator::CREDENTIAL_ID, permissions)
         .map_err(|error| error.to_string())
 }
 

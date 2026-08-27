@@ -346,7 +346,9 @@ impl Service {
             .lock()
             .expect("proposal mutex")
             .take()
-            .ok_or_else(|| ServiceError::new("no-pairing", "no pairing is awaiting confirmation"))?;
+            .ok_or_else(|| {
+                ServiceError::new("no-pairing", "no pairing is awaiting confirmation")
+            })?;
 
         if proposal.verification_code != expected_code {
             return Err(ServiceError::new(
@@ -579,8 +581,7 @@ impl PairingProposalSummary {
             key_kind: format!("{key_kind:?}"),
             purpose: format!("{purpose:?}"),
             verification_code: proposal.verification_code.clone(),
-            usable_at_boot: key_kind.allowed_at_boot()
-                && purpose == CredentialPurpose::DiskUnlock,
+            usable_at_boot: key_kind.allowed_at_boot() && purpose == CredentialPurpose::DiskUnlock,
         }
     }
 }

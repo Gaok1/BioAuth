@@ -99,7 +99,10 @@ fn the_session_binding_matches_the_reference() {
 
 #[test]
 fn the_verification_code_matches_the_reference() {
-    assert_eq!(verification_code(&from_hex(EXPORTER_HEX)), VERIFICATION_CODE);
+    assert_eq!(
+        verification_code(&from_hex(EXPORTER_HEX)),
+        VERIFICATION_CODE
+    );
 }
 
 #[test]

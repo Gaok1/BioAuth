@@ -39,10 +39,7 @@ impl KeySchedule {
     /// Salting with the transcript is what ties the keys to the exact messages
     /// exchanged: an attacker who replays a recorded handshake against a fresh
     /// nonce gets a different transcript and therefore different keys.
-    pub fn derive(
-        shared_secret: &[u8],
-        transcript_hash: &[u8; 32],
-    ) -> Result<Self, SessionError> {
+    pub fn derive(shared_secret: &[u8], transcript_hash: &[u8; 32]) -> Result<Self, SessionError> {
         let mut material = [0u8; KEY_LEN * 3];
         Hkdf::<Sha256>::new(Some(transcript_hash), shared_secret)
             .expand(KDF_DOMAIN, &mut material)

@@ -29,8 +29,7 @@ pub mod keys;
 pub use bootstrap::{ServerBootstrap, BOOTSTRAP_PREFIX, DEFAULT_LIFETIME_MS};
 pub use channel::{Role, SecureChannel, MAX_FRAME};
 pub use handshake::{
-    ClientHandshake, HandshakeOutcome, PeerExpectation, PendingServerHandshake,
-    VerifierExpectation,
+    ClientHandshake, HandshakeOutcome, PeerExpectation, PendingServerHandshake, VerifierExpectation,
 };
 pub use identity::{hash_identity, IdentityKey};
 pub use keys::{session_binding, verification_code, SessionBindingInputs};
@@ -556,7 +555,11 @@ mod tests {
         .expect("client responds");
 
         let server = pending
-            .finish(&client_frame, PeerExpectation::Pairing, "QrNetworkTransport")
+            .finish(
+                &client_frame,
+                PeerExpectation::Pairing,
+                "QrNetworkTransport",
+            )
             .expect("server finishes");
 
         assert_ne!(
