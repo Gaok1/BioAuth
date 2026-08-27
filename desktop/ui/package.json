@@ -40,7 +40,6 @@
       {
         "from": "../target/release/",
         "to": "bin",
-        "comment": "The daemon and the `phone-auth` CLI. Cargo names the CLI binary after the crate's [[bin]] entry, not the package, so the filter matches the exact executables rather than a prefix.",
         "filter": [
           "phone-auth-agent",
           "phone-auth-agent.exe",

@@ -70,6 +70,41 @@ BLE remains optional and never leaks BLE concepts into protocol/domain types.
 - Delegated credentials only after standards research
 - Static QR identity hints with fresh online/session challenge
 
+## Phase 3A — Secrets vault on the phone
+
+Ciphertext lives on the phone; the desktop app browses it and copies an item to
+the clipboard. A fetch is an ordinary `AuthRequest` over the existing session,
+shown on the phone as what it is — *"PC-DO-LUIS wants to read: GitHub token"* —
+and released by the fingerprint. Session binding already prevents that fetch
+being replayed into another session, so the protocol work is mostly done.
+
+Four things decide whether "the plaintext never reaches the desktop's disk" is
+true or decorative:
+
+- The clipboard is the leak, not swap. On Windows it is global to every
+  process, Win+V records history, and cloud clipboard syncs it off the machine.
+  Requires `ExcludeClipboardContentFromMonitorProcessing` and
+  `CanIncludeInClipboardHistory`, plus a clear-on-timer.
+- The secret must never enter the Electron process. JS strings are immutable and
+  garbage-collected, so they cannot be zeroed. Keep it in the agent, in a
+  `Zeroize` buffer under `VirtualLock`/`mlock` so it cannot be paged out, and let
+  the agent write the clipboard. The UI sees item names only.
+- Android Keystore stores keys, not blobs: an AES-GCM key gated by
+  `BIOMETRIC_STRONG`, ciphertext in ordinary app storage.
+- Lose the phone, lose the vault, unless there is an export path.
+
+Blocked on the session limitation below.
+
+## Phase 3B — Sessions that survive the app being backgrounded
+
+Today the phone holds a session only while a widget watches
+`pairedSessionRunnerProvider`, so nothing is reachable once the app leaves the
+screen. That was deliberate — an app you are not looking at has no business
+holding connections to your computers open — but it puts every use that is not
+"unlock the machine in front of me" out of reach. Needs an Android foreground
+service with a persistent notification, which is the honest trade: the
+connection stays up and you can always see that it is up.
+
 ## Later
 
 - Phase 4: SSH, PAM, sudo, Windows Credential Provider

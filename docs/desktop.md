@@ -43,9 +43,12 @@ desktop/
 │   ├── phone-auth-cli/        `phone-auth` — used by PAM, sudo and scripts
 │   └── phone-auth-initrd/     boot-time unlock, separate binary on purpose
 ├── ui/                        Electron tray
-├── nixos/                     package.nix and the NixOS module
-└── flake.nix
+└── nixos/                     package.nix and the NixOS module
 ```
+
+`flake.nix` sits at the repository root, not here. A flake reference without
+`?dir=` only resolves at the root, and `nix build github:Gaok1/BioAuth#default`
+is the command the README hands out. Its paths reach down into `desktop/`.
 
 `phone-auth-protocol` has no dependencies at all. It defines the bytes that get
 signed, so its encoding must not drift with a third-party CBOR library's

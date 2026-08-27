@@ -59,6 +59,13 @@ npx electron-builder --win      # NSIS installer
 npx electron-builder --linux    # AppImage and deb
 ```
 
+The `extraResources` filter in `ui/package.json` names both executables
+literally rather than matching a prefix, because Cargo names a binary after its
+`[[bin]]` entry and not its package: the `phone-auth-cli` crate produces
+`phone-auth`. That file is JSON and cannot carry the explanation itself —
+electron-builder validates its config against a strict schema and rejects any
+key it does not know, a stray `comment` included.
+
 The installers bundle the agent and the CLI alongside the tray. On Windows the
 installer also adds a Startup shortcut: PhoneAuth has to be listening before you
 need to approve anything, and an app you must remember to launch first is one

@@ -1,4 +1,8 @@
 {
+  # At the repository root rather than under desktop/, because that is where a
+  # flake reference without `?dir=` looks. `nix build github:Gaok1/BioAuth` is
+  # the command the README gives out, and it cannot resolve a flake nested in a
+  # subdirectory. The paths below reach down into desktop/; nothing else moves.
   description = "PhoneAuth desktop verifier: background agent, CLI and tray UI";
 
   inputs = {
@@ -10,7 +14,7 @@
     let
       # The NixOS module is system-independent, so it sits outside eachSystem.
       moduleOutputs = {
-        nixosModules.default = import ./nixos/module.nix;
+        nixosModules.default = import ./desktop/nixos/module.nix;
         nixosModules.phone-auth = self.nixosModules.default;
       };
     in
@@ -19,10 +23,10 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
-        packages.default = pkgs.callPackage ./nixos/package.nix { };
+        packages.default = pkgs.callPackage ./desktop/nixos/package.nix { };
         packages.phone-auth = self.packages.${system}.default;
         packages.phone-auth-tray =
-          pkgs.callPackage ./nixos/package.nix { withTray = true; };
+          pkgs.callPackage ./desktop/nixos/package.nix { withTray = true; };
 
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [

@@ -337,7 +337,7 @@ jobs:
       # gets before GitHub starts evicting other entries.
       - uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/*.nix', 'desktop/Cargo.lock') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'desktop/Cargo.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 2G
           purge: true
