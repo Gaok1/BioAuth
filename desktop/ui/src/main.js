@@ -12,6 +12,7 @@ const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, shell } = require(
 const QRCode = require('qrcode');
 
 const { AgentConnection } = require('./agent-connection');
+const { AgentSupervisor } = require('./agent-supervisor');
 const { endpointFile } = require('./paths');
 
 /** Methods the renderer may invoke. Anything not listed is refused. */
@@ -50,6 +51,7 @@ function renderPairingCode(text) {
 let tray = null;
 let window = null;
 let agent = null;
+let supervisor = null;
 let quitting = false;
 
 function createWindow() {
@@ -144,10 +146,22 @@ function send(channel, payload) {
 
 function wireAgent() {
   agent = new AgentConnection();
+  supervisor = new AgentSupervisor({
+    // eslint-disable-next-line no-console
+    onLog: (message) => console.log(`phone-auth-tray: ${message}`),
+  });
 
   agent.on('status', (status) => {
     send('agent:status', status);
     tray.setToolTip(status.connected ? 'PhoneAuth — connected' : 'PhoneAuth — agent offline');
+
+    // On a packaged install nothing else starts the daemon. A service-managed
+    // agent reports connected on the first poll, so this never fires there.
+    if (status.connected) {
+      supervisor.markHealthy();
+    } else {
+      supervisor.ensureRunning(false);
+    }
   });
 
   agent.on('agent-event', (event) => {
@@ -208,5 +222,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     quitting = true;
     if (agent) agent.stop();
+    // Only stops an agent this process started. One managed by systemd, or
+    // launched by hand, outlives the tray.
+    if (supervisor) supervisor.stop();
   });
 }

@@ -46,6 +46,14 @@ class VerifierPolicy {
       permissions.any((permission) => permission.allows(request));
 }
 
+/// One thing a verifier is allowed to ask for.
+///
+/// `*` matches anything in that position. A permission holding three of them is
+/// the pairing default: the phone is not the place that enumerates a desktop's
+/// operations, and every request still costs an explicit tap and a biometric
+/// signature. The narrowing that matters happens on the verifier, where a
+/// freshly enrolled credential authorizes nothing until permissions are
+/// granted.
 class VerifierPermission {
   const VerifierPermission({
     required this.service,
@@ -53,14 +61,20 @@ class VerifierPermission {
     this.resource = '*',
   });
 
+  /// Anything the paired verifier asks for, still gated by consent.
+  const VerifierPermission.any() : service = '*', action = '*', resource = '*';
+
   final String service;
   final String action;
   final String resource;
 
   bool allows(AuthenticationRequest request) =>
-      request.service == service &&
-      request.action == action &&
-      (resource == '*' || request.resource == resource);
+      _matches(service, request.service) &&
+      _matches(action, request.action) &&
+      _matches(resource, request.resource);
+
+  static bool _matches(String pattern, String value) =>
+      pattern == '*' || pattern == value;
 }
 
 class PhoneAuthCore {
@@ -129,14 +143,22 @@ class PhoneAuthCore {
     }
   }
 
-  Future<void> serveOne(SecureTransportSession session) async {
+  /// Waits for one request on [session], answers it, and closes.
+  ///
+  /// Throws [TimeoutException] if nothing arrives within [timeout], which is a
+  /// normal outcome for a phone that connected while the desktop was idle.
+  /// Returns the response that was sent, so a caller can report the outcome
+  /// without re-deriving it from the request.
+  Future<AuthResponse> serveOne(
+    SecureTransportSession session, {
+    Duration timeout = const Duration(minutes: 2),
+  }) async {
     try {
-      final frame = await session.incomingFrames.first.timeout(
-        const Duration(minutes: 2),
-      );
+      final frame = await session.incomingFrames.first.timeout(timeout);
       final request = codec.decodeRequest(frame, origin: session.originLabel);
       final response = await authorize(request, session);
       await session.send(codec.encodeResponse(response));
+      return response;
     } finally {
       await session.close();
     }

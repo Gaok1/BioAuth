@@ -3,18 +3,100 @@
   "productName": "PhoneAuth",
   "version": "0.1.0",
   "description": "Tray UI for the PhoneAuth background agent",
+  "author": "BioAuth contributors",
   "license": "MIT",
   "main": "src/main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "icons": "node tools/make-icons.js"
+    "icons": "node tools/make-icons.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^33.2.0"
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "qrcode": "^1.5.4"
+  },
+  "build": {
+    "appId": "org.bioauth.phoneauth",
+    "productName": "PhoneAuth",
+    "copyright": "MIT licensed",
+    "directories": {
+      "output": "../dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../target/release/",
+        "to": "bin",
+        "comment": "The daemon and the `phone-auth` CLI. Cargo names the CLI binary after the crate's [[bin]] entry, not the package, so the filter matches the exact executables rather than a prefix.",
+        "filter": [
+          "phone-auth-agent",
+          "phone-auth-agent.exe",
+          "phone-auth",
+          "phone-auth.exe"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "artifactName": "PhoneAuth-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PhoneAuth",
+      "include": "build/installer.nsh",
+      "uninstallDisplayName": "PhoneAuth"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility;Security",
+      "synopsis": "Phone-as-authenticator for desktop logins",
+      "description": "Tray UI and background verifier for PhoneAuth. Approvals are signed by a hardware-backed key on a paired phone; this machine only ever verifies.",
+      "artifactName": "PhoneAuth-${version}-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "PhoneAuth",
+          "Comment": "Approve desktop logins from your phone",
+          "Categories": "Utility;Security;",
+          "StartupNotify": "false"
+        }
+      }
+    },
+    "deb": {
+      "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils"]
+    },
+    "publish": null
   }
 }

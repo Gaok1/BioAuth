@@ -12,6 +12,7 @@
   electron,
   makeWrapper,
   nodejs,
+  fetchNpmDeps,
 }:
 rustPlatform.buildRustPackage {
   pname = "phone-auth";
@@ -36,10 +37,24 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = lib.optionals withTray [ makeWrapper nodejs ];
 
+  # The tray's only runtime dependency is a QR encoder, used in the Electron
+  # main process. Reed-Solomon and mask selection are not worth hand-rolling:
+  # a subtly wrong encoder produces a code that simply will not scan.
+  #
+  # `npmDeps` needs a hash Nix can only tell you by trying. On the first build
+  # it will report the real one; paste it in place of `fakeHash`.
+  npmDeps = lib.optionalAttrs withTray (
+    fetchNpmDeps {
+      src = ../ui;
+      hash = lib.fakeHash;
+    }
+  );
+
   postInstall = lib.optionalString withTray ''
     mkdir -p $out/share/phone-auth
     cp -r ${../ui}/src ${../ui}/renderer ${../ui}/assets ${../ui}/package.json \
       $out/share/phone-auth/
+    cp -r node_modules $out/share/phone-auth/
 
     makeWrapper ${electron}/bin/electron $out/bin/phone-auth-tray \
       --add-flags $out/share/phone-auth

@@ -26,17 +26,11 @@ void main() {
       );
       final discovery = transport.discoverPeers().first;
       await transport.start();
-      final mobileSession = await transport.connect(
+      final outcome = await transport.connect(
         await discovery,
-        SessionBootstrap(
-          sessionId: 'ble-session',
-          verifierId: 'desktop-1',
-          nonce: Uint8List(32),
-          ephemeralPublicKey: Uint8List(32),
-          verifierIdentityPublicKey: Uint8List.fromList([1]),
-          expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 1)),
-        ),
+        PairedVerifier(Uint8List.fromList(List<int>.filled(91, 0xa0))),
       );
+      final mobileSession = outcome.session;
       final request = AuthenticationRequest(
         requestId: 'ble-request',
         verifierId: 'desktop-1',
@@ -132,7 +126,7 @@ class _FakeRawLink implements RawTransportLink {
   @override
   TransportSecurityProperties get rawSecurityProperties =>
       const TransportSecurityProperties(
-        transportName: 'Bluetooth LE',
+        transportName: bleTransportName,
         confidential: false,
         peerAuthenticated: false,
         requiresNetwork: false,

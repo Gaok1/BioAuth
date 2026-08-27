@@ -1,0 +1,290 @@
+name: Release
+
+# Builds every artifact a user could install and attaches them to a GitHub
+# Release. Tagging is the trigger, so the release contents are always tied to a
+# commit that exists; `workflow_dispatch` builds the same set without publishing,
+# for checking a change to this file before cutting a tag.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: 3.47.1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- Android --
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      # A release build must be signed with a real key or it cannot be
+      # installed. When no keystore is configured we ship the debug-signed
+      # build instead of an unsigned artifact nobody can use — and say so in
+      # the release notes rather than letting it look production-signed.
+      - name: Decode signing keystore
+        id: signing
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > mobile/android/release.jks
+          cat > mobile/android/key.properties <<EOF
+          storeFile=release.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release APK
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: mobile
+        run: |
+          flutter build apk --release --flavor prod --target lib/main_prod.dart
+          mkdir -p ../artifacts
+          cp build/app/outputs/flutter-apk/app-prod-release.apk \
+             ../artifacts/PhoneAuth-android.apk
+
+      - name: Build debug-signed APK
+        if: steps.signing.outputs.signed != 'true'
+        working-directory: mobile
+        run: |
+          flutter build apk --debug --flavor prod --target lib/main_prod.dart
+          mkdir -p ../artifacts
+          cp build/app/outputs/flutter-apk/app-prod-debug.apk \
+             ../artifacts/PhoneAuth-android-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: artifacts/*.apk
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Windows --
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      # The installer bundles these, so they have to exist before packaging.
+      # `phone-auth-initrd` is deliberately absent: it unlocks a LUKS volume
+      # from a Linux initrd and means nothing on Windows.
+      - name: Build agent and CLI
+        working-directory: desktop
+        run: cargo build --release -p phone-auth-agent -p phone-auth-cli
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/ui/package-lock.json
+
+      - name: Package tray
+        working-directory: desktop/ui
+        run: |
+          npm ci
+          npx electron-builder --win --publish never
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp desktop/dist/*.exe artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: artifacts/*
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ Linux --
+  linux:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: BlueZ build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Build agent, CLI and initrd client
+        working-directory: desktop
+        run: |
+          cargo build --release \
+            -p phone-auth-agent -p phone-auth-cli -p phone-auth-initrd
+
+      # A plain tarball for headless machines and for anyone whose distribution
+      # is not Debian-shaped. The initrd binary only makes sense here.
+      # Cargo names a binary after its `[[bin]]` entry, so the CLI crate
+      # `phone-auth-cli` produces `phone-auth`.
+      - name: Tarball the binaries
+        run: |
+          mkdir -p artifacts staging/phone-auth
+          cp desktop/target/release/phone-auth-agent \
+             desktop/target/release/phone-auth \
+             desktop/target/release/phone-auth-initrd \
+             staging/phone-auth/
+          cp README.md docs/desktop.md docs/protocol-handshake.md staging/phone-auth/
+          tar -czf artifacts/phone-auth-linux-x86_64.tar.gz -C staging phone-auth
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/ui/package-lock.json
+
+      - name: Package tray
+        working-directory: desktop/ui
+        run: |
+          npm ci
+          npx electron-builder --linux --publish never
+
+      - name: Collect artifacts
+        run: cp desktop/dist/*.AppImage desktop/dist/*.deb artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: artifacts/*
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------- Nix ---
+  nix:
+    name: NixOS package
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The headless package: agent, CLI and initrd client. This is what the
+      # NixOS module installs, and it needs no npm.
+      - name: Build the flake package
+        run: nix build .#default --print-build-logs
+
+      - name: Check the flake evaluates
+        run: nix flake check --no-build
+
+      # `packages.phone-auth-tray` pins an npm dependency hash that Nix can only
+      # produce by fetching. Printing it here is what closes that loop: paste the
+      # value into `desktop/nixos/package.nix` to make the tray buildable.
+      - name: Report the tray's npm dependency hash
+        continue-on-error: true
+        run: |
+          nix run nixpkgs#prefetch-npm-deps -- desktop/ui/package-lock.json \
+            | tee npm-deps-hash.txt
+
+      - name: Stage the closure
+        run: |
+          mkdir -p artifacts
+          tar -czhf artifacts/phone-auth-nixos-x86_64.tar.gz -C result .
+          if [ -f npm-deps-hash.txt ]; then cp npm-deps-hash.txt artifacts/; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nix
+          path: artifacts/*
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- Release ---
+  release:
+    name: Publish release
+    needs: [android, windows, linux, nix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+
+      - name: Flatten and checksum
+        run: |
+          mkdir -p release
+          find incoming -type f ! -name 'npm-deps-hash.txt' -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+
+      - name: Note whether the APK is production-signed
+        id: apk
+        run: |
+          if [ -f release/PhoneAuth-android.apk ]; then
+            echo "note=Signed with the project release key." >> "$GITHUB_OUTPUT"
+          else
+            echo "note=**Debug-signed.** No release keystore is configured for this repository, so the APK is signed with Android's debug key. Fine for trying it out; do not treat it as a production build." >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            | Platform | File |
+            |---|---|
+            | Android | `PhoneAuth-android*.apk` |
+            | Windows 10/11 | `PhoneAuth-Setup-*.exe` |
+            | Linux (portable) | `PhoneAuth-*.AppImage` |
+            | Debian / Ubuntu | `*.deb` |
+            | Headless Linux | `phone-auth-linux-x86_64.tar.gz` |
+            | NixOS | `nix build github:${{ github.repository }}#default` |
+
+            Verify what you downloaded against `SHA256SUMS.txt`.
+
+            ## Android note
+
+            ${{ steps.apk.outputs.note }}
+
+            ## Pairing
+
+            Install the desktop side, open PhoneAuth, choose **Pair a phone…**,
+            and scan the code with the app. Both screens then show six digits —
+            they must match before you confirm. The code on screen authenticates
+            the desktop to the phone; the six digits close the other direction.

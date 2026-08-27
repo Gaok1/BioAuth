@@ -7,13 +7,14 @@ environment:
   sdk: ">=3.9.0 <4.0.0"
 
 dependencies:
-  cbor: ^6.5.1
   cryptography: ^2.9.0
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2
+  mobile_scanner: ^7.4.0
   phone_auth_native:
     path: ../packages/phone_auth_native
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

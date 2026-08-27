@@ -3,11 +3,13 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/mock/fake_biometric_authorizer.dart';
+import 'package:phone_auth/core/mock/fake_session_binding.dart';
 import 'package:phone_auth/core/mock/fake_transport.dart';
 import 'package:phone_auth/core/protocol/auth_response.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
 import 'package:phone_auth/core/session/phone_auth_core.dart';
 import 'package:phone_auth/core/transport/auth_transport.dart';
+import 'package:phone_auth/core/transport/secure_session_establisher.dart';
 import 'package:phone_auth/domain/authentication_request.dart';
 
 void main() {
@@ -36,18 +38,11 @@ void main() {
     final discovered = transport.discoverPeers().first;
     await transport.start();
     final peer = await discovered;
-    final session = await transport.connect(
+    final outcome = await transport.connect(
       peer,
-      SessionBootstrap(
-        sessionId: 'session-1',
-        verifierId: 'desktop-1',
-        nonce: Uint8List(32),
-        ephemeralPublicKey: Uint8List(32),
-        verifierIdentityPublicKey: Uint8List.fromList([1]),
-        expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 1)),
-      ),
+      ScannedVerifier(fakeBootstrap(sessionId: 'session-1')),
     );
-    return (transport, session);
+    return (transport, outcome.session);
   }
 
   test(

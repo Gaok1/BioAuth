@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../transport/auth_transport.dart';
+import '../transport/secure_session_establisher.dart';
 import 'fake_session_binding.dart';
 
 class FakeTransport implements AuthTransport {
@@ -49,19 +50,22 @@ class FakeTransport implements AuthTransport {
   Stream<TransportPeer> discoverPeers() => _discovery.stream;
 
   @override
-  Future<SecureTransportSession> connect(
+  Future<SecureSessionOutcome> connect(
     TransportPeer selectedPeer,
-    SessionBootstrap bootstrap,
+    VerifierExpectation expectation,
   ) async {
     if (!_started || selectedPeer.transportId != peer.transportId) {
       throw StateError('Fake peer is unavailable');
     }
-    final expiresAt = bootstrap.expiresAt;
-    if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
-      throw StateError('Session bootstrap expired');
+    if (expectation case ScannedVerifier(:final bootstrap)) {
+      if (bootstrap.isExpiredAt(
+        DateTime.now().toUtc().millisecondsSinceEpoch,
+      )) {
+        throw StateError('Session bootstrap expired');
+      }
     }
 
-    final sessionBinding = await deriveFakeSessionBinding(bootstrap);
+    final sessionBinding = await deriveFakeSessionBinding(expectation);
     final mobileIncoming = StreamController<Uint8List>();
     final verifierIncoming = StreamController<Uint8List>();
     final mobile = FakeSecureTransportSession(
@@ -78,7 +82,17 @@ class FakeTransport implements AuthTransport {
       incoming: verifierIncoming,
       outgoing: mobileIncoming,
     );
-    return mobile;
+    return SecureSessionOutcome(
+      session: mobile,
+      verifierIdentitySpki: Uint8List.fromList(List<int>.filled(91, 0xa0)),
+      verifierId: switch (expectation) {
+        ScannedVerifier(:final bootstrap) => bootstrap.verifierId,
+        PairedVerifier() => 'fake-verifier',
+      },
+      sessionId: 'fake-session',
+      verificationCode: '000000',
+      wasPairing: expectation is ScannedVerifier,
+    );
   }
 }
 

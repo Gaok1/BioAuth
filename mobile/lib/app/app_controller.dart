@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/auth/phone_authenticator.dart';
+import '../core/pairing/pairing_record.dart';
 import '../core/security/approval_guard.dart';
+import '../domain/desktop_device.dart';
 import '../domain/audit_entry.dart';
 import '../domain/authentication_request.dart';
 import '../domain/connection_phase.dart';
@@ -36,6 +38,49 @@ class AppController extends Notifier<AppState> {
 
   void completeOnboarding() {
     state = state.copyWith(onboardingComplete: true);
+  }
+
+  /// Reflects the stored pairings into the devices list.
+  ///
+  /// A request is only accepted from a device that is on this list, so a
+  /// verifier that was never paired — or was revoked — cannot put anything on
+  /// screen no matter what it sends.
+  void syncPairedDevices(List<PairingRecord> records) {
+    final existing = {for (final device in state.devices) device.id: device};
+    final devices = records
+        .map(
+          (record) =>
+              existing[record.verifierId] ??
+              DesktopDevice(
+                id: record.verifierId,
+                name: record.verifierId,
+                phase: ConnectionPhase.connecting,
+                lastSeen: record.pairedAt,
+              ),
+        )
+        .toList(growable: false);
+
+    state = state.copyWith(
+      onboardingComplete: state.onboardingComplete || devices.isNotEmpty,
+      devices: List.unmodifiable(devices),
+    );
+  }
+
+  /// Reports what the connection to a paired desktop is doing.
+  void setDevicePhase(String deviceId, ConnectionPhase phase, {DateTime? at}) {
+    final devices = state.devices
+        .map(
+          (device) => device.id == deviceId
+              ? device.copyWith(
+                  phase: phase,
+                  lastSeen: phase == ConnectionPhase.connected
+                      ? (at ?? DateTime.now()).toUtc()
+                      : null,
+                )
+              : device,
+        )
+        .toList(growable: false);
+    state = state.copyWith(devices: List.unmodifiable(devices));
   }
 
   void receive(AuthenticationRequest request, {DateTime? at}) {
@@ -114,6 +159,9 @@ class AppController extends Notifier<AppState> {
   void deny(String requestId, {DateTime? at}) {
     final request = _requestById(requestId);
     if (request == null) return;
+    // The desktop is holding a session open waiting for an answer. Dropping the
+    // card off the screen is not one.
+    ref.read(phoneAuthenticatorProvider).cancel(requestId);
     _finish(
       request,
       ConnectionPhase.denied,

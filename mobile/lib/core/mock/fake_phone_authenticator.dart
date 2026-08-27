@@ -18,4 +18,7 @@ class FakePhoneAuthenticator implements PhoneAuthenticator {
     await Future<void>.delayed(const Duration(milliseconds: 150));
     return result;
   }
+
+  @override
+  void cancel(String requestId) {}
 }

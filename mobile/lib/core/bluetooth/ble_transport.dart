@@ -7,6 +7,10 @@ import '../transport/auth_transport.dart';
 import '../transport/secure_session_establisher.dart';
 import 'ble_frame_codec.dart';
 
+/// Both sides must report this exact string: it is hashed into the session
+/// binding, so a mismatch makes every request fail with no other symptom.
+const String bleTransportName = 'BleTransport';
+
 class BleTransport implements AuthTransport {
   BleTransport({
     required SecureSessionEstablisher sessionEstablisher,
@@ -25,7 +29,9 @@ class BleTransport implements AuthTransport {
   @override
   TransportSecurityProperties get securityProperties =>
       const TransportSecurityProperties(
-        transportName: 'Bluetooth LE',
+        // Hashed into the session binding, so it must be the exact string the
+        // desktop reports. See docs/protocol-handshake.md.
+        transportName: bleTransportName,
         confidential: false,
         peerAuthenticated: false,
         requiresNetwork: false,
@@ -60,13 +66,13 @@ class BleTransport implements AuthTransport {
   Stream<TransportPeer> discoverPeers() => _peers.stream;
 
   @override
-  Future<SecureTransportSession> connect(
+  Future<SecureSessionOutcome> connect(
     TransportPeer peer,
-    SessionBootstrap bootstrap,
+    VerifierExpectation expectation,
   ) async {
     final rawLink = await _client.connect(peer.transportId);
     try {
-      return await _sessionEstablisher.establish(rawLink, bootstrap);
+      return await _sessionEstablisher.establish(rawLink, expectation);
     } on Object {
       await rawLink.close();
       rethrow;
@@ -170,7 +176,9 @@ class _NativeBleLink implements RawTransportLink {
   @override
   TransportSecurityProperties get rawSecurityProperties =>
       const TransportSecurityProperties(
-        transportName: 'Bluetooth LE',
+        // Hashed into the session binding, so it must be the exact string the
+        // desktop reports. See docs/protocol-handshake.md.
+        transportName: bleTransportName,
         confidential: false,
         peerAuthenticated: false,
         requiresNetwork: false,

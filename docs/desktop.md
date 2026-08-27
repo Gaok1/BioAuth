@@ -12,18 +12,24 @@ a view that cannot approve anything even if it is fully compromised.
 | Piece | State |
 |---|---|
 | Canonical wire format, byte-compatible with the Dart codec | done, golden-vector locked |
-| Verifier core: pairing, policy, replay, signature checking | done, 57 tests |
+| Secure session handshake, record layer, session binding | done, vector-locked |
+| Verifier core: pairing, policy, replay, signature checking | done |
+| `QrNetworkTransport`: listen, handshake, hand a session to the verifier | done |
+| Pairing: QR, verification code, enrolment, storage | done end to end |
 | Background agent with local IPC | done |
 | `phone-auth` CLI (the PAM entry point) | done |
-| Electron tray | done |
+| Electron tray, with a scannable QR | done |
 | NixOS module, systemd units, PAM wiring | done |
 | `phone-auth-initrd` decision logic | done |
-| **A transport that reaches a real phone** | **not built — see pendências** |
+| **A phone that speaks any of it** | **not built — see pendências** |
 
-So the desktop can do everything except talk to a phone. The full path —
-issue, sign, verify, grant — runs end to end today against an in-process
-development simulator, which proves the logic with real ECDSA but is not a
-phone and is not security.
+The desktop is complete. A phone can connect over TCP, pair, and authorize,
+and the whole path runs today against a simulated phone that speaks the real
+protocol over a real socket.
+
+That simulator is not security: it signs with a software key and approves
+everything. It enrols as `KeyKind::Software`, which is on its own enough to
+make a boot-time unlock request fail.
 
 ## Layout
 
@@ -31,6 +37,7 @@ phone and is not security.
 desktop/
 ├── crates/
 │   ├── phone-auth-protocol/   canonical CBOR frames, validation. No I/O, no deps.
+│   ├── phone-auth-session/    handshake, record layer, session binding
 │   ├── phone-auth-verifier/   pairing store, policy, replay guard, ECDSA checks
 │   ├── phone-auth-agent/      the daemon: IPC, transports, audit log
 │   ├── phone-auth-cli/        `phone-auth` — used by PAM, sudo and scripts
@@ -43,6 +50,14 @@ desktop/
 `phone-auth-protocol` has no dependencies at all. It defines the bytes that get
 signed, so its encoding must not drift with a third-party CBOR library's
 choices, and it has to stay small enough to link into an initrd.
+
+`phone-auth-session` deliberately does not depend on `phone-auth-verifier`.
+The verifier consumes the `SecureSession` trait, and an edge pointing the other
+way would make the abstraction depend on one of its implementations. The
+adapter that joins them lives in the agent, which already has both. The session
+binding is derived in exactly one place, for the same reason: two copies of a
+derivation that must match across two devices is precisely the thing that
+drifts.
 
 ## Running it
 
@@ -124,60 +139,58 @@ Each of these has a test that fails if the check is removed:
 
 ## Pendências — bloqueadas no mobile
 
-The desktop is finished up to the transport boundary. Nothing below can be
-completed here, because each needs the phone to speak the other half.
+Every item below needs the phone. The desktop half of each one exists, is
+tested, and is specified in `protocol-handshake.md` with test vectors.
 
-### 1. No production end-to-end transport exists (blocks real authorization)
+### 1. No transport on the phone (blocks real authorization)
 
 `mobile/lib/core/transport/auth_transport.dart` defines `AuthTransport` and
 `SecureTransportSession`. Both `FakeTransport` and `BleTransport` implement
 that boundary without changing the protocol or authorization core.
 
+- **`QrNetworkTransport`** — the desktop side is built and listening. It
+  accepts a TCP connection, runs the handshake and hands a `SecureSession` to
+  the verifier. The phone needs the matching client: a socket, 4-byte
+  length-prefixed frames, and the two-message handshake. This is the shortest
+  path to a working phone.
 - **`BleTransport`** — the mobile Android GATT client, bounded framing, MTU,
-  notifications, permissions, and timeout behavior exist. It still needs the
-  desktop GATT server, production pairing/session handshake, reconnect policy,
-  and Android background policy. The desktop agent therefore correctly lists
-  it as `unimplemented` rather than pretending the raw link is secure.
-- **`QrNetworkTransport`** — roadmap phase 1B. Needs the QR scanner on the
-  phone, the endpoint publication on the desktop, and TLS from a standard
-  stack.
+  notifications, permissions and timeout behaviour exist. It still needs the
+  desktop GATT server, reconnect policy and Android background policy. The
+  agent lists it as `unimplemented` rather than pretending the raw link is
+  secure. The handshake above it is the same one `QrNetworkTransport` uses, so
+  that work is not repeated.
 
-Until one exists, `phone-auth authorize` exits 3 (`no-transport`) on any real
-machine.
+Until one exists, `phone-auth authorize` exits 3 (`no-transport`) with a real
+phone.
 
-### 2. The session-binding derivation is not agreed
+### 2. The client half of the handshake
 
-`phone_auth_verifier::session::derive_session_binding` is the verifier's half:
+The desktop implements both halves in `phone-auth-session`; the phone needs
+the client one. It is fully specified in `protocol-handshake.md`:
 
-```text
-SHA-256( "PhoneAuth/session-binding/v1"
-       ‖ len‖transport_name ‖ len‖session_id
-       ‖ len‖verifier_handshake_key ‖ len‖peer_handshake_key
-       ‖ len‖transcript_secret )
-```
+- the ClientHello encoding and its signature envelope
+- the key schedule, split in the documented order
+- the session binding — byte-identical or every request fails
+- the record layer, including in-order counter enforcement
 
-Every field is length-prefixed. Fake sessions derive a binding on both sides
-and the core rejects mismatches. A production handshake must implement the
-same exporter/binding contract on mobile and desktop; the fake establisher is
-never wired into a release build.
+`ClientHandshake::respond` is the reference and is under 80 lines. The
+deterministic parts have published test vectors; **implement those first**,
+because each of them fails on the wire with the same undiagnosable symptom.
 
-### 3. Pairing cannot complete
+### 3. QR scanner and the verification code screen
 
-`pair.begin` produces a bootstrap — version, verifier id, session id, a fresh
-32-byte nonce, an expiry — and carries no permanent secret, per the threat
-model. What is missing on mobile:
+`shared/pairing_qr_code.dart` is a placeholder icon, not a scanner. The phone
+needs to parse the bootstrap, check `SHA-256("PhoneAuth/identity/v1" ‖ spki)`
+against the code's commitment, and show the six-digit verification code with
+an explicit confirm step.
 
-- the QR bootstrap scanner (`shared/pairing_qr_code.dart` is a placeholder
-  icon, not a scanner)
-- the pairing handshake that proves possession of the device key
-- returning the public key, its `KeyKind`, and its `CredentialPurpose`
+That screen is not cosmetic. The QR authenticates the desktop to the phone;
+the code is the only thing that stops someone who photographed the QR from
+pairing their own device instead of the user's.
 
-Consequence: the QR payload the tray shows is informational. Pairing today is
-only possible by writing `devices.json` directly, which is what
-`--dev-simulator` does for its own fixture.
-
-The desktop also renders the bootstrap as text rather than a QR image. There is
-no point drawing a code nothing can scan; QR rendering lands with this item.
+The desktop side is complete: the tray renders a scannable code, polls for a
+completed handshake, shows the same six digits and stores nothing until the
+user confirms.
 
 ### 4. One credential, no purpose separation
 
@@ -193,10 +206,14 @@ to reuse the authorization credential, by design.
 ### 5. `KeyKind` is not reported at pairing
 
 `PhoneAuthNativePlugin.kt` computes `keySecurity()` — `hardwareBacked`,
-`strongBoxBacked` — but nothing carries it into a pairing record. The desktop
-needs it: it is what distinguishes a StrongBox key from a software one, and the
-boot-time gate depends on it. Until then, every real pairing has to be assigned
-a `keyKind` by hand.
+`strongBoxBacked` — but nothing carries it into a pairing record.
+
+The desktop now has somewhere to put it: the enrolment frame
+(`protocol-handshake.md`) carries `key_kind` and `purpose`, and the verifier
+stores both. The phone has to fill them in honestly. It is a claim the
+verifier cannot check, used only to *withhold* authority — a `Software` key is
+refused for disk unlock — so reporting it truthfully is a correctness
+requirement on the phone, not a formality.
 
 ### 6. iOS is not implemented
 
@@ -208,7 +225,7 @@ desktop change. Worth confirming that `SecKeyCreateSignature` with
 `SHA256withECDSA` does. It should; it is the same algorithm and the same DER
 encoding.
 
-### 7. Cross-language golden vector
+### 7. Cross-language vectors
 
 `desktop/crates/phone-auth-protocol/tests/golden_vectors.rs` pins the wire
 format against a vector derived independently from RFC 8949.
@@ -216,10 +233,18 @@ format against a vector derived independently from RFC 8949.
 Dart side. Both the Flutter and Rust suites execute it in CI, proving the two
 independent codecs agree on the pinned frame.
 
-It has not been executed: no Flutter or Dart SDK is installed on this machine.
-**Run `flutter test test/protocol_golden_vector_test.dart` before trusting the
-two codecs to match.** If it fails, the desktop is wrong and the phone is
-right — the Dart codec is the older of the two.
+It has not been executed here: no Flutter or Dart SDK is installed on this
+machine. **Run `flutter test test/protocol_golden_vector_test.dart` before
+trusting the two codecs to match.** If it fails, the desktop is wrong and the
+phone is right — the Dart codec is the older of the two.
+
+The handshake has its own vectors, in
+`desktop/crates/phone-auth-session/tests/handshake_vectors.rs` and reproduced
+in `protocol-handshake.md`. They were derived from the specification with an
+independent implementation rather than from the Rust source, so agreement is
+evidence and not a tautology. There is no Dart counterpart yet, because there
+is no Dart handshake yet; writing the vectors test first is the cheapest way
+to build one.
 
 ## Boot, NixOS and PAM
 
@@ -341,6 +366,16 @@ bytes.
 
 - `algorithm`: `SHA256withECDSA` — ECDSA P-256 with SHA-256, DER signature
 - public key: `EC_P256_SPKI` — X.509 SubjectPublicKeyInfo DER
+
+Enrolment frame, 9 elements, sent once after a pairing handshake:
+
+```text
+[3, protocolVersion, deviceName, credentialId, algorithm, publicKey,
+ keyKind, purpose, reserved]
+```
+
+The handshake that carries these frames is a separate contract, specified with
+its own test vectors in `protocol-handshake.md`.
 
 ## Files the agent owns
 

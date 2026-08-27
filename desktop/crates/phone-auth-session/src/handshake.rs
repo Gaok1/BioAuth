@@ -427,6 +427,22 @@ fn fixed<const N: usize>(bytes: &[u8], message: &'static str) -> Result<[u8; N],
         .map_err(|_| SessionError::InvalidFrame(message))
 }
 
+/// Hashes both hello bodies, length-prefixed.
+///
+/// Signatures are excluded: ECDSA is randomised, so including them would make
+/// the transcript depend on a value neither side can predict, without adding
+/// anything — each body already covers the other side's contribution.
+fn transcript_hash(server: &[u8], client: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"PhoneAuth/handshake-transcript/v1");
+    for field in [server, client] {
+        hasher.update((field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+    hasher.finalize().into()
+}
+
 #[cfg(test)]
 mod wire_vectors {
     use super::*;
@@ -542,20 +558,4 @@ mod wire_vectors {
         assert_eq!(decoded.ephemeral, [0x11; 32]);
         assert_eq!(decoded.nonce, nonce());
     }
-}
-
-/// Hashes both hello bodies, length-prefixed.
-///
-/// Signatures are excluded: ECDSA is randomised, so including them would make
-/// the transcript depend on a value neither side can predict, without adding
-/// anything — each body already covers the other side's contribution.
-fn transcript_hash(server: &[u8], client: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(b"PhoneAuth/handshake-transcript/v1");
-    for field in [server, client] {
-        hasher.update((field.len() as u64).to_be_bytes());
-        hasher.update(field);
-    }
-    hasher.finalize().into()
 }

@@ -5,45 +5,56 @@ import 'package:cryptography/cryptography.dart';
 
 const _domain = 'PhoneAuth/session-binding/v1';
 
+/// Inputs both peers must agree on to derive the same session binding.
 class SessionBindingInputs {
   SessionBindingInputs({
     required this.transportName,
     required this.sessionId,
-    required Uint8List verifierHandshakeKey,
-    required Uint8List peerHandshakeKey,
-    required Uint8List transcriptSecret,
-  }) : verifierHandshakeKey = Uint8List.fromList(verifierHandshakeKey),
-       peerHandshakeKey = Uint8List.fromList(peerHandshakeKey),
-       transcriptSecret = Uint8List.fromList(transcriptSecret) {
+    required Uint8List serverEphemeral,
+    required Uint8List clientEphemeral,
+    required Uint8List exporter,
+  }) : serverEphemeral = Uint8List.fromList(serverEphemeral),
+       clientEphemeral = Uint8List.fromList(clientEphemeral),
+       exporter = Uint8List.fromList(exporter) {
     if (transportName.isEmpty || sessionId.isEmpty) {
       throw ArgumentError('Transport and session identifiers must be present');
     }
-    if (verifierHandshakeKey.isEmpty ||
-        peerHandshakeKey.isEmpty ||
-        transcriptSecret.length < 32) {
-      throw ArgumentError('Handshake keys and a 32-byte secret are required');
+    if (serverEphemeral.isEmpty ||
+        clientEphemeral.isEmpty ||
+        exporter.length < 32) {
+      throw ArgumentError('Handshake keys and a 32-byte exporter are required');
     }
   }
 
+  /// The exact string the transport reports: `QrNetworkTransport`,
+  /// `BleTransport`. Both sides must use the same one, or every request fails.
   final String transportName;
   final String sessionId;
-  final Uint8List verifierHandshakeKey;
-  final Uint8List peerHandshakeKey;
-  final Uint8List transcriptSecret;
+
+  /// The verifier's ephemeral X25519 public key.
+  final Uint8List serverEphemeral;
+
+  /// The authenticator's ephemeral X25519 public key.
+  final Uint8List clientEphemeral;
+
+  /// `KeySchedule.exporter`. Never sent on the wire, which is what makes the
+  /// binding unforgeable by an observer who saw the whole handshake.
+  final Uint8List exporter;
 }
 
-/// Derives the exporter binding embedded in a transport-independent request.
+/// Derives the 32-byte session binding embedded in the signed request.
 ///
-/// This is byte-for-byte identical to the Rust verifier implementation. The
-/// transcript secret must come from an authenticated secure handshake; public
-/// bootstrap values alone are not sufficient.
+/// Byte-for-byte identical to the Rust verifier. Every field is length-prefixed
+/// because under plain concatenation a transport name ending in digits and a
+/// session id starting with them would hash the same as a different split of
+/// the same characters.
 Future<Uint8List> deriveSessionBinding(SessionBindingInputs inputs) async {
   final fields = <List<int>>[
     utf8.encode(inputs.transportName),
     utf8.encode(inputs.sessionId),
-    inputs.verifierHandshakeKey,
-    inputs.peerHandshakeKey,
-    inputs.transcriptSecret,
+    inputs.serverEphemeral,
+    inputs.clientEphemeral,
+    inputs.exporter,
   ];
   final bytes = BytesBuilder(copy: false)..add(utf8.encode(_domain));
   for (final field in fields) {

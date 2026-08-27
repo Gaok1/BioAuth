@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The phone dials the desktop over the local network; the desktop never
+         reaches in. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Reading the pairing QR code. Not required to run: an already-paired
+         phone never scans anything. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />

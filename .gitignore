@@ -11,3 +11,6 @@ local.properties
 *.jks
 *.keystore
 key.properties
+
+# electron-builder output
+desktop/dist/

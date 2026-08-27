@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'secure_session_establisher.dart';
+
 abstract interface class AuthTransport {
   TransportSecurityProperties get securityProperties;
 
@@ -9,9 +11,13 @@ abstract interface class AuthTransport {
 
   Stream<TransportPeer> discoverPeers();
 
-  Future<SecureTransportSession> connect(
+  /// Opens an authenticated, confidential session to [peer].
+  ///
+  /// [expectation] decides what the phone will accept on the other end: a
+  /// freshly scanned bootstrap, or the verifier key stored at pairing.
+  Future<SecureSessionOutcome> connect(
     TransportPeer peer,
-    SessionBootstrap bootstrap,
+    VerifierExpectation expectation,
   );
 }
 
@@ -20,54 +26,6 @@ class TransportPeer {
 
   final String transportId;
   final String displayName;
-}
-
-class SessionBootstrap {
-  SessionBootstrap({
-    required String sessionId,
-    required this.verifierId,
-    required Uint8List nonce,
-    required Uint8List ephemeralPublicKey,
-    required Uint8List verifierIdentityPublicKey,
-    required DateTime expiresAt,
-  }) : sessionId = sessionId,
-       nonce = Uint8List.fromList(nonce),
-       ephemeralPublicKey = Uint8List.fromList(ephemeralPublicKey),
-       verifierIdentityPublicKey = Uint8List.fromList(
-         verifierIdentityPublicKey,
-       ),
-       expiresAt = expiresAt.toUtc() {
-    if (sessionId.isEmpty || verifierId.isEmpty) {
-      throw ArgumentError('Session and verifier identifiers are required');
-    }
-    if (nonce.length != 32 ||
-        ephemeralPublicKey.length != 32 ||
-        verifierIdentityPublicKey.isEmpty) {
-      throw ArgumentError('Invalid secure-session bootstrap material');
-    }
-  }
-
-  SessionBootstrap.paired({
-    required this.verifierId,
-    required Uint8List verifierIdentityPublicKey,
-  }) : sessionId = null,
-       nonce = null,
-       ephemeralPublicKey = null,
-       verifierIdentityPublicKey = Uint8List.fromList(
-         verifierIdentityPublicKey,
-       ),
-       expiresAt = null {
-    if (verifierId.isEmpty || verifierIdentityPublicKey.isEmpty) {
-      throw ArgumentError('Paired verifier identity is required');
-    }
-  }
-
-  final String? sessionId;
-  final String verifierId;
-  final Uint8List? nonce;
-  final Uint8List? ephemeralPublicKey;
-  final Uint8List verifierIdentityPublicKey;
-  final DateTime? expiresAt;
 }
 
 abstract interface class SecureTransportSession {
