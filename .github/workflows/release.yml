@@ -23,6 +23,11 @@ jobs:
     name: Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # Lifted to the job so a step condition can read it: the `secrets` context
+    # is not available inside an `if`, and a workflow that references it there
+    # fails to parse rather than evaluating to false.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,9 +52,7 @@ jobs:
       # the release notes rather than letting it look production-signed.
       - name: Decode signing keystore
         id: signing
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > mobile/android/release.jks
           cat > mobile/android/key.properties <<EOF

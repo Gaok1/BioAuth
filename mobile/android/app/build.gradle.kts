@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Release signing material, supplied by the distribution pipeline and never
+// committed. Absent on a developer checkout and in any fork, where the release
+// build stays unsigned rather than falling back to a key everyone has.
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -52,10 +62,24 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Intentionally unsigned unless a release signing configuration is
-            // supplied by the distribution pipeline. Never reuse the debug key.
+            // Signed only when real material was supplied. Otherwise the build
+            // stays unsigned: reusing the debug key would produce something
+            // that installs and looks official while anyone could forge an
+            // update for it.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }
