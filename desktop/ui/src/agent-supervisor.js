@@ -94,8 +94,11 @@ class AgentSupervisor {
       this.child = null;
       if (this.stopped) return;
       this.onLog(`agent exited with ${code}`);
+      // Actually retry. This timer used to clear itself and do nothing, so
+      // RESTART_DELAY_MS described a restart that never happened.
       this.timer = setTimeout(() => {
         this.timer = null;
+        this.ensureRunning(false);
       }, RESTART_DELAY_MS);
     });
 

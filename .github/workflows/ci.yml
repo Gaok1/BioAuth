@@ -64,6 +64,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # No `npm ci`: the main-process modules under test require only Node
+      # built-ins, which is what makes them testable without Electron at all.
+      - name: Tray tests
+        working-directory: desktop/ui
+        run: npm test
       - name: Rust checks
         working-directory: desktop
         run: |

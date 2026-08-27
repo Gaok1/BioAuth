@@ -174,6 +174,11 @@ function wireAgent() {
     }
   });
 
+  // Started here as well as from the `status` handler. Whether the daemon comes
+  // up at all is too important to depend on an event having fired: this is the
+  // one thing the app exists to do, and on a packaged install nothing else will
+  // do it. `ensureRunning` is idempotent, so the two paths cannot race.
+  supervisor.ensureRunning(agent.isConnected());
   agent.start();
 }
 

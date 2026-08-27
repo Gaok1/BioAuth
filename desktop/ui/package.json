@@ -1,7 +1,7 @@
 {
   "name": "phone-auth-tray",
   "productName": "PhoneAuth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tray UI for the PhoneAuth background agent",
   "author": "Luis Phillip Lemos Martins <107713925+Gaok1@users.noreply.github.com>",
   "homepage": "https://github.com/Gaok1/BioAuth",
@@ -9,6 +9,7 @@
   "main": "src/main.js",
   "private": true,
   "scripts": {
+    "test": "node --test",
     "start": "electron .",
     "dev": "electron . --dev",
     "icons": "node tools/make-icons.js",

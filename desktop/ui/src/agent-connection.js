@@ -97,7 +97,6 @@ class AgentConnection extends EventEmitter {
   }
 
   fail(reason) {
-    const wasConnected = this.connected;
     this.connected = false;
     this.lastError = reason;
 
@@ -112,7 +111,13 @@ class AgentConnection extends EventEmitter {
     this.pending.clear();
     this.buffer = '';
 
-    if (wasConnected) this.emit('status', { connected: false, reason });
+    // Emitted on every failure, including the first. This used to fire only
+    // when the connection had previously been up, which deadlocked a fresh
+    // install: the supervisor starts the agent from this event, so an agent
+    // that had never run could never be started, and restarting the app landed
+    // in the same state. Silence is not a safe default for a signal something
+    // else acts on.
+    this.emit('status', { connected: false, reason });
     this.scheduleRetry();
   }
 
@@ -134,11 +139,13 @@ class AgentConnection extends EventEmitter {
   /** Issues one call. Rejects if the agent is not reachable. */
   call(method, params = {}) {
     return new Promise((resolve, reject) => {
+      // `subscribe` used to be exempt from this guard, which let it reach
+      // `this.socket.write` on a null socket. It is only ever issued from the
+      // `connect` handler, where the socket exists and `connected` is already
+      // true, so the exemption bought nothing and could only throw.
       if (!this.socket || !this.connected) {
-        if (method !== 'subscribe') {
-          reject(new Error(this.lastError || 'agent not connected'));
-          return;
-        }
+        reject(new Error(this.lastError || 'agent not connected'));
+        return;
       }
       const id = this.nextId++;
       this.pending.set(id, { resolve, reject });
