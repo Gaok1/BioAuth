@@ -5,6 +5,11 @@
 .kotlin/
 .metadata
 build/
+# ...except this one, which is installer source rather than build output. The
+# rule above is for Flutter and Gradle; it swallowed the NSIS script and the
+# Windows job failed looking for a file that had never been committed.
+!desktop/ui/build/
+!desktop/ui/build/**
 coverage/
 local.properties
 *.iml

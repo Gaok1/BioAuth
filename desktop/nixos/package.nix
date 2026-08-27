@@ -13,6 +13,8 @@
   makeWrapper,
   nodejs,
   fetchNpmDeps,
+  pkg-config,
+  dbus,
 }:
 rustPlatform.buildRustPackage ({
   pname = "phone-auth";
@@ -35,7 +37,11 @@ rustPlatform.buildRustPackage ({
     "phone-auth-initrd"
   ];
 
-  nativeBuildInputs = lib.optionals withTray [ makeWrapper nodejs ];
+  # The agent talks to BlueZ over D-Bus, so `libdbus-sys` builds against the
+  # system library and finds it through pkg-config. The CI job installs these
+  # with apt; inside the Nix sandbox there is no system to inherit them from.
+  nativeBuildInputs = [ pkg-config ] ++ lib.optionals withTray [ makeWrapper nodejs ];
+  buildInputs = [ dbus ];
 
   postInstall = lib.optionalString withTray ''
     mkdir -p $out/share/phone-auth
