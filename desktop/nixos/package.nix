@@ -61,7 +61,8 @@ rustPlatform.buildRustPackage ({
       against a hardware-backed public key.
 
       The QR/network transport works over the local network. Bluetooth LE is
-      implemented on the phone only; the desktop's GATT adapter is outstanding.
+      implemented on both sides — the phone's GATT client and this agent's
+      BlueZ peripheral — and still awaits real-device validation.
       See docs/desktop.md.
     '';
     license = licenses.mit;

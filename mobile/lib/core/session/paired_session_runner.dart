@@ -68,6 +68,7 @@ class PairedSessionRunner {
       loop.stop();
     }
     _loops.clear();
+    await _service.stop();
     for (final requestId in _consent.pendingRequestIds.toList()) {
       _consent.abandon(requestId, StateError('Conexão encerrada'));
     }

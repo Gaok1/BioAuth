@@ -67,13 +67,17 @@ class PairingController extends Notifier<PairingState> {
     final session = _pending;
     if (session == null) return;
     _pending = null;
-    await session.confirm();
-    ref.invalidate(pairedVerifiersProvider);
-    state = PairingState(
-      stage: PairingStage.paired,
-      verifierId: session.proposed.verifierId,
-      message: 'Pareado com ${session.proposed.verifierId}.',
-    );
+    try {
+      await session.confirm();
+      ref.invalidate(pairedVerifiersProvider);
+      state = PairingState(
+        stage: PairingStage.paired,
+        verifierId: session.proposed.verifierId,
+        message: 'Pareado com ${session.proposed.verifierId}.',
+      );
+    } on Object catch (error) {
+      _fail(_readable(error));
+    }
   }
 
   /// The user says they do not, or backs out.

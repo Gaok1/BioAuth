@@ -4,6 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/bluetooth/ble_frame_codec.dart';
 
 void main() {
+  test('uses the shared Rust-compatible big-endian chunk header', () {
+    final chunks = BleFrameCodec()
+        .encode(Uint8List.fromList('abcdefghij'.codeUnits), attPayloadBytes: 10)
+        .map((chunk) => chunk.toList())
+        .toList();
+
+    expect(chunks, [
+      [0, 0, 0, 0, 0, 3, 97, 98, 99, 100],
+      [0, 0, 0, 1, 0, 3, 101, 102, 103, 104],
+      [0, 0, 0, 2, 0, 3, 105, 106],
+    ]);
+  });
+
   test('fragments and reassembles a bounded frame out of order', () {
     final sender = BleFrameCodec();
     final receiver = BleFrameCodec();

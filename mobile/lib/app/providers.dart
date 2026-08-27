@@ -6,12 +6,14 @@
 /// on-device storage.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_controller.dart';
 
 import '../core/auth/interactive_authorizer.dart';
 import '../core/auth/native_biometric_authorizer.dart';
+import '../core/bluetooth/ble_transport.dart';
 import '../core/pairing/pairing_record.dart';
 import '../core/pairing/pairing_service.dart';
 import '../core/pairing/pairing_store.dart';
@@ -19,6 +21,7 @@ import '../core/session/paired_session_runner.dart';
 import '../core/session/phone_auth_core.dart';
 import '../core/transport/auth_transport.dart';
 import '../core/transport/authenticated_session_establisher.dart';
+import '../core/transport/fallback_auth_transport.dart';
 import '../core/transport/qr_network_transport.dart';
 import '../core/transport/secure_session_establisher.dart';
 import '../core/transport/session_identity_crypto.dart';
@@ -57,8 +60,13 @@ final sessionEstablisherProvider = FutureProvider<SecureSessionEstablisher>((
 });
 
 final transportProvider = FutureProvider<AuthTransport>((ref) async {
-  return QrNetworkTransport(
-    sessionEstablisher: await ref.watch(sessionEstablisherProvider.future),
+  final establisher = await ref.watch(sessionEstablisherProvider.future);
+  final network = QrNetworkTransport(sessionEstablisher: establisher);
+  if (defaultTargetPlatform != TargetPlatform.android) return network;
+
+  return FallbackAuthTransport(
+    primary: network,
+    discoveredFallback: BleTransport(sessionEstablisher: establisher),
   );
 });
 
@@ -79,6 +87,16 @@ final pairedVerifiersProvider = FutureProvider<List<PairingRecord>>(
   (ref) => ref.watch(pairingStoreProvider).load(),
 );
 
+/// Reflects durable pairings into UI state independently of session startup.
+///
+/// A provider listener is allowed to update another provider; doing it inside
+/// the session runner's build made the devices list depend on transport timing.
+final pairedDevicesSyncProvider = Provider<void>((ref) {
+  ref.listen(pairedVerifiersProvider, (_, next) {
+    next.whenData(ref.read(appControllerProvider.notifier).syncPairedDevices);
+  }, fireImmediately: true);
+});
+
 /// The bridge between an arriving request and the screen the user taps.
 ///
 /// Also the app's [PhoneAuthenticator]: the tap and the biometric prompt are
@@ -96,7 +114,9 @@ final interactiveAuthorizerProvider = Provider<InteractiveAuthorizer>((ref) {
 ///
 /// Nothing runs until a widget watches this, which is deliberate: a phone with
 /// the app closed should not be holding sockets open.
-final pairedSessionRunnerProvider = Provider<PairedSessionRunner?>((ref) {
+final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
+  ref,
+) {
   final transport = ref.watch(transportProvider).value;
   final records = ref.watch(pairedVerifiersProvider).value;
   if (transport == null || records == null) return null;
@@ -106,7 +126,6 @@ final pairedSessionRunnerProvider = Provider<PairedSessionRunner?>((ref) {
     authorizer: ref.watch(biometricAuthorizerProvider),
     consent: ref.watch(interactiveAuthorizerProvider),
   );
-  ref.read(appControllerProvider.notifier).syncPairedDevices(records);
   runner.sync(records);
   ref.onDispose(runner.stop);
   return runner;

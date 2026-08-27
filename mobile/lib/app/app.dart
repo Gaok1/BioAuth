@@ -41,16 +41,49 @@ class _Home extends ConsumerWidget {
 /// phone is listening. It is deliberately not in `main`: an app that is not
 /// running has no business holding sockets open, and the mock flavour must be
 /// able to run with no network at all.
-class _SessionHost extends ConsumerWidget {
+class _SessionHost extends ConsumerStatefulWidget {
   const _SessionHost({required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SessionHost> createState() => _SessionHostState();
+}
+
+class _SessionHostState extends ConsumerState<_SessionHost>
+    with WidgetsBindingObserver {
+  bool _foreground = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `inactive` counts as on screen. Android reports it whenever the window
+    // loses focus — the notification shade, a permission dialog, and the
+    // biometric prompt itself. Tearing the session down there would abandon
+    // the very request the user is authenticating.
+    final foreground =
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    if (foreground != _foreground) setState(() => _foreground = foreground);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     if (!ref.watch(appConfigProvider).mockEnabled) {
-      ref.watch(pairedSessionRunnerProvider);
+      ref.watch(pairedDevicesSyncProvider);
+      if (_foreground) ref.watch(pairedSessionRunnerProvider);
     }
-    return child;
+    return widget.child;
   }
 }

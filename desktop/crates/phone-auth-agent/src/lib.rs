@@ -6,6 +6,9 @@
 
 pub mod api;
 pub mod audit;
+#[cfg(target_os = "linux")]
+pub mod ble;
+pub mod ble_framing;
 pub mod client;
 pub mod config;
 pub mod framing;

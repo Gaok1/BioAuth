@@ -11,7 +11,7 @@
 - [x] Full FakeTransport -> biometric abstraction -> signature -> verifier test
 - [x] Android Keystore authorization credential
 - [x] `BIOMETRIC_STRONG` + `BiometricPrompt.CryptoObject(Signature)`
-- [ ] Cryptographic PhoneAuth pairing and per-verifier permissions
+- [x] Cryptographic PhoneAuth pairing and per-verifier permissions
 - [x] Desktop agent, CLI verifier and tray UI (see `desktop.md`)
 
 Exit gate: the same encoded request and authorization core run unchanged over a
@@ -19,19 +19,21 @@ fake session and BLE; the verifier checks the full context-bound signature.
 
 The transport-independent gate is met in tests: `FakeTransport` and
 `BleTransport` use the same `PhoneAuthCore`, protocol frames, authorization
-policy, and full-context signature. Physical BLE currently reaches Android's
-native GATT client and framing layer, but production pairing/session handshake
-and the desktop BLE adapter are still required before claiming real-device
-end-to-end authorization.
+policy, and full-context signature. Physical BLE reaches Android's native GATT
+client and the Linux/BlueZ GATT server, using the production session handshake
+and shared framing. A real-device run is still required before claiming
+end-to-end BLE authorization.
 
 ## Phase 1A — BLE transport
 
 - [x] Android scanning/GATT client, explicit permissions, MTU, notifications,
       bounded framing, disconnect handling, and connection timeout
 - [x] Transport substitution test with the same core and request semantics
-- [ ] Desktop GATT server/role implementation and real-device tests
-- [ ] Cryptographic pairing and production secure session handshake
-- [ ] Reconnect policy, ping/pong, and app lifecycle integration
+- [x] Linux/BlueZ desktop GATT server/role implementation
+- [ ] Real-device BLE authorization tests
+- [x] Cryptographic pairing and production secure session handshake
+- [x] Paired-session reconnect policy and foreground lifecycle teardown
+- Ping/pong only if sessions become long-lived; current sessions carry one request
 - Android background behavior with explicit user-visible policy
 
 BLE remains optional and never leaks BLE concepts into protocol/domain types.

@@ -52,8 +52,26 @@ class PairingSession {
   Future<void> confirm() async {
     if (_settled) return;
     _settled = true;
-    await _store.save(proposed);
-    await _session.close();
+    try {
+      await _store.save(proposed);
+    } on Object {
+      // The record is the commit. If it cannot be written, this pairing did
+      // not happen and the half-open transport is no longer useful.
+      try {
+        await _session.close();
+      } on Object {
+        // Preserve the storage error, which is the actionable failure.
+      }
+      rethrow;
+    }
+    // The desktop may close first after its own confirmation. Once the record
+    // is durable, a dead socket cannot turn a successful pairing into a UI
+    // failure or prevent the devices provider from being refreshed.
+    try {
+      await _session.close();
+    } on Object {
+      // Best effort after the local commit.
+    }
   }
 
   /// The user says they do not, or backs out.

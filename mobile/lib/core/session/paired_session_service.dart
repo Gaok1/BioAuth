@@ -36,6 +36,25 @@ class PairedSessionService {
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
   final DateTime Function()? _clock;
+  final Set<SecureTransportSession> _active = {};
+  bool _stopped = false;
+
+  /// Stops discovery and closes sessions when the app leaves the foreground.
+  Future<void> stop() async {
+    if (_stopped) return;
+    _stopped = true;
+    await _transport.stop();
+    await Future.wait(
+      _active.toList().map((session) async {
+        try {
+          await session.close();
+        } on Object {
+          // Every session is independent; one broken link must not keep the
+          // others alive after the lifecycle owner has stopped.
+        }
+      }),
+    );
+  }
 
   /// Connects, waits for one request, answers it, and closes.
   ///
@@ -43,6 +62,7 @@ class PairedSessionService {
   /// nothing before the timeout. A null is not an error: the caller simply
   /// dials again.
   Future<AuthResponse?> serveOne(PairingRecord record) async {
+    if (_stopped) throw StateError('Serviço de sessões encerrado');
     final outcome = await _transport.connect(
       TransportPeer(
         transportId: record.endpoint,
@@ -50,6 +70,10 @@ class PairedSessionService {
       ),
       PairedVerifier(record.verifierIdentitySpki),
     );
+    if (_stopped) {
+      await outcome.session.close();
+      throw StateError('Serviço de sessões encerrado');
+    }
     if (outcome.wasPairing) {
       // The transport reported first contact for a device that is already
       // paired. Nothing about that session is trusted.
@@ -58,6 +82,7 @@ class PairedSessionService {
         'O computador respondeu como se nunca tivesse sido pareado',
       );
     }
+    _active.add(outcome.session);
 
     final core = PhoneAuthCore(
       authorizer: _authorizer,
@@ -73,6 +98,8 @@ class PairedSessionService {
     } on TimeoutException {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
+    } finally {
+      _active.remove(outcome.session);
     }
   }
 }

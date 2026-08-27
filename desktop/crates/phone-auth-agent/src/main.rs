@@ -16,6 +16,8 @@ use phone_auth_agent::qr_network::{self, QrNetworkTransport};
 use phone_auth_agent::service::Service;
 #[cfg(feature = "dev-simulator")]
 use phone_auth_agent::simulator;
+use phone_auth_agent::transport::Transport;
+use phone_auth_session::IdentityKey;
 
 const USAGE: &str = "\
 phone-auth-agent — background PhoneAuth verifier
@@ -123,6 +125,12 @@ fn run(args: Args) -> Result<(), String> {
     let identity_spki = identity
         .public_key_spki()
         .map_err(|error| format!("could not read the identity key: {error}"))?;
+    let additional_transports = start_additional_transports(
+        &identity,
+        &config.verifier_id,
+        &config.verifier_name,
+        args.dev_simulator,
+    );
 
     let network = QrNetworkTransport::bind(
         identity,
@@ -154,6 +162,7 @@ fn run(args: Args) -> Result<(), String> {
         config,
         paths.clone(),
         Some(Arc::clone(&network)),
+        additional_transports,
         args.dev_simulator,
     )
     .map_err(|error| error.to_string())?;
@@ -174,6 +183,49 @@ fn run(args: Args) -> Result<(), String> {
 
     ipc::clear_endpoint(&paths);
     result
+}
+
+fn start_additional_transports(
+    identity: &IdentityKey,
+    verifier_id: &str,
+    verifier_name: &str,
+    is_development: bool,
+) -> Vec<Arc<dyn Transport>> {
+    #[cfg(target_os = "linux")]
+    {
+        use phone_auth_agent::ble::BleTransport;
+
+        let ble = identity
+            .to_pkcs8_der()
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                IdentityKey::from_pkcs8_der(&bytes).map_err(|error| error.to_string())
+            })
+            .and_then(|identity| {
+                BleTransport::start(
+                    identity,
+                    verifier_id.to_owned(),
+                    verifier_name.to_owned(),
+                    is_development,
+                )
+            });
+        match ble {
+            Ok(transport) => {
+                println!("phone-auth-agent: advertising Bluetooth LE");
+                vec![Arc::new(transport)]
+            }
+            Err(error) => {
+                eprintln!("phone-auth-agent: Bluetooth LE unavailable ({error})");
+                Vec::new()
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (identity, verifier_id, verifier_name, is_development);
+        Vec::new()
+    }
 }
 
 /// A build without the feature must not silently ignore `--dev-simulator` and

@@ -157,11 +157,10 @@ that boundary without changing the protocol or authorization core.
   length-prefixed frames, and the two-message handshake. This is the shortest
   path to a working phone.
 - **`BleTransport`** — the mobile Android GATT client, bounded framing, MTU,
-  notifications, permissions and timeout behaviour exist. It still needs the
-  desktop GATT server, reconnect policy and Android background policy. The
-  agent lists it as `unimplemented` rather than pretending the raw link is
-  secure. The handshake above it is the same one `QrNetworkTransport` uses, so
-  that work is not repeated.
+  notifications, permissions and timeout behaviour exist. The Linux agent now
+  advertises the matching BlueZ GATT service, authenticates the phone with the
+  shared production handshake and parks the secure session for the verifier.
+  Real-device validation, reconnect policy and Android background policy remain.
 
 Until one exists, `phone-auth authorize` exits 3 (`no-transport`) with a real
 phone.

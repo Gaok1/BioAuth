@@ -5,6 +5,7 @@
 //! that are planned but not built report themselves as such, so the tray and
 //! the CLI can say precisely what is missing instead of failing vaguely.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use phone_auth_verifier::SecureSession;
@@ -51,6 +52,10 @@ pub trait Transport: Send + Sync {
 
     fn availability(&self) -> TransportAvailability;
 
+    /// Mirrors paired device ids to session identity keys for inbound links.
+    /// Outbound transports do not need the map and keep the default no-op.
+    fn set_known_peers(&self, _peers: HashMap<String, Vec<u8>>) {}
+
     /// Opens a session, or explains why not.
     fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String>;
 }
@@ -78,13 +83,23 @@ impl TransportRegistry {
     /// yet, not an empty list that looks like a hardware fault.
     pub fn new(available: Vec<Arc<dyn Transport>>) -> Self {
         let mut transports = available;
-        transports.push(Arc::new(PlannedTransport {
-            name: "BleTransport",
-            description: "Bluetooth Low Energy link to a paired phone",
-            blocked_on:
-                "mobile: BleTransport implementation over the shared handshake (roadmap phase 1A)",
-        }));
+        if !transports
+            .iter()
+            .any(|transport| transport.name() == "BleTransport")
+        {
+            transports.push(Arc::new(PlannedTransport {
+                name: "BleTransport",
+                description: "Bluetooth Low Energy link to a paired phone",
+                blocked_on: "a supported desktop GATT peripheral (Linux BlueZ is implemented)",
+            }));
+        }
         Self { transports }
+    }
+
+    pub fn set_known_peers(&self, peers: HashMap<String, Vec<u8>>) {
+        for transport in &self.transports {
+            transport.set_known_peers(peers.clone());
+        }
     }
 
     pub fn status(&self) -> Vec<TransportStatus> {
@@ -106,15 +121,26 @@ impl TransportRegistry {
 
     /// Opens a session over the first ready transport.
     pub fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
-        let transport = self
+        let ready: Vec<_> = self
             .transports
             .iter()
-            .find(|transport| transport.availability().is_ready())
-            .ok_or_else(|| {
+            .filter(|transport| transport.availability().is_ready())
+            .collect();
+        if ready.is_empty() {
+            return Err(
                 "no transport can reach a phone yet; see `transports` in `phone-auth status`"
-                    .to_owned()
-            })?;
-        transport.connect(device_id)
+                    .to_owned(),
+            );
+        }
+
+        let mut errors = Vec::new();
+        for transport in ready {
+            match transport.connect(device_id) {
+                Ok(session) => return Ok(session),
+                Err(error) => errors.push(format!("{}: {error}", transport.name())),
+            }
+        }
+        Err(errors.join("; "))
     }
 }
 
@@ -154,6 +180,26 @@ impl Transport for PlannedTransport {
 mod tests {
     use super::*;
 
+    struct FailingTransport(&'static str);
+
+    impl Transport for FailingTransport {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn description(&self) -> &str {
+            self.0
+        }
+
+        fn availability(&self) -> TransportAvailability {
+            TransportAvailability::Ready
+        }
+
+        fn connect(&self, _device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+            Err(format!("{} cannot reach it", self.0))
+        }
+    }
+
     #[test]
     fn a_registry_with_nothing_available_has_nothing_ready() {
         let registry = TransportRegistry::new(Vec::new());
@@ -170,8 +216,8 @@ mod tests {
             match &entry.availability {
                 TransportAvailability::Unimplemented { blocked_on } => {
                     assert!(
-                        blocked_on.contains("mobile"),
-                        "`{}` must name the mobile work it waits on",
+                        blocked_on.contains("desktop") || blocked_on.contains("BlueZ"),
+                        "`{}` must name the platform support it waits on",
                         entry.name
                     );
                 }
@@ -198,5 +244,25 @@ mod tests {
             Ok(_) => panic!("a registry with no ready transport must not connect"),
             Err(error) => assert!(error.contains("no transport"), "{error}"),
         }
+    }
+
+    #[test]
+    fn connection_attempts_every_ready_transport() {
+        let registry = TransportRegistry::new(vec![
+            Arc::new(FailingTransport("first")),
+            Arc::new(FailingTransport("second")),
+        ]);
+        let error = match registry.connect("phone-1") {
+            Ok(_) => panic!("both transports fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("first"), "{error}");
+        assert!(error.contains("second"), "{error}");
+        // Attempt order is the registration order. The service relies on it to
+        // keep BLE's ten-second wait behind the LAN transport.
+        assert!(
+            error.find("first") < error.find("second"),
+            "transports are tried in registration order: {error}"
+        );
     }
 }

@@ -1,0 +1,170 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:phone_auth/app/app.dart';
+import 'package:phone_auth/app/config.dart';
+import 'package:phone_auth/app/providers.dart';
+import 'package:phone_auth/core/pairing/pairing_record.dart';
+import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/core/transport/auth_transport.dart';
+import 'package:phone_auth/core/transport/secure_session_establisher.dart';
+
+final _record = PairingRecord(
+  verifierId: 'desktop-1',
+  verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
+  endpoint: '192.0.2.1:42371',
+  credentialId: 'credential-1',
+  keyKind: KeyKind.hardware,
+  purpose: CredentialPurpose.authorization,
+  pairedAt: DateTime.utc(2026, 8, 27),
+);
+
+void main() {
+  testWidgets('backgrounding the app closes the paired session', (
+    tester,
+  ) async {
+    final session = _IdleSession();
+    final transport = _LifecycleTransport(session);
+    final record = _record;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appConfigProvider.overrideWithValue(const AppConfig.production()),
+          pairedVerifiersProvider.overrideWith((ref) async => [record]),
+          transportProvider.overrideWith((ref) async => transport),
+        ],
+        child: const PhoneAuthApp(),
+      ),
+    );
+    for (var pump = 0; pump < 5 && !session.listening.isCompleted; pump++) {
+      await tester.pump();
+    }
+    expect(session.listening.isCompleted, isTrue);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    await tester.pump();
+
+    expect(transport.stopped, isTrue);
+    expect(session.closed, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+
+  // Android reports `inactive` for the biometric prompt, the notification
+  // shade and permission dialogs. The app is still on screen, and the session
+  // waiting on that prompt has to survive it.
+  testWidgets('losing window focus keeps the paired session open', (
+    tester,
+  ) async {
+    final session = _IdleSession();
+    final transport = _LifecycleTransport(session);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appConfigProvider.overrideWithValue(const AppConfig.production()),
+          pairedVerifiersProvider.overrideWith((ref) async => [_record]),
+          transportProvider.overrideWith((ref) async => transport),
+        ],
+        child: const PhoneAuthApp(),
+      ),
+    );
+    for (var pump = 0; pump < 5 && !session.listening.isCompleted; pump++) {
+      await tester.pump();
+    }
+    expect(session.listening.isCompleted, isTrue);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    await tester.pump();
+
+    expect(transport.stopped, isFalse);
+    expect(session.closed, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+}
+
+class _LifecycleTransport implements AuthTransport {
+  _LifecycleTransport(this.session);
+
+  final _IdleSession session;
+  bool stopped = false;
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {
+    stopped = true;
+  }
+
+  @override
+  Stream<TransportPeer> discoverPeers() => const Stream.empty();
+
+  @override
+  Future<SecureSessionOutcome> connect(
+    TransportPeer peer,
+    VerifierExpectation expectation,
+  ) async => SecureSessionOutcome(
+    session: session,
+    verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
+    verifierId: 'desktop-1',
+    sessionId: 'session-1',
+    verificationCode: '123456',
+    wasPairing: false,
+  );
+}
+
+class _IdleSession implements SecureTransportSession {
+  _IdleSession() {
+    _incoming = StreamController<Uint8List>(onListen: listening.complete);
+  }
+
+  late final StreamController<Uint8List> _incoming;
+  final listening = Completer<void>();
+  bool closed = false;
+
+  @override
+  String get originLabel => 'test';
+
+  @override
+  Uint8List get sessionBinding => Uint8List(32);
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Stream<Uint8List> get incomingFrames => _incoming.stream;
+
+  @override
+  Future<void> send(Uint8List frame) async {}
+
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    await _incoming.close();
+  }
+}
+
+const _properties = TransportSecurityProperties(
+  transportName: 'test',
+  confidential: true,
+  peerAuthenticated: true,
+  requiresNetwork: false,
+  proximitySignal: false,
+  expectedLatency: Duration.zero,
+);

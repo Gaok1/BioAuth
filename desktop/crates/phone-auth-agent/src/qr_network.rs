@@ -282,6 +282,10 @@ impl Transport for QrNetworkTransport {
         TransportAvailability::Ready
     }
 
+    fn set_known_peers(&self, peers: HashMap<String, Vec<u8>>) {
+        QrNetworkTransport::set_known_peers(self, peers);
+    }
+
     fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
         // A short wait rather than an immediate answer: the phone may be
         // reconnecting right now, and failing instantly would turn a normal
@@ -515,7 +519,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
 /// Only used to choose which stored key to check the hello against. Nothing is
 /// trusted on the strength of this: an unpaired id falls through to the
 /// pairing path, and a paired one still has to produce a valid signature.
-fn peek_device_id(client_frame: &[u8]) -> Result<String, String> {
+pub(crate) fn peek_device_id(client_frame: &[u8]) -> Result<String, String> {
     use phone_auth_protocol::cbor::Reader;
 
     let mut reader = Reader::new(client_frame);

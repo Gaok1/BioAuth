@@ -80,6 +80,7 @@ impl Service {
         config: AgentConfig,
         paths: Paths,
         network: Option<Arc<QrNetworkTransport>>,
+        mut additional_transports: Vec<Arc<dyn Transport>>,
         development_mode: bool,
     ) -> Result<Self, ServiceError> {
         let store = PairingStore::load(paths.pairing_file())
@@ -90,14 +91,17 @@ impl Service {
         };
         let audit = AuditLog::new(paths.audit_file());
 
-        let available: Vec<Arc<dyn Transport>> = network
-            .clone()
-            .map(|transport| vec![transport as Arc<dyn Transport>])
-            .unwrap_or_default();
+        // The registry tries transports in order, and BLE's connect waits ten
+        // seconds for the phone to park a session. Putting the LAN transport
+        // first keeps that wait off the common path and mirrors the phone,
+        // which also treats the network as primary and BLE as the fallback.
+        if let Some(network) = network.clone() {
+            additional_transports.insert(0, network as Arc<dyn Transport>);
+        }
 
         let service = Self {
             verifier: Verifier::new(identity, store),
-            transports: TransportRegistry::new(available),
+            transports: TransportRegistry::new(additional_transports),
             network,
             held_proposal: Mutex::new(None),
             audit,
@@ -117,9 +121,6 @@ impl Service {
     /// that without locking the service — the service may be blocked waiting
     /// on that very connection.
     fn publish_known_peers(&self) {
-        let Some(network) = &self.network else {
-            return;
-        };
         let peers = self
             .verifier
             .store()
@@ -131,7 +132,7 @@ impl Service {
                 )
             })
             .collect();
-        network.set_known_peers(peers);
+        self.transports.set_known_peers(peers);
     }
 
     pub fn development_mode(&self) -> bool {

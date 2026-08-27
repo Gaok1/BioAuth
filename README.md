@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/media/mark.png" width="88" alt="">
+
 # PhoneAuth
 
 **Approve your computer's logins with your phone's fingerprint.**
@@ -140,7 +142,7 @@ Honest about what is finished:
 | QR / local-network transport | **Done.** Phone and desktop, end-to-end over a real socket |
 | Pairing, enrolment, verification code | **Done** |
 | Android biometric signing | **Implemented.** Keystore, `BIOMETRIC_STRONG`, auth-per-use |
-| Bluetooth LE transport | Phone side only; the desktop's GATT adapter is open |
+| Bluetooth LE transport | Android LAN→BLE fallback and Linux/BlueZ GATT server implemented; physical-device validation pending |
 | Disk unlock from the initrd | Scaffold. Not wired to a real LUKS flow yet |
 | iOS | Project exists, Secure Enclave bridge does not |
 
