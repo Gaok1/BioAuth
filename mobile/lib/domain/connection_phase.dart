@@ -11,6 +11,11 @@ enum ConnectionPhase {
   denied,
   expired,
   error,
+
+  /// The record is being deleted. Shown until the removal is durable, because
+  /// a row that vanishes before the store is written promises something that
+  /// has not happened yet.
+  revoking,
 }
 
 extension ConnectionPhaseLabel on ConnectionPhase {
@@ -27,5 +32,6 @@ extension ConnectionPhaseLabel on ConnectionPhase {
     ConnectionPhase.denied => 'Negado',
     ConnectionPhase.expired => 'Expirado',
     ConnectionPhase.error => 'Erro',
+    ConnectionPhase.revoking => 'Revogando',
   };
 }

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app_controller.dart';
 import 'package:phone_auth/app/config.dart';
+import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/mock/fake_phone_authenticator.dart';
+import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/mock/mock_seed.dart';
 import 'package:phone_auth/domain/audit_entry.dart';
 import 'package:phone_auth/domain/authentication_request.dart';
@@ -24,6 +26,7 @@ void main() {
         phoneAuthenticatorProvider.overrideWithValue(
           const FakePhoneAuthenticator(),
         ),
+        pairingStoreProvider.overrideWithValue(InMemoryPairingStore()),
       ],
     );
     addTearDown(container.dispose);
@@ -90,7 +93,7 @@ void main() {
     expect(device.isBlockedAt(now), isTrue);
   });
 
-  test('denial and revocation update local state', () {
+  test('denial and revocation update local state', () async {
     final controller = container.read(appControllerProvider.notifier);
     controller.deny('mock-request-1', at: now);
     expect(
@@ -98,7 +101,9 @@ void main() {
       AuditOutcome.denied,
     );
 
-    controller.revokeDevice('notebook');
+    // Revocation now writes through to the store before touching the screen,
+    // so it is asynchronous and needs somewhere to write.
+    await controller.revokeDevice('notebook');
     expect(
       container
           .read(appControllerProvider)

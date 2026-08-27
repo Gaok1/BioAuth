@@ -198,6 +198,20 @@ impl QrNetworkTransport {
         state.proposal = None;
     }
 
+    /// Drops any parked session belonging to a device.
+    ///
+    /// Forgetting a phone has to reach the sessions already sitting here, not
+    /// only the peer table, or the next authorization would run over a channel
+    /// opened while the pairing still existed.
+    pub fn discard_sessions(&self, device_id: &str) {
+        self.shared
+            .state
+            .lock()
+            .expect("state mutex")
+            .sessions
+            .remove(device_id);
+    }
+
     /// Takes a completed pairing proposal, if one has arrived.
     pub fn take_proposal(&self) -> Option<PairingProposal> {
         self.shared
@@ -472,14 +486,30 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
 
     let mut channel = outcome.channel;
 
-    if outcome.was_pairing {
-        // A pairing session exists only to carry the enrolment. It is never
-        // parked for authorization: nothing about it is trusted until the user
-        // has compared the verification code.
+    // A pairing session exists only to carry the enrolment. It is never parked
+    // for authorization: nothing about it is trusted until the user has
+    // compared the verification code.
+    let enrolment = if outcome.was_pairing {
         let record = read_frame(&mut stream).map_err(|error| error.to_string())?;
         let frame = channel.open(&record).map_err(|error| error.to_string())?;
-        let enrolment = Enrolment::decode(&frame).map_err(|error| error.to_string())?;
+        Some(Enrolment::decode(&frame).map_err(|error| error.to_string())?)
+    } else if armed.is_some() {
+        // A phone this computer already knows can still be pairing afresh.
+        // Revoking on the phone does not change its session identity, so the
+        // handshake above verifies exactly as a reconnect would, and the
+        // desktop used to park the session and sit on the QR forever while the
+        // phone showed a code nobody could confirm.
+        //
+        // What separates the two is who speaks next: a pairing phone sends its
+        // enrolment straight away, a reconnecting one waits to be asked. Only
+        // look while a code is actually armed, so an ordinary reconnect is
+        // never held up outside the window the user deliberately opened.
+        peek_enrolment(&mut stream, &mut channel)?
+    } else {
+        None
+    };
 
+    if let Some(enrolment) = enrolment {
         let mut state = shared.state.lock().expect("state mutex");
         state.armed_pairing = None;
         state.proposal = Some(PairingProposal {
@@ -512,6 +542,48 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
     state.last_error = None;
     shared.signal.notify_all();
     Ok(())
+}
+
+/// How long a known phone gets to declare itself as re-pairing.
+///
+/// Only spent while a pairing code is armed, and only before parking a session
+/// that would otherwise sit idle anyway.
+const RE_ENROLMENT_WINDOW: Duration = Duration::from_secs(2);
+
+/// Looks for an enrolment from a phone that already has a stored key.
+///
+/// Silence is the ordinary answer and means this is a reconnect. Only a phone
+/// that scanned the armed code sends anything here, because in a paired
+/// session the desktop always speaks first.
+fn peek_enrolment(
+    stream: &mut TcpStream,
+    channel: &mut SecureChannel,
+) -> Result<Option<Enrolment>, String> {
+    stream
+        .set_read_timeout(Some(RE_ENROLMENT_WINDOW))
+        .map_err(|error| error.to_string())?;
+    let record = read_frame(stream);
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(|error| error.to_string())?;
+
+    let record = match record {
+        Ok(record) => record,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            return Ok(None)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let frame = channel.open(&record).map_err(|error| error.to_string())?;
+    Enrolment::decode(&frame)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 /// Reads the device id out of a client hello without verifying it.

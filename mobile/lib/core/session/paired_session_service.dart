@@ -37,8 +37,11 @@ class PairedSessionService {
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
   final DateTime Function()? _clock;
-  final Set<SecureTransportSession> _active = {};
+  // Keyed by verifier: one loop dials each desktop, so one session per
+  // verifier is live at a time, and revoking has to reach exactly that one.
+  final Map<String, SecureTransportSession> _active = {};
   final WebAuthnRelayHandler _webAuthn = const WebAuthnRelayHandler();
+  final Set<String> _closed = {};
   bool _stopped = false;
 
   /// Stops discovery and closes sessions when the app leaves the foreground.
@@ -46,16 +49,30 @@ class PairedSessionService {
     if (_stopped) return;
     _stopped = true;
     await _transport.stop();
-    await Future.wait(
-      _active.toList().map((session) async {
-        try {
-          await session.close();
-        } on Object {
-          // Every session is independent; one broken link must not keep the
-          // others alive after the lifecycle owner has stopped.
-        }
-      }),
-    );
+    await Future.wait(_active.values.toList().map(_close));
+  }
+
+  /// Closes the live session with one verifier and refuses later ones.
+  ///
+  /// Revocation cannot wait for the idle timeout: until this returns, the
+  /// phone still holds an authenticated channel to a desktop the user has
+  /// just said they no longer trust.
+  Future<void> closeDevice(String verifierId) async {
+    _closed.add(verifierId);
+    final session = _active.remove(verifierId);
+    if (session != null) await _close(session);
+  }
+
+  /// Lets a verifier be served again, after pairing with it afresh.
+  void allowDevice(String verifierId) => _closed.remove(verifierId);
+
+  Future<void> _close(SecureTransportSession session) async {
+    try {
+      await session.close();
+    } on Object {
+      // Every session is independent; one broken link must not keep the
+      // others alive after the lifecycle owner has stopped.
+    }
   }
 
   /// Connects, waits for one request, answers it, and closes.
@@ -63,8 +80,14 @@ class PairedSessionService {
   /// Returns the response that was sent, or null when the desktop asked for
   /// nothing before the timeout. A null is not an error: the caller simply
   /// dials again.
-  Future<AuthResponse?> serveOne(PairingRecord record) async {
+  Future<AuthResponse?> serveOne(
+    PairingRecord record, {
+    void Function()? onEstablished,
+  }) async {
     if (_stopped) throw StateError('Serviço de sessões encerrado');
+    if (_closed.contains(record.verifierId)) {
+      throw StateError('Dispositivo revogado');
+    }
     final outcome = await _transport.connect(
       TransportPeer(
         transportId: record.endpoint,
@@ -72,7 +95,7 @@ class PairedSessionService {
       ),
       PairedVerifier(record.verifierIdentitySpki),
     );
-    if (_stopped) {
+    if (_stopped || _closed.contains(record.verifierId)) {
       await outcome.session.close();
       throw StateError('Serviço de sessões encerrado');
     }
@@ -84,7 +107,12 @@ class PairedSessionService {
         'O computador respondeu como se nunca tivesse sido pareado',
       );
     }
-    _active.add(outcome.session);
+    _active[record.verifierId] = outcome.session;
+    // The channel is authenticated from here on. Reporting it now is what
+    // separates "connected" from "has already answered something": waiting for
+    // a request would leave an idle, working link looking like it is still
+    // dialling for up to the idle timeout.
+    onEstablished?.call();
 
     final core = PhoneAuthCore(
       authorizer: _authorizer,
@@ -109,8 +137,10 @@ class PairedSessionService {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
     } finally {
-      _active.remove(outcome.session);
-      await outcome.session.close();
+      if (identical(_active[record.verifierId], outcome.session)) {
+        _active.remove(record.verifierId);
+      }
+      await _close(outcome.session);
     }
   }
 }

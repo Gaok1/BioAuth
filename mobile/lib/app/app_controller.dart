@@ -9,6 +9,7 @@ import '../domain/authentication_request.dart';
 import '../domain/connection_phase.dart';
 import 'app_state.dart';
 import 'config.dart';
+import 'providers.dart';
 
 final phoneAuthenticatorProvider = Provider<PhoneAuthenticator>(
   (ref) => const UnavailablePhoneAuthenticator(),
@@ -201,7 +202,30 @@ class AppController extends Notifier<AppState> {
     );
   }
 
-  void revokeDevice(String deviceId) {
+  /// Revokes a desktop: removes the record, drops the connection, forgets its
+  /// requests.
+  ///
+  /// Deleting the row was never revocation. The record stayed on disk, the
+  /// reconnect loop kept dialling, and the phone went on answering that
+  /// desktop's authorization requests — a restart would even put it back on
+  /// screen. The row is removed last, once the store write is durable, so the
+  /// UI never claims something the device has not actually done.
+  Future<void> revokeDevice(String deviceId) async {
+    if (!state.devices.any((device) => device.id == deviceId)) return;
+    setDevicePhase(deviceId, ConnectionPhase.revoking);
+
+    try {
+      await ref.read(pairingStoreProvider).remove(deviceId);
+    } on Object {
+      // The pairing is still real. Saying otherwise would leave the user
+      // believing a desktop can no longer reach them when it still can.
+      setDevicePhase(deviceId, ConnectionPhase.error);
+      rethrow;
+    }
+
+    // Only now is the desktop untrusted, so only now is it safe to hang up.
+    await ref.read(pairedSessionRunnerProvider)?.stopDevice(deviceId);
+
     state = state.copyWith(
       devices: List.unmodifiable(
         state.devices.where((device) => device.id != deviceId),
@@ -211,6 +235,7 @@ class AppController extends Notifier<AppState> {
       ),
       clearSecurityWarning: true,
     );
+    ref.invalidate(pairedVerifiersProvider);
   }
 
   AuthenticationRequest? _requestById(String id) =>

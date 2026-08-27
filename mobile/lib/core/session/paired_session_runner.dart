@@ -52,6 +52,9 @@ class PairedSessionRunner {
       if (!wanted.containsKey(verifierId)) _loops.remove(verifierId)?.stop();
     }
     for (final record in records) {
+      // A record that is back after a revocation is a fresh pairing, so lift
+      // the refusal the revocation installed.
+      _service.allowDevice(record.verifierId);
       final existing = _loops[record.verifierId];
       if (existing != null) {
         existing.record = record;
@@ -74,11 +77,25 @@ class PairedSessionRunner {
     }
   }
 
+  /// Drops one verifier now, without waiting for the next [sync].
+  ///
+  /// Revocation needs the live session gone before the UI says it is gone, so
+  /// this closes the channel rather than only marking the loop stopped — a
+  /// `serveOne` already blocked on the idle timeout would otherwise stay up
+  /// for minutes after the user revoked the desktop.
+  Future<void> stopDevice(String verifierId) async {
+    _loops.remove(verifierId)?.stop();
+    await _service.closeDevice(verifierId);
+  }
+
   Future<void> _serve(PairingRecord record) async {
     onStatus?.call(record.verifierId, PairedSessionStatus.connecting);
     try {
-      final response = await _service.serveOne(record);
-      onStatus?.call(record.verifierId, PairedSessionStatus.connected);
+      final response = await _service.serveOne(
+        record,
+        onEstablished: () =>
+            onStatus?.call(record.verifierId, PairedSessionStatus.connected),
+      );
       if (response != null) {
         _consent.settle(
           response.requestId,

@@ -218,6 +218,14 @@ impl Service {
             .store_mut()
             .remove(device_id)
             .map_err(|error| ServiceError::new("unknown-device", error.to_string()))?;
+        // The listener authenticates inbound connections from its own copy of
+        // the paired devices. Without this it keeps accepting the phone that
+        // was just forgotten, until some other change happens to republish or
+        // the agent restarts.
+        self.publish_known_peers();
+        if let Some(network) = &self.network {
+            network.discard_sessions(device_id);
+        }
         self.broadcast(Event::DevicesChanged);
         Ok(())
     }
@@ -309,6 +317,11 @@ impl Service {
         )
         .map_err(|error| ServiceError::new("pairing-failed", error.to_string()))?;
 
+        // Arming a fresh code retires whatever the last attempt left behind.
+        // `arm_pairing` clears the transport's copy; without this the held one
+        // survived, and a refused attempt could be confirmed against the new
+        // code that had just replaced it.
+        self.discard_held_proposal();
         network.arm_pairing(bootstrap.clone());
 
         Ok(PairingBootstrap {
@@ -328,16 +341,31 @@ impl Service {
         if let Some(network) = &self.network {
             network.cancel_pairing();
         }
+        // Clearing only the transport left an already-collected proposal here,
+        // so the next `pair.pending` answered with the cancelled attempt.
+        self.discard_held_proposal();
+    }
+
+    fn discard_held_proposal(&self) {
+        *self.held_proposal.lock().expect("proposal mutex") = None;
     }
 
     /// Reports a pairing that completed its handshake and is awaiting
     /// confirmation.
+    /// Asking is not consuming: the same proposal is returned until the user
+    /// answers it.
+    ///
+    /// This used to take from the transport and hold the result without ever
+    /// reading it back, so a second poll answered `None`. One lost IPC reply —
+    /// a reopened window, a renderer reload — and the code on screen became
+    /// unrecoverable even though the phone was still waiting.
     pub fn pending_pairing(&self) -> Option<PairingProposalSummary> {
+        if let Some(held) = self.held_proposal.lock().expect("proposal mutex").as_ref() {
+            return Some(PairingProposalSummary::from_proposal(held));
+        }
         let network = self.network.as_ref()?;
         let proposal = network.take_proposal()?;
         let summary = PairingProposalSummary::from_proposal(&proposal);
-        // Taking it out of the transport would lose it if the UI polls twice,
-        // so hold it here until the user answers.
         self.hold_proposal(proposal);
         Some(summary)
     }
@@ -773,6 +801,88 @@ fn authorization_error(error: AuthorizationError) -> ServiceError {
         AuthorizationError::Malformed(_) => "bad-request",
     };
     ServiceError::new(code, error.to_string())
+}
+
+#[cfg(test)]
+mod pairing_state_tests {
+    use super::*;
+    use crate::qr_network::PairingProposal;
+
+    fn service(name: &str) -> Service {
+        let root = std::env::temp_dir().join(format!(
+            "phone-auth-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let paths = Paths::resolve(Some(root));
+        std::fs::create_dir_all(&paths.config_dir).expect("config dir");
+        std::fs::create_dir_all(&paths.data_dir).expect("data dir");
+        let config = AgentConfig::load_or_create(&paths.config_file()).expect("config");
+        // No network: these cover the state the service itself holds, which is
+        // where the proposal was being lost.
+        Service::new(config, paths, None, Vec::new(), false).expect("service")
+    }
+
+    fn proposal(code: &str) -> PairingProposal {
+        PairingProposal {
+            device_id: "phone-1".into(),
+            device_name: "Phone".into(),
+            session_identity_spki: vec![1; 91],
+            credential_id: "cred-1".into(),
+            algorithm: phone_auth_protocol::PUBLIC_KEY_EC_P256_SPKI.into(),
+            credential_public_key: vec![2; 91],
+            key_kind: phone_auth_protocol::KeyKind::StrongBox,
+            purpose: phone_auth_protocol::CredentialPurpose::Authorization,
+            verification_code: code.into(),
+        }
+    }
+
+    /// Polling must not consume: one lost IPC reply used to make the code on
+    /// screen unrecoverable while the phone was still waiting on it.
+    #[test]
+    fn asking_twice_returns_the_same_proposal() {
+        let service = service("pending-twice");
+        service.hold_proposal(proposal("123456"));
+
+        let first = service.pending_pairing().expect("first poll");
+        let second = service.pending_pairing().expect("second poll");
+
+        assert_eq!(first.verification_code, "123456");
+        assert_eq!(second.verification_code, first.verification_code);
+        assert_eq!(second.device_id, first.device_id);
+    }
+
+    #[test]
+    fn cancelling_clears_a_proposal_the_service_already_took() {
+        let service = service("pending-cancel");
+        service.hold_proposal(proposal("123456"));
+
+        service.cancel_pairing();
+
+        assert!(
+            service.pending_pairing().is_none(),
+            "a cancelled attempt must not still be confirmable"
+        );
+    }
+
+    #[test]
+    fn confirming_a_cancelled_attempt_is_refused() {
+        let mut service = service("pending-confirm");
+        service.hold_proposal(proposal("123456"));
+        service.cancel_pairing();
+
+        let error = service.confirm_pairing("123456").expect_err("must refuse");
+        assert_eq!(error.code, "no-pairing");
+    }
+
+    #[test]
+    fn a_wrong_code_does_not_pair() {
+        let mut service = service("pending-mismatch");
+        service.hold_proposal(proposal("123456"));
+
+        let error = service.confirm_pairing("654321").expect_err("must refuse");
+        assert_eq!(error.code, "code-mismatch");
+    }
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ import '../core/bluetooth/ble_transport.dart';
 import '../core/pairing/pairing_record.dart';
 import '../core/pairing/pairing_service.dart';
 import '../core/pairing/pairing_store.dart';
+import '../domain/connection_phase.dart';
 import '../core/session/paired_session_runner.dart';
 import '../core/session/phone_auth_core.dart';
 import '../core/transport/auth_transport.dart';
@@ -139,6 +140,29 @@ final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
     transport: transport,
     authorizer: ref.watch(biometricAuthorizerProvider),
     consent: ref.watch(interactiveAuthorizerProvider),
+    // Without this the devices list had no source of truth for connection
+    // state at all, so every paired desktop sat on `connecting` forever.
+    //
+    // Deferred because `sync` below starts the first dial synchronously, and
+    // the first status would otherwise land while this provider is still
+    // building — which Riverpod refuses, taking the runner down with it.
+    //
+    // The notifier is read inside the callback rather than captured: a status
+    // can arrive long after the controller that was current at build time has
+    // been disposed, and using that one throws.
+    onStatus: (verifierId, status) {
+      final phase = switch (status) {
+        PairedSessionStatus.connecting => ConnectionPhase.connecting,
+        PairedSessionStatus.connected => ConnectionPhase.connected,
+        PairedSessionStatus.unreachable => ConnectionPhase.disconnected,
+      };
+      Future.microtask(() {
+        if (!ref.mounted) return;
+        ref
+            .read(appControllerProvider.notifier)
+            .setDevicePhase(verifierId, phase);
+      });
+    },
   );
   runner.sync(records);
   ref.onDispose(runner.stop);
