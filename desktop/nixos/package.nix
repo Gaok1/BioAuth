@@ -14,7 +14,7 @@
   nodejs,
   fetchNpmDeps,
 }:
-rustPlatform.buildRustPackage {
+rustPlatform.buildRustPackage ({
   pname = "phone-auth";
   version = "0.1.0";
 
@@ -37,19 +37,6 @@ rustPlatform.buildRustPackage {
 
   nativeBuildInputs = lib.optionals withTray [ makeWrapper nodejs ];
 
-  # The tray's only runtime dependency is a QR encoder, used in the Electron
-  # main process. Reed-Solomon and mask selection are not worth hand-rolling:
-  # a subtly wrong encoder produces a code that simply will not scan.
-  #
-  # `npmDeps` needs a hash Nix can only tell you by trying. On the first build
-  # it will report the real one; paste it in place of `fakeHash`.
-  npmDeps = lib.optionalAttrs withTray (
-    fetchNpmDeps {
-      src = ../ui;
-      hash = lib.fakeHash;
-    }
-  );
-
   postInstall = lib.optionalString withTray ''
     mkdir -p $out/share/phone-auth
     cp -r ${../ui}/src ${../ui}/renderer ${../ui}/assets ${../ui}/package.json \
@@ -67,12 +54,28 @@ rustPlatform.buildRustPackage {
       paired phone to sign an authorization request, and verifies the answer
       against a hardware-backed public key.
 
-      The BLE and QR/network transports are not implemented yet, so a running
-      agent currently reports every transport as unavailable. See
-      docs/desktop.md for what is outstanding on the mobile side.
+      The QR/network transport works over the local network. Bluetooth LE is
+      implemented on the phone only; the desktop's GATT adapter is outstanding.
+      See docs/desktop.md.
     '';
     license = licenses.mit;
     platforms = platforms.linux;
     mainProgram = "phone-auth";
   };
 }
+// lib.optionalAttrs withTray {
+  # The tray's only runtime dependency is a QR encoder, used in the Electron
+  # main process. Reed-Solomon and mask selection are not worth hand-rolling: a
+  # subtly wrong encoder produces a code that simply will not scan.
+  #
+  # Merged in rather than set to `{}` when the tray is off: an empty attribute
+  # set reaching mkDerivation is not a missing argument, it is a value it
+  # cannot turn into a string, and the headless build fails on it.
+  #
+  # The hash is one Nix can only produce by fetching. The release workflow runs
+  # `prefetch-npm-deps` and prints the current value.
+  npmDeps = fetchNpmDeps {
+    src = ../ui;
+    hash = lib.fakeHash;
+  };
+})
