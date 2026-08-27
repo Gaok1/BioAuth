@@ -21,6 +21,9 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
+  # Already in the tree through flutter_test; named here because the reconnect
+  # backoff is tested by advancing a clock rather than by waiting on one.
+  fake_async: ^1.3.3
   flutter_lints: ^6.0.0
   # Only used by tool/build_flow_gif.dart, which stitches the frames written by
   # test/media/capture_screens.dart into the animation in the README.

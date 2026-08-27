@@ -108,9 +108,9 @@ void main() {
 
     // Everything except the phone's own fresh ephemeral is predictable.
     final fields = CborReader(body);
-    expect(fields.array(), 10);
+    expect(fields.array(), 11);
     expect(fields.uint(), 17);
-    expect(fields.uint(), 1);
+    expect(fields.uint(), 2, reason: 'the version that carries an intent');
     expect(fields.text(), 'session-1');
     expect(fields.bytes(), bootstrap.nonce);
     expect(fields.text(), 'desktop-1');
@@ -119,8 +119,59 @@ void main() {
     expect(fields.bytes(), repeated(0x11, 32), reason: 'server echo');
     expect(fields.bytes(), hasLength(32), reason: 'client ephemeral');
     expect(fields.bytes(), await phone.publicKey());
+    // A scanned code means pairing, and it is inside the signed body.
+    expect(fields.uint(), PairingIntent.pair.wire);
     fields.finish();
   });
+
+  test(
+    'a reconnect says so, so a desktop cannot mistake it for pairing',
+    () async {
+      final phone = await TestIdentity.create();
+      final desktop = await TestIdentity.create();
+      final bootstrap = await bootstrapFor(desktop);
+      final links = testLinks();
+
+      unawaited(
+        AuthenticatedSessionEstablisher(
+              deviceId: 'phone-1',
+              identity: phone,
+              clock: () => now,
+            )
+            .establish(links.phone, PairedVerifier(await desktop.publicKey()))
+            .catchError((Object _) => throw StateError('unused')),
+      );
+
+      final serverBody = serverHelloBody(
+        nonce: bootstrap.nonce,
+        expiresAtMs: bootstrap.expiresAtMs,
+        identitySpki: await desktop.publicKey(),
+        ephemeral: repeated(0x11, 32),
+      );
+      await links.server.send(
+        signatureEnvelope(serverBody, await desktop.sign(serverBody)),
+      );
+
+      final frame = await links.server.incomingFrames.first;
+      final reader = CborReader(frame);
+      reader.array();
+      final fields = CborReader(reader.bytes());
+      expect(fields.array(), 11);
+      fields
+        ..uint() // type
+        ..uint() // version
+        ..text() // session id
+        ..bytes() // nonce
+        ..text() // verifier id
+        ..int64() // expiry
+        ..text() // device id
+        ..bytes() // server echo
+        ..bytes() // client ephemeral
+        ..bytes(); // identity
+      expect(fields.uint(), PairingIntent.resume.wire);
+      fields.finish();
+    },
+  );
 
   test(
     'a hello signed by a key the code does not commit to is refused',
@@ -348,9 +399,9 @@ class _ServerPeer {
     envelope.finish();
 
     final fields = CborReader(clientBody);
-    expect(fields.array(), 10);
+    expect(fields.array(), 11);
     expect(fields.uint(), 17);
-    expect(fields.uint(), 1);
+    expect(fields.uint(), 2);
     expect(fields.text(), bootstrap.sessionId);
     expect(fields.bytes(), bootstrap.nonce);
     expect(fields.text(), bootstrap.verifierId);
@@ -359,6 +410,7 @@ class _ServerPeer {
     expect(fields.bytes(), ephemeral, reason: 'the server ephemeral echo');
     final clientEphemeral = fields.bytes();
     final clientIdentity = fields.bytes();
+    fields.uint(); // intent
     fields.finish();
 
     expect(clientIdentity, expectedPeerIdentity);

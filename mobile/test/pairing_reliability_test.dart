@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app_controller.dart';
@@ -114,6 +116,50 @@ void main() {
     await runner.stop();
   });
 
+  // A blip must not read as "offline". The desktop sleeping for a moment or
+  // the Wi-Fi roaming used to cost a flat fifteen seconds and an offline badge
+  // on the first failure.
+  test('a short outage retries quickly and does not report offline', () {
+    fakeAsync((async) {
+      final transport = _RefusingTransport();
+      final statuses = <PairedSessionStatus>[];
+      final runner = PairedSessionRunner(
+        transport: transport,
+        authorizer: _UnusedAuthorizer(),
+        consent: InteractiveAuthorizer(
+          onRequest: (_) => throw UnimplementedError(),
+        ),
+        onStatus: (_, status) => statuses.add(status),
+      );
+      runner.sync([_record]);
+
+      async.elapse(const Duration(seconds: 3));
+      expect(
+        transport.attempts,
+        greaterThan(1),
+        reason: 'a blip must be retried in seconds, not after a flat wait',
+      );
+      expect(
+        statuses.take(_kFailuresBeforeOffline),
+        everyElement(PairedSessionStatus.connecting),
+        reason: 'the first few failures are still "connecting"',
+      );
+
+      // A desktop that stays away does eventually read as unreachable, and the
+      // backoff stops it being dialled continuously.
+      async.elapse(const Duration(minutes: 1));
+      expect(statuses, contains(PairedSessionStatus.unreachable));
+      expect(
+        transport.attempts,
+        lessThan(20),
+        reason: 'the delay grows instead of hammering an absent desktop',
+      );
+
+      runner.stop();
+      async.flushMicrotasks();
+    });
+  });
+
   // Removing the row was never revocation: the record stayed on disk, so a
   // restart put the desktop straight back on screen.
   test('revoking removes the record and does not come back', () async {
@@ -189,6 +235,34 @@ class _FailingStore implements PairingStore {
 
   @override
   Future<String> deviceId() async => 'phone-test';
+}
+
+/// Mirrors `_failuresBeforeUnreachable` in the runner, which is private.
+const int _kFailuresBeforeOffline = 3;
+
+class _RefusingTransport implements AuthTransport {
+  int attempts = 0;
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Stream<TransportPeer> discoverPeers() => const Stream.empty();
+
+  @override
+  Future<SecureSessionOutcome> connect(
+    TransportPeer peer,
+    VerifierExpectation expectation,
+  ) async {
+    attempts++;
+    throw const SocketException('desktop is not answering');
+  }
 }
 
 class _StubTransport implements AuthTransport {

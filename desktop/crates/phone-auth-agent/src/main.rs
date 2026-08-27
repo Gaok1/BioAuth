@@ -290,7 +290,7 @@ fn pair_simulator_if_needed(service: &mut Service) -> Result<(), String> {
     while Instant::now() < deadline {
         if let Some(proposal) = service.pending_pairing() {
             service
-                .confirm_pairing(&proposal.verification_code)
+                .confirm_pairing(&proposal.verification_code, Some(&proposal.attempt_id))
                 .map_err(|error| error.to_string())?;
             println!(
                 "phone-auth-agent: paired the simulator (code {})",

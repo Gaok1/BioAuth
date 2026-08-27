@@ -298,13 +298,17 @@ async function checkPairing() {
   el('confirm-credential').textContent = proposal.credentialId;
   el('confirm-key').textContent = `${proposal.keyKind} · ${proposal.purpose}`;
   el('confirm').dataset.code = proposal.verificationCode;
+  // Quoted back on confirm so this screen answers the attempt it is showing,
+  // not whichever one happens to be pending by the time the user clicks.
+  el('confirm').dataset.attemptId = proposal.attemptId ?? '';
   el('confirm').hidden = false;
 }
 
 el('confirm-yes').addEventListener('click', async () => {
   const code = el('confirm').dataset.code;
+  const attemptId = el('confirm').dataset.attemptId || undefined;
   try {
-    await api.call('pair.confirm', { verificationCode: code });
+    await api.call('pair.confirm', { verificationCode: code, attemptId });
     hidePairing();
     await refresh();
   } catch (error) {

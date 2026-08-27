@@ -16,11 +16,22 @@ import '../transport/auth_transport.dart';
 import 'paired_session_service.dart';
 import 'phone_auth_core.dart';
 
-/// How long to wait after a failed dial before trying again.
+/// The first pause after a failed dial, doubled on each further failure.
 ///
-/// Long enough not to hammer a desktop that is asleep, short enough that a user
-/// who just walked back into range does not wait on it.
-const Duration _reconnectDelay = Duration(seconds: 15);
+/// Most failures are a blip — the Wi-Fi roamed, the desktop slept for a second.
+/// Waiting a flat fifteen seconds for those made a link that was already back
+/// look dead. Starting at a second recovers from them almost immediately, and
+/// the doubling still keeps a genuinely absent desktop from being hammered.
+const Duration _firstReconnectDelay = Duration(seconds: 1);
+
+/// The ceiling the backoff climbs to for a desktop that is simply not there.
+const Duration _maxReconnectDelay = Duration(seconds: 15);
+
+/// How many quick attempts a blip gets before the UI admits it is offline.
+///
+/// Roughly the first seven seconds. Reporting `unreachable` on the first
+/// failure would flicker the devices list on every hiccup.
+const int _failuresBeforeUnreachable = 3;
 
 class PairedSessionRunner {
   PairedSessionRunner({
@@ -88,8 +99,18 @@ class PairedSessionRunner {
     await _service.closeDevice(verifierId);
   }
 
-  Future<void> _serve(PairingRecord record) async {
-    onStatus?.call(record.verifierId, PairedSessionStatus.connecting);
+  Future<void> _serve(
+    PairingRecord record, {
+    required int consecutiveFailures,
+  }) async {
+    // A blip is still "connecting" as far as the user is concerned. Only after
+    // a few quick attempts have all failed is the desktop actually gone.
+    onStatus?.call(
+      record.verifierId,
+      consecutiveFailures >= _failuresBeforeUnreachable
+          ? PairedSessionStatus.unreachable
+          : PairedSessionStatus.connecting,
+    );
     try {
       final response = await _service.serveOne(
         record,
@@ -109,7 +130,6 @@ class PairedSessionRunner {
       for (final requestId in _consent.pendingRequestIds.toList()) {
         _consent.abandon(requestId, error);
       }
-      onStatus?.call(record.verifierId, PairedSessionStatus.unreachable);
       rethrow;
     }
   }
@@ -122,18 +142,34 @@ class _Loop {
   _Loop({required this.record, required this.run});
 
   PairingRecord record;
-  final Future<void> Function(PairingRecord record) run;
+  final Future<void> Function(
+    PairingRecord record, {
+    required int consecutiveFailures,
+  })
+  run;
   bool _stopped = false;
+  int _failures = 0;
 
   Future<void> start() async {
     while (!_stopped) {
       try {
-        await run(record);
+        await run(record, consecutiveFailures: _failures);
+        // A session that ran to completion means the desktop is reachable,
+        // whatever happened before it.
+        _failures = 0;
       } on Object {
         if (_stopped) return;
-        await Future<void>.delayed(_reconnectDelay);
+        _failures++;
+        await Future<void>.delayed(_delay());
       }
     }
+  }
+
+  /// Doubles from one second up to the ceiling, so a hiccup costs a second and
+  /// a desktop that is switched off is dialled four times a minute.
+  Duration _delay() {
+    final scaled = _firstReconnectDelay * (1 << (_failures - 1).clamp(0, 8));
+    return scaled > _maxReconnectDelay ? _maxReconnectDelay : scaled;
   }
 
   void stop() => _stopped = true;

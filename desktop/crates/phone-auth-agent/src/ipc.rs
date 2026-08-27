@@ -231,7 +231,7 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
                 let result = service
                     .lock()
                     .expect("service mutex")
-                    .confirm_pairing(&params.verification_code);
+                    .confirm_pairing(&params.verification_code, params.attempt_id.as_deref());
                 match result {
                     Ok(()) => Reply::ok(id, json!({ "paired": true })),
                     Err(error) => Reply::err(id, error.code, error.message),

@@ -34,8 +34,29 @@ import 'secure_session_establisher.dart';
 import 'session_identity_crypto.dart';
 
 const int _handshakeVersion = 1;
+
+/// The client hello version that states why the phone is connecting.
+///
+/// The verifier reads both this and version 1, so an older desktop is the one
+/// thing this breaks against — deliberately, because the alternative was the
+/// desktop guessing from who spoke first and getting it wrong on a slow link.
+const int _handshakeVersionWithIntent = 2;
 const int _serverHelloType = 16;
 const int _clientHelloType = 17;
+
+/// Why the phone is connecting, stated inside the signed hello.
+///
+/// Revoking a desktop does not change this phone's session identity, so a
+/// re-pairing hello is indistinguishable from a reconnect without this.
+enum PairingIntent {
+  resume(0),
+  pair(1);
+
+  const PairingIntent(this.wire);
+
+  final int wire;
+}
+
 const int _maxHandshakeFrame = 8192;
 const String _transcriptDomain = 'PhoneAuth/handshake-transcript/v1';
 const Duration _helloTimeout = Duration(seconds: 15);
@@ -118,6 +139,10 @@ class AuthenticatedSessionEstablisher implements SecureSessionEstablisher {
       serverEphemeral: server.ephemeral,
       ephemeral: ephemeral,
       identitySpki: await _identity.publicKey(),
+      // This phone already knows which it is doing: it either scanned a code
+      // or reached for a stored identity. Saying so is what lets a desktop
+      // that still holds an old record accept a fresh pairing.
+      intent: wasPairing ? PairingIntent.pair : PairingIntent.resume,
     );
     await link.send(
       _encodeEnvelope(clientBody, await _identity.sign(clientBody)),
@@ -237,12 +262,15 @@ class _ServerHello {
   }
 }
 
-/// `[17, 1, session_id, nonce, verifier_id, expires_at_ms, device_id,
-/// server_ephemeral, ephemeral, identity_spki]`
+/// `[17, 2, session_id, nonce, verifier_id, expires_at_ms, device_id,
+/// server_ephemeral, ephemeral, identity_spki, intent]`
 ///
 /// Echoing the server's ephemeral is what stops a captured ClientHello from
 /// being presented to a different handshake: every handshake has a fresh
 /// ephemeral, so the echo will not match.
+///
+/// The intent is last and inside the signed body: a relay must not be able to
+/// turn a reconnect into a re-enrolment.
 Uint8List _encodeClientHello({
   required String sessionId,
   required Uint8List nonce,
@@ -252,11 +280,12 @@ Uint8List _encodeClientHello({
   required Uint8List serverEphemeral,
   required Uint8List ephemeral,
   required Uint8List identitySpki,
+  required PairingIntent intent,
 }) {
   final writer = CborWriter()
-    ..array(10)
+    ..array(11)
     ..uint(_clientHelloType)
-    ..uint(_handshakeVersion)
+    ..uint(_handshakeVersionWithIntent)
     ..text(sessionId)
     ..bytes(nonce)
     ..text(verifierId)
@@ -264,7 +293,8 @@ Uint8List _encodeClientHello({
     ..text(deviceId)
     ..bytes(serverEphemeral)
     ..bytes(ephemeral)
-    ..bytes(identitySpki);
+    ..bytes(identitySpki)
+    ..uint(intent.wire);
   return writer.takeBytes();
 }
 

@@ -29,15 +29,26 @@ pub mod keys;
 pub use bootstrap::{ServerBootstrap, BOOTSTRAP_PREFIX, DEFAULT_LIFETIME_MS};
 pub use channel::{Role, SecureChannel, MAX_FRAME};
 pub use handshake::{
-    ClientHandshake, HandshakeOutcome, PeerExpectation, PendingServerHandshake, VerifierExpectation,
+    ClientHandshake, HandshakeOutcome, PairingIntent, PeerExpectation, PendingServerHandshake,
+    VerifierExpectation,
 };
 pub use identity::{hash_identity, IdentityKey};
 pub use keys::{session_binding, verification_code, SessionBindingInputs};
 
 use phone_auth_protocol::cbor::CborError;
 
-/// The only handshake version this build speaks.
+/// The handshake version every server hello uses.
+///
+/// Unchanged so a phone built before intents still accepts this side's hello.
 pub const VERSION: u64 = 1;
+
+/// The client hello version that carries a [`handshake::PairingIntent`].
+///
+/// A phone sends this; a verifier accepts it *and* the older shape. Which
+/// direction is compatible is deliberate: the desktop is what a user updates
+/// first, and the alternative — inferring intent from who happens to speak
+/// first — fails silently on a slow link.
+pub const VERSION_WITH_INTENT: u64 = 2;
 
 /// Ceiling on a handshake frame. Larger than a protocol frame because a hello
 /// carries a DER public key and a DER signature.

@@ -380,7 +380,28 @@ impl Service {
     /// the phone shows. Until then nothing about the peer is trusted: the
     /// handshake proved possession of *a* key, not that it belongs to the
     /// phone in the user's hand.
-    pub fn confirm_pairing(&mut self, expected_code: &str) -> Result<(), ServiceError> {
+    /// [`attempt_id`] is what the UI was shown. When it is given and does not
+    /// match, the answer belongs to an attempt that has since been replaced and
+    /// is refused without consuming the current one.
+    pub fn confirm_pairing(
+        &mut self,
+        expected_code: &str,
+        attempt_id: Option<&str>,
+    ) -> Result<(), ServiceError> {
+        {
+            let held = self.held_proposal.lock().expect("proposal mutex");
+            let current = held.as_ref().map(|proposal| proposal.attempt_id.as_str());
+            match (attempt_id, current) {
+                (Some(quoted), Some(current)) if quoted != current => {
+                    return Err(ServiceError::new(
+                        "stale-attempt",
+                        "that pairing attempt has been replaced; read the new code",
+                    ))
+                }
+                _ => {}
+            }
+        }
+
         let proposal = self
             .held_proposal
             .lock()
@@ -747,6 +768,7 @@ impl PairingProposalSummary {
         let key_kind = map_key_kind(proposal.key_kind);
         let purpose = map_purpose(proposal.purpose);
         Self {
+            attempt_id: proposal.attempt_id.clone(),
             device_id: proposal.device_id.clone(),
             device_name: proposal.device_name.clone(),
             credential_id: proposal.credential_id.clone(),
@@ -824,7 +846,12 @@ mod pairing_state_tests {
     }
 
     fn proposal(code: &str) -> PairingProposal {
+        attempt("attempt-1", code)
+    }
+
+    fn attempt(attempt_id: &str, code: &str) -> PairingProposal {
         PairingProposal {
+            attempt_id: attempt_id.into(),
             device_id: "phone-1".into(),
             device_name: "Phone".into(),
             session_identity_spki: vec![1; 91],
@@ -871,7 +898,9 @@ mod pairing_state_tests {
         service.hold_proposal(proposal("123456"));
         service.cancel_pairing();
 
-        let error = service.confirm_pairing("123456").expect_err("must refuse");
+        let error = service
+            .confirm_pairing("123456", None)
+            .expect_err("must refuse");
         assert_eq!(error.code, "no-pairing");
     }
 
@@ -880,8 +909,41 @@ mod pairing_state_tests {
         let mut service = service("pending-mismatch");
         service.hold_proposal(proposal("123456"));
 
-        let error = service.confirm_pairing("654321").expect_err("must refuse");
+        let error = service
+            .confirm_pairing("654321", None)
+            .expect_err("must refuse");
         assert_eq!(error.code, "code-mismatch");
+    }
+
+    /// Invariant ten: an answer to a replaced attempt must not confirm the one
+    /// that replaced it, even when six digits happen to agree.
+    #[test]
+    fn an_answer_to_a_replaced_attempt_is_refused() {
+        let mut service = service("pending-stale");
+        service.hold_proposal(attempt("attempt-old", "123456"));
+        // The user cancelled and started again; the phone reconnected and the
+        // new attempt drew the same six digits.
+        service.hold_proposal(attempt("attempt-new", "123456"));
+
+        let error = service
+            .confirm_pairing("123456", Some("attempt-old"))
+            .expect_err("the stale answer must not land");
+        assert_eq!(error.code, "stale-attempt");
+
+        // And the current attempt survives it, so the user can still confirm.
+        assert!(
+            service.pending_pairing().is_some(),
+            "refusing a stale answer must not consume the live attempt"
+        );
+    }
+
+    #[test]
+    fn quoting_the_current_attempt_confirms_it() {
+        let service = service("pending-current");
+        service.hold_proposal(attempt("attempt-1", "123456"));
+
+        let summary = service.pending_pairing().expect("pending");
+        assert_eq!(summary.attempt_id, "attempt-1");
     }
 }
 

@@ -110,22 +110,55 @@ A CBOR array of 8 elements, wrapped in a signature envelope.
 
 ## Message 2 — ClientHello
 
-A CBOR array of 10 elements, wrapped in the same envelope.
+A CBOR array of 11 elements, wrapped in the same envelope.
 
 ```text
-[17, 1, session_id, nonce, verifier_id, expires_at_ms,
- device_id, server_ephemeral, ephemeral, identity_spki]
+[17, 2, session_id, nonce, verifier_id, expires_at_ms,
+ device_id, server_ephemeral, ephemeral, identity_spki, intent]
 ```
 
 | # | Type | Notes |
 |---|---|---|
 | 0 | uint | message type, always `17` |
-| 1 | uint | handshake version, always `1` |
+| 1 | uint | client hello version, `2` |
 | 2–5 | | echoed from the ServerHello, byte for byte |
 | 6 | text | device id, 1–64 characters |
 | 7 | bytes | the server's ephemeral, echoed |
 | 8 | bytes | the client's 32-byte X25519 ephemeral |
 | 9 | bytes | client identity SPKI |
+| 10 | uint | intent: `0` resume, `1` pair |
+
+### The intent, and why it is in the signed body
+
+Revoking a desktop on the phone does not change the phone's session identity.
+A hello sent to pair afresh therefore verifies exactly as a reconnect does, and
+a verifier that still holds the old record cannot tell them apart. It used to
+guess from who spoke next — a pairing phone sends its enrolment immediately, a
+reconnecting one waits to be asked — which costs a wait on every reconnect
+while a code is armed and, worse, reads a slow link as a reconnect and fails
+the pairing in silence.
+
+Stating the intent removes the guess. It sits inside the signed body so a relay
+cannot flip a reconnect into a re-enrolment, and last in the array so every
+earlier field keeps the offset it had in version 1.
+
+### Version compatibility
+
+Only this message is versioned separately; the ServerHello stays at `1`, so a
+phone built before intents still accepts a current verifier's hello.
+
+| Phone | Verifier | Result |
+|---|---|---|
+| v2 | current | intent is used |
+| v1 | current | accepted; the verifier falls back to the enrolment-timing heuristic |
+| v2 | older | **refused** — the older verifier only reads a 10-element hello |
+
+The last row is the deliberate cost: update the desktop at least as early as
+the phone. It is bounded — a phone that cannot pair shows an error — whereas
+the heuristic it replaces fails by pairing nothing and saying nothing.
+
+The transcript hashes the exact bytes of both hellos, so nothing else needs to
+change: each side derives its keys from what was actually sent.
 
 Echoing the server's ephemeral is what stops a captured ClientHello from being
 presented to a different handshake: every handshake has a fresh ephemeral, so

@@ -30,10 +30,42 @@ use crate::bootstrap::ServerBootstrap;
 use crate::channel::{Role, SecureChannel};
 use crate::identity::{hash_identity, verify, IdentityKey};
 use crate::keys::{session_binding, verification_code, KeySchedule, SessionBindingInputs};
-use crate::{SessionError, MAX_HANDSHAKE_FRAME, VERSION};
+use crate::{SessionError, MAX_HANDSHAKE_FRAME, VERSION, VERSION_WITH_INTENT};
 
 const SERVER_HELLO: u64 = 16;
 const CLIENT_HELLO: u64 = 17;
+
+/// What the authenticator is connecting *for*.
+///
+/// Stated rather than inferred. Revoking a desktop on the phone does not change
+/// the phone's session identity, so a re-pairing hello verifies exactly as a
+/// reconnect would; without this the verifier had to guess from who spoke
+/// first, which turns a slow link into a pairing that fails in silence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingIntent {
+    /// Carry on an existing pairing.
+    Resume,
+    /// Enrol against the code the user just scanned, replacing any record the
+    /// verifier still holds for this device.
+    Pair,
+}
+
+impl PairingIntent {
+    fn wire(self) -> u64 {
+        match self {
+            Self::Resume => 0,
+            Self::Pair => 1,
+        }
+    }
+
+    fn from_wire(value: u64) -> Result<Self, SessionError> {
+        match value {
+            0 => Ok(Self::Resume),
+            1 => Ok(Self::Pair),
+            _ => Err(SessionError::InvalidFrame("unknown pairing intent")),
+        }
+    }
+}
 
 /// Who the verifier will accept at the other end.
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +108,11 @@ pub struct HandshakeOutcome {
     pub verification_code: String,
     /// True when the peer was accepted without a prior pairing record.
     pub was_pairing: bool,
+    /// What the peer said it was doing, when it is new enough to say.
+    ///
+    /// `None` means an older phone, and the caller has to fall back to
+    /// whatever heuristic it used before.
+    pub intent: Option<PairingIntent>,
 }
 
 /// The verifier's side, between sending its hello and receiving the answer.
@@ -189,6 +226,7 @@ impl PendingServerHandshake {
             peer_device_id: client.device_id.to_owned(),
             verification_code: verification_code(&schedule.exporter),
             was_pairing,
+            intent: client.intent,
         })
     }
 }
@@ -252,6 +290,14 @@ impl ClientHandshake {
         let secret = ephemeral_secret();
         let public = X25519PublicKey::from(&secret).to_bytes();
         let identity_spki = identity.public_key_spki()?;
+        // The phone already knows which it is doing: it either scanned a code
+        // or reached for a stored identity. Saying so costs nothing and saves
+        // the verifier from guessing.
+        let intent = if was_pairing {
+            PairingIntent::Pair
+        } else {
+            PairingIntent::Resume
+        };
         let client_unsigned = encode_client_hello(
             server.session_id,
             &server.nonce,
@@ -261,6 +307,7 @@ impl ClientHandshake {
             &server.ephemeral,
             &public,
             &identity_spki,
+            intent,
         );
         let client_frame = envelope(&client_unsigned, &identity.sign(&client_unsigned));
 
@@ -284,6 +331,7 @@ impl ClientHandshake {
                 peer_device_id: server.verifier_id.to_owned(),
                 verification_code: verification_code(&schedule.exporter),
                 was_pairing,
+                intent: Some(intent),
             },
         ))
     }
@@ -315,6 +363,8 @@ struct ClientHello<'a> {
     server_ephemeral: [u8; 32],
     ephemeral: [u8; 32],
     identity_spki: &'a [u8],
+    /// `None` from a phone that predates intents.
+    intent: Option<PairingIntent>,
 }
 
 fn encode_server_hello(
@@ -364,11 +414,12 @@ fn encode_client_hello(
     server_ephemeral: &[u8; 32],
     ephemeral: &[u8; 32],
     identity_spki: &[u8],
+    intent: PairingIntent,
 ) -> Vec<u8> {
     let mut writer = Writer::new();
-    writer.array(10);
+    writer.array(11);
     writer.uint(CLIENT_HELLO);
-    writer.uint(VERSION);
+    writer.uint(VERSION_WITH_INTENT);
     writer.text(session_id);
     writer.bytes(nonce);
     writer.text(verifier_id);
@@ -377,15 +428,26 @@ fn encode_client_hello(
     writer.bytes(server_ephemeral);
     writer.bytes(ephemeral);
     writer.bytes(identity_spki);
+    // Last so the earlier fields keep their offsets, and inside the signed
+    // body so a relay cannot turn a reconnect into a re-enrolment.
+    writer.uint(intent.wire());
     writer.into_bytes()
 }
 
 fn decode_client_hello(frame: &[u8]) -> Result<ClientHello<'_>, SessionError> {
     let mut reader = Reader::new(frame);
-    if reader.array()? != 10 || reader.uint()? != CLIENT_HELLO || reader.uint()? != VERSION {
+    let fields = reader.array()?;
+    if reader.uint()? != CLIENT_HELLO {
         return Err(SessionError::InvalidFrame("invalid client hello"));
     }
-    let hello = ClientHello {
+    // Both shapes are accepted: a phone that predates intents still pairs and
+    // reconnects, it just cannot say which it is doing.
+    let carries_intent = match (fields, reader.uint()?) {
+        (11, VERSION_WITH_INTENT) => true,
+        (10, VERSION) => false,
+        _ => return Err(SessionError::InvalidFrame("invalid client hello")),
+    };
+    let mut hello = ClientHello {
         session_id: reader.text()?,
         nonce: fixed(reader.bytes()?, "invalid nonce")?,
         verifier_id: reader.text()?,
@@ -394,7 +456,11 @@ fn decode_client_hello(frame: &[u8]) -> Result<ClientHello<'_>, SessionError> {
         server_ephemeral: fixed(reader.bytes()?, "invalid verifier ephemeral key")?,
         ephemeral: fixed(reader.bytes()?, "invalid client ephemeral key")?,
         identity_spki: reader.bytes()?,
+        intent: None,
     };
+    if carries_intent {
+        hello.intent = Some(PairingIntent::from_wire(reader.uint()?)?);
+    }
     reader.finish()?;
     Ok(hello)
 }
@@ -462,7 +528,26 @@ mod wire_vectors {
         "58201111111111111111111111111111111111111111111111111111111111111111",
     );
 
+    /// `8b` eleven fields, `11` client hello, `02` the version that states an
+    /// intent, and a trailing `00` for `Resume`. Everything between is byte for
+    /// byte what version one carried.
     const CLIENT_HELLO_HEX: &str = concat!(
+        "8b11026973657373696f6e2d31",
+        "5820000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "696465736b746f702d31",
+        "1b000001a03df1ec60",
+        "6770686f6e652d31",
+        "58201111111111111111111111111111111111111111111111111111111111111111",
+        "58202222222222222222222222222222222222222222222222222222222222222222",
+        "585b505152535455565758595a5b5c5d5e5f60616263646566676869",
+        "6a6b6c6d6e6f707172737475767778797a7b7c7d7e7f8081828384858687888",
+        "98a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aa",
+        "00",
+    );
+
+    /// What a phone built before intents sends: ten fields, version one, no
+    /// trailing byte. Kept because the verifier still has to read it.
+    const LEGACY_CLIENT_HELLO_HEX: &str = concat!(
         "8a11016973657373696f6e2d31",
         "5820000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "696465736b746f702d31",
@@ -475,7 +560,7 @@ mod wire_vectors {
         "98a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aa",
     );
 
-    const TRANSCRIPT_HEX: &str = "76b72c40a881574d332adada02a0960e39c3236f4a14b6bd53c42c565e01860d";
+    const TRANSCRIPT_HEX: &str = "d445ff13e45b598529bcb3d8fb927b65bec2392b388c0d85df43512052fc11a7";
 
     const SESSION_ID: &str = "session-1";
     const VERIFIER_ID: &str = "desktop-1";
@@ -484,6 +569,13 @@ mod wire_vectors {
 
     fn to_hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn from_hex(text: &str) -> Vec<u8> {
+        (0..text.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&text[index..index + 2], 16).expect("hex"))
+            .collect()
     }
 
     fn nonce() -> [u8; 32] {
@@ -526,8 +618,54 @@ mod wire_vectors {
             &[0x11; 32],
             &[0x22; 32],
             &client_spki(),
+            PairingIntent::Resume,
         );
         assert_eq!(to_hex(&encoded), CLIENT_HELLO_HEX);
+    }
+
+    /// The compatibility that makes the new field safe to add: a phone that
+    /// has not been updated still pairs and reconnects, it just cannot say
+    /// which it is doing.
+    #[test]
+    fn a_hello_from_before_intents_still_decodes() {
+        let bytes = from_hex(LEGACY_CLIENT_HELLO_HEX);
+        let decoded = decode_client_hello(&bytes).expect("legacy hello must still be read");
+
+        assert_eq!(decoded.session_id, SESSION_ID);
+        assert_eq!(decoded.device_id, DEVICE_ID);
+        assert_eq!(
+            decoded.intent, None,
+            "no intent is different from an intent of `Resume`"
+        );
+    }
+
+    #[test]
+    fn an_intent_survives_the_round_trip() {
+        for intent in [PairingIntent::Pair, PairingIntent::Resume] {
+            let encoded = encode_client_hello(
+                SESSION_ID,
+                &nonce(),
+                VERIFIER_ID,
+                EXPIRES_AT_MS,
+                DEVICE_ID,
+                &[0x11; 32],
+                &[0x22; 32],
+                &client_spki(),
+                intent,
+            );
+            let decoded = decode_client_hello(&encoded).expect("decode");
+            assert_eq!(decoded.intent, Some(intent));
+        }
+    }
+
+    #[test]
+    fn an_unknown_intent_is_refused_rather_than_assumed() {
+        let mut bytes = from_hex(CLIENT_HELLO_HEX);
+        *bytes.last_mut().expect("intent byte") = 9;
+        assert!(matches!(
+            decode_client_hello(&bytes),
+            Err(SessionError::InvalidFrame(_))
+        ));
     }
 
     #[test]
@@ -542,6 +680,7 @@ mod wire_vectors {
             &[0x11; 32],
             &[0x22; 32],
             &client_spki(),
+            PairingIntent::Resume,
         );
         assert_eq!(to_hex(&transcript_hash(&server, &client)), TRANSCRIPT_HEX);
     }

@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 
 use phone_auth_protocol::{Enrolment, SESSION_BINDING_LEN};
 use phone_auth_session::{
-    ClientHandshake, IdentityKey, PeerExpectation, PendingServerHandshake, SecureChannel,
-    ServerBootstrap, VerifierExpectation,
+    ClientHandshake, IdentityKey, PairingIntent, PeerExpectation, PendingServerHandshake,
+    SecureChannel, ServerBootstrap, VerifierExpectation,
 };
 use phone_auth_verifier::session::{SecureSession, TransportSecurity};
 
@@ -49,6 +49,11 @@ const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// verification code matches what the phone shows.
 #[derive(Debug, Clone)]
 pub struct PairingProposal {
+    /// Names this attempt for the rest of its short life.
+    ///
+    /// The verification code cannot do this job: it is six digits, and two
+    /// attempts may legitimately produce the same six.
+    pub attempt_id: String,
     pub device_id: String,
     pub device_name: String,
     pub session_identity_spki: Vec<u8>,
@@ -499,12 +504,21 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
         // handshake above verifies exactly as a reconnect would, and the
         // desktop used to park the session and sit on the QR forever while the
         // phone showed a code nobody could confirm.
-        //
-        // What separates the two is who speaks next: a pairing phone sends its
-        // enrolment straight away, a reconnecting one waits to be asked. Only
-        // look while a code is actually armed, so an ordinary reconnect is
-        // never held up outside the window the user deliberately opened.
-        peek_enrolment(&mut stream, &mut channel)?
+        match outcome.intent {
+            // It said so, inside the signed hello. Nothing to infer.
+            Some(PairingIntent::Pair) => {
+                let record = read_frame(&mut stream).map_err(|error| error.to_string())?;
+                let frame = channel.open(&record).map_err(|error| error.to_string())?;
+                Some(Enrolment::decode(&frame).map_err(|error| error.to_string())?)
+            }
+            Some(PairingIntent::Resume) => None,
+            // A phone from before intents. Fall back to who speaks first: a
+            // pairing phone sends its enrolment straight away, a reconnecting
+            // one waits to be asked. Only while a code is armed, and it does
+            // mean a slow link can be misread as a reconnect — which is the
+            // guesswork the intent exists to remove.
+            None => peek_enrolment(&mut stream, &mut channel)?,
+        }
     } else {
         None
     };
@@ -513,6 +527,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
         let mut state = shared.state.lock().expect("state mutex");
         state.armed_pairing = None;
         state.proposal = Some(PairingProposal {
+            attempt_id: phone_auth_verifier::random::request_id(),
             device_id: outcome.peer_device_id,
             device_name: enrolment.device_name,
             session_identity_spki: outcome.peer_identity_spki,

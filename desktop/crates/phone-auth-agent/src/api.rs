@@ -235,6 +235,10 @@ pub struct PairingBootstrap {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairingProposalSummary {
+    /// Names this attempt. Confirming quotes it back, so an answer meant for
+    /// an attempt that has since been cancelled or replaced cannot land on the
+    /// one that took its place — six digits alone cannot say which is which.
+    pub attempt_id: String,
     pub device_id: String,
     pub device_name: String,
     pub credential_id: String,
@@ -252,6 +256,11 @@ pub struct ConfirmPairingParams {
     /// Echoed back by the UI, so a stale screen cannot confirm a pairing the
     /// user never looked at.
     pub verification_code: String,
+    /// The attempt the UI was showing. Optional so an older tray still works;
+    /// when present it must match, and it is the only thing that distinguishes
+    /// two attempts whose codes happen to agree.
+    #[serde(default)]
+    pub attempt_id: Option<String>,
 }
 
 #[cfg(test)]

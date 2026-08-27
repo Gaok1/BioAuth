@@ -102,9 +102,14 @@ class FakeDesktop {
     envelope.finish();
 
     final fields = CborReader(clientBody);
-    if (fields.array() != 10 || fields.uint() != 17 || fields.uint() != 1) {
-      throw StateError('bad client hello');
-    }
+    // Mirrors the verifier: both shapes are read, and only the newer one says
+    // whether the phone means to pair or to resume.
+    final fieldCount = fields.array();
+    final carriesIntent = switch ((fieldCount, fields.uint(), fields.uint())) {
+      (11, 17, 2) => true,
+      (10, 17, 1) => false,
+      _ => throw StateError('bad client hello'),
+    };
     if (fields.text() != bootstrap.sessionId) {
       throw StateError('session id mismatch');
     }
@@ -125,6 +130,7 @@ class FakeDesktop {
     }
     final clientEphemeral = fields.bytes();
     final clientIdentity = fields.bytes();
+    if (carriesIntent) fields.uint();
     fields.finish();
 
     if (!await identity.verify(
