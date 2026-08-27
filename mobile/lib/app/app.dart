@@ -35,12 +35,10 @@ class _Home extends ConsumerWidget {
   }
 }
 
-/// Holds the connections to paired desktops open while the app is on screen.
+/// Holds paired-desktop connections while Android's foreground service is up.
 ///
 /// Watching a provider is what starts it, so this is the thing that decides the
-/// phone is listening. It is deliberately not in `main`: an app that is not
-/// running has no business holding sockets open, and the mock flavour must be
-/// able to run with no network at all.
+/// phone is listening. The mock flavour still runs with no network at all.
 class _SessionHost extends ConsumerStatefulWidget {
   const _SessionHost({required this.child});
 
@@ -52,8 +50,6 @@ class _SessionHost extends ConsumerStatefulWidget {
 
 class _SessionHostState extends ConsumerState<_SessionHost>
     with WidgetsBindingObserver {
-  bool _foreground = true;
-
   @override
   void initState() {
     super.initState();
@@ -62,14 +58,9 @@ class _SessionHostState extends ConsumerState<_SessionHost>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // `inactive` counts as on screen. Android reports it whenever the window
-    // loses focus — the notification shade, a permission dialog, and the
-    // biometric prompt itself. Tearing the session down there would abandon
-    // the very request the user is authenticating.
-    final foreground =
-        state == AppLifecycleState.resumed ||
-        state == AppLifecycleState.inactive;
-    if (foreground != _foreground) setState(() => _foreground = foreground);
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(backgroundSessionsReadyProvider);
+    }
   }
 
   @override
@@ -82,7 +73,9 @@ class _SessionHostState extends ConsumerState<_SessionHost>
   Widget build(BuildContext context) {
     if (!ref.watch(appConfigProvider).mockEnabled) {
       ref.watch(pairedDevicesSyncProvider);
-      if (_foreground) ref.watch(pairedSessionRunnerProvider);
+      if (ref.watch(backgroundSessionsReadyProvider).value == true) {
+        ref.watch(pairedSessionRunnerProvider);
+      }
     }
     return widget.child;
   }

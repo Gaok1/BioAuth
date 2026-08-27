@@ -191,3 +191,37 @@ class PhoneAuthBlePermissions {
   Future<bool> request() async =>
       await _channel.invokeMethod<bool>('requestBlePermissions') ?? false;
 }
+
+class PhoneAuthBackgroundSessions {
+  const PhoneAuthBackgroundSessions();
+
+  static const _channel = MethodChannel('phone_auth_native');
+
+  Future<bool> setEnabled(bool enabled) async =>
+      await _channel.invokeMethod<bool>('setBackgroundSessionsEnabled', {
+        'enabled': enabled,
+      }) ??
+      false;
+}
+
+class PhoneAuthWebAuthnRelay {
+  const PhoneAuthWebAuthnRelay();
+
+  static const _channel = MethodChannel('phone_auth_native');
+
+  Future<String> perform({
+    required String operation,
+    required String origin,
+    required String optionsJson,
+  }) async {
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'performWebAuthn',
+      {'operation': operation, 'origin': origin, 'optionsJson': optionsJson},
+    );
+    final json = response?['responseJson'];
+    if (json is! String || json.isEmpty) {
+      throw const FormatException('Invalid native WebAuthn response');
+    }
+    return json;
+  }
+}

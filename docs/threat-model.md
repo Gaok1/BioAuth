@@ -40,6 +40,9 @@
 | Compromised verifier | Per-verifier/service permissions and credential separation limit blast radius |
 | Clock manipulation | Short windows plus verifier/session nonce and replay cache; do not rely on time alone |
 | Sensitive logging | Never log challenges, session keys, payloads, signatures, credentials, or LUKS material |
+| WebAuthn RP confusion | Validate HTTPS origin host against RP ID on phone; validate Android callers with privileged allowlist or asset links; fail closed |
+| Malicious desktop page/extension | Authenticated session proves the paired computer, not the tab; show origin on phone and require biometric for every assertion |
+| Passkey loss | No sync/export in this phase; require a second service recovery path |
 
 ## Explicit non-goals and forbidden fallbacks
 
@@ -66,4 +69,6 @@ BLE stack size require a separate review before implementation.
 - Biometric sensors and vendor secure hardware have platform-dependent assurance.
 - Denial of service remains possible at radio/network and verifier layers.
 - Traffic metadata can remain visible even when protocol contents are encrypted.
-
+- The desktop extension/native host reports tab origin. A compromised browser or
+  desktop OS can lie; unlike Credential Manager, the remote path has no Android
+  system attestation of that origin.

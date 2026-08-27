@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-agent"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bluer",
  "futures",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "phone-auth-agent",
  "serde_json",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-initrd"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "phone-auth-protocol",
  "phone-auth-verifier",
@@ -709,11 +709,11 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-protocol"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "phone-auth-session"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-verifier"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "getrandom 0.2.17",
  "p256",

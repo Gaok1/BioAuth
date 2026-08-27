@@ -27,6 +27,12 @@ also keeps permission, lifecycle and callback behavior under project control.
   are platform APIs. StrongBox is attempted only when present and safely falls
   back to another Android Keystore implementation; biometric strength never
   falls back.
+- `androidx.credentials:credentials:1.6.0` supplies the Android 14+
+  `CredentialProviderService` compatibility surface. Caller validation still
+  uses platform `CallingAppInfo` and Digital Asset Links contracts.
+- CTAP2 CBOR is a small local canonical encoder because the existing Dart codec
+  supports fixed PhoneAuth arrays, not integer-keyed COSE maps, and moving
+  credential construction out of Kotlin would widen the key boundary.
 
 ## Rust verifier
 

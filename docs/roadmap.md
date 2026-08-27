@@ -32,7 +32,7 @@ end-to-end BLE authorization.
 - [x] Linux/BlueZ desktop GATT server/role implementation
 - [ ] Real-device BLE authorization tests
 - [x] Cryptographic pairing and production secure session handshake
-- [x] Paired-session reconnect policy and foreground lifecycle teardown
+- [x] Paired-session reconnect policy and Android foreground-service survival
 - Ping/pong only if sessions become long-lived; current sessions carry one request
 - Android background behavior with explicit user-visible policy
 
@@ -49,9 +49,11 @@ BLE remains optional and never leaks BLE concepts into protocol/domain types.
 
 ## Phase 1C — Android platform integration
 
-- Credential Manager provider
-- WebAuthn/FIDO/passkey integration using platform standards
-- Local-mode policy distinct from remote pairing
+- [x] Credential Manager provider implementation and fail-closed caller/RP tests
+- [x] WebAuthn/CTAP2 core, per-credential Keystore aliases, and fixed vectors
+- [x] Chrome/Edge/Firefox extension, native host, agent relay, and phone origin UI
+- [x] Local Credential Manager policy distinct from authenticated desktop relay
+- [ ] Real-device webauthn.io matrix (Android Chrome, desktop Chrome/Edge/Firefox)
 
 ## Phase 2 — NixOS/LUKS (blocked on Phase 1 gates)
 
@@ -95,17 +97,13 @@ true or decorative:
   `BIOMETRIC_STRONG`, ciphertext in ordinary app storage.
 - Lose the phone, lose the vault, unless there is an export path.
 
-Blocked on the session limitation below.
+Its background-session dependency is implemented below; vault work remains future.
 
 ## Phase 3B — Sessions that survive the app being backgrounded
 
-Today the phone holds a session only while a widget watches
-`pairedSessionRunnerProvider`, so nothing is reachable once the app leaves the
-screen. That was deliberate — an app you are not looking at has no business
-holding connections to your computers open — but it puts every use that is not
-"unlock the machine in front of me" out of reach. Needs an Android foreground
-service with a persistent notification, which is the honest trade: the
-connection stays up and you can always see that it is up.
+- [x] Android `connectedDevice` foreground service and persistent notification
+- [x] Cached Flutter engine and lifecycle test: activity pause does not close sessions
+- [ ] Real-device/OEM background and task-removal matrix
 
 ## Later
 

@@ -23,7 +23,7 @@ final _record = PairingRecord(
 );
 
 void main() {
-  testWidgets('backgrounding the app closes the paired session', (
+  testWidgets('backgrounding the app keeps the paired session open', (
     tester,
   ) async {
     final session = _IdleSession();
@@ -36,6 +36,7 @@ void main() {
         overrides: [
           appConfigProvider.overrideWithValue(const AppConfig.production()),
           pairedVerifiersProvider.overrideWith((ref) async => [record]),
+          backgroundSessionsReadyProvider.overrideWith((ref) async => true),
           transportProvider.overrideWith((ref) async => transport),
         ],
         child: const PhoneAuthApp(),
@@ -50,8 +51,8 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(transport.stopped, isTrue);
-    expect(session.closed, isTrue);
+    expect(transport.stopped, isFalse);
+    expect(session.closed, isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -72,6 +73,7 @@ void main() {
         overrides: [
           appConfigProvider.overrideWithValue(const AppConfig.production()),
           pairedVerifiersProvider.overrideWith((ref) async => [_record]),
+          backgroundSessionsReadyProvider.overrideWith((ref) async => true),
           transportProvider.overrideWith((ref) async => transport),
         ],
         child: const PhoneAuthApp(),

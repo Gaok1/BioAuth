@@ -1,0 +1,9 @@
+{
+  "name": "com.bioauth.webauthn",
+  "description": "PhoneAuth WebAuthn bridge",
+  "path": "/absolute/path/to/phone-auth-webauthn-host",
+  "type": "stdio",
+  "allowed_extensions": [
+    "webauthn@bioauth.local"
+  ]
+}

@@ -130,9 +130,15 @@ reused for LUKS, WebAuthn, or physical access.
 
 ## Background execution
 
-Transport availability never implies indefinite Flutter execution. Android BLE
-background operation must use the applicable Companion Device APIs and/or a
-user-visible foreground service and still obey Doze and background restrictions.
+Android paired sessions use a `connectedDevice` foreground service with a
+persistent notification. A cached Flutter engine outlives the activity; the
+session runner does not start unless that service is available and notification
+permission is granted. Force-stop still stops it, and Doze/background rules
+still apply.
 iOS will use declared CoreBluetooth modes and state restoration but remains
 subject to suspension. Background receipt never bypasses foreground context and
 biometric approval.
+
+WebAuthn uses per-credential `bioauth_webauthn_v1_...` aliases and never the
+authorization or session-identity aliases. See `webauthn.md` for its CTAP2
+encoding and local-versus-desktop trust boundary.

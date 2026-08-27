@@ -155,13 +155,20 @@ class PhoneAuthCore {
   }) async {
     try {
       final frame = await session.incomingFrames.first.timeout(timeout);
-      final request = codec.decodeRequest(frame, origin: session.originLabel);
-      final response = await authorize(request, session);
-      await session.send(codec.encodeResponse(response));
-      return response;
+      return await serveFrame(session, frame);
     } finally {
       await session.close();
     }
+  }
+
+  Future<AuthResponse> serveFrame(
+    SecureTransportSession session,
+    Uint8List frame,
+  ) async {
+    final request = codec.decodeRequest(frame, origin: session.originLabel);
+    final response = await authorize(request, session);
+    await session.send(codec.encodeResponse(response));
+    return response;
   }
 
   void _remember(String requestId) {

@@ -10,6 +10,10 @@ license.workspace = true
 name = "phone-auth-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "phone-auth-webauthn-host"
+path = "src/bin/phone-auth-webauthn-host.rs"
+
 [features]
 # Enables the in-process simulator transport. Even with the feature compiled
 # in, the agent only activates it when started with `--dev-simulator`.

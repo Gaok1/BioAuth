@@ -379,6 +379,21 @@ Enrolment frame, 9 elements, sent once after a pairing handshake:
 The handshake that carries these frames is a separate contract, specified with
 its own test vectors in `protocol-handshake.md`.
 
+## Browser passkey relay
+
+`phone-auth-webauthn-host` is a native-messaging adapter, not another verifier.
+It reads the user-only agent endpoint file and calls `webauthn.perform` over the
+existing token-authenticated loopback IPC. The agent selects one already-paired
+phone and sends a bounded `BAWA1\n` JSON envelope over the same confidential,
+peer-authenticated session. Request and response IDs must match; a mismatched,
+oversized, non-HTTPS, or malformed envelope fails closed.
+
+The WebAuthn relay is intentionally separate from the canonical signed
+`AuthRequest`/`AuthResponse` arrays above: WebAuthn assertions are signed by the
+per-RP passkey over WebAuthn `authenticatorData || clientDataHash`, while the
+PhoneAuth session authenticates the paired computer carrying that operation.
+Installation and the desktop-origin trust asymmetry are in `webauthn.md`.
+
 ## Files the agent owns
 
 | Path (Linux) | Contents |

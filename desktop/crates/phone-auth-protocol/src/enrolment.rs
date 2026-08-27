@@ -49,6 +49,8 @@ pub enum CredentialPurpose {
     Authorization = 0,
     /// Boot-time volume unwrapping. Requires a hardware-backed key.
     DiskUnlock = 1,
+    /// WebAuthn assertions. Never shared with desktop authorization keys.
+    WebAuthn = 2,
 }
 
 impl CredentialPurpose {
@@ -56,6 +58,7 @@ impl CredentialPurpose {
         match value {
             0 => Ok(Self::Authorization),
             1 => Ok(Self::DiskUnlock),
+            2 => Ok(Self::WebAuthn),
             other => Err(ProtocolError::InvalidPurpose(other)),
         }
     }
@@ -183,6 +186,7 @@ mod tests {
         assert_eq!(KeyKind::Software as u64, 2);
         assert_eq!(CredentialPurpose::Authorization as u64, 0);
         assert_eq!(CredentialPurpose::DiskUnlock as u64, 1);
+        assert_eq!(CredentialPurpose::WebAuthn as u64, 2);
     }
 
     #[test]
@@ -191,6 +195,7 @@ mod tests {
             for purpose in [
                 CredentialPurpose::Authorization,
                 CredentialPurpose::DiskUnlock,
+                CredentialPurpose::WebAuthn,
             ] {
                 let original = Enrolment {
                     key_kind: kind,

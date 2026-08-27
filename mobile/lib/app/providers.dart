@@ -8,6 +8,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:phone_auth_native/phone_auth_native.dart';
 
 import 'app_controller.dart';
 
@@ -97,6 +98,21 @@ final pairedDevicesSyncProvider = Provider<void>((ref) {
   }, fireImmediately: true);
 });
 
+/// Desktop sessions are allowed only while Android is showing its persistent
+/// foreground-service notification. This is deliberately a hard dependency.
+final backgroundSessionsReadyProvider = FutureProvider<bool>((ref) async {
+  final records = await ref.watch(pairedVerifiersProvider.future);
+  if (defaultTargetPlatform != TargetPlatform.android) {
+    return records.isNotEmpty;
+  }
+  const sessions = PhoneAuthBackgroundSessions();
+  if (records.isEmpty) {
+    await sessions.setEnabled(false);
+    return false;
+  }
+  return sessions.setEnabled(true);
+});
+
 /// The bridge between an arriving request and the screen the user taps.
 ///
 /// Also the app's [PhoneAuthenticator]: the tap and the biometric prompt are
@@ -110,10 +126,8 @@ final interactiveAuthorizerProvider = Provider<InteractiveAuthorizer>((ref) {
   );
 });
 
-/// Holds a connection to every paired desktop for as long as it is watched.
-///
-/// Nothing runs until a widget watches this, which is deliberate: a phone with
-/// the app closed should not be holding sockets open.
+/// Holds a connection to every paired desktop while the foreground service is
+/// available. The cached engine keeps this provider watched without an activity.
 final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
   ref,
 ) {

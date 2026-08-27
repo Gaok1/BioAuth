@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "PhoneAuth Passkeys",
+  "version": "0.1.4",
+  "description": "Relays WebAuthn requests to a paired PhoneAuth device.",
+  "permissions": ["nativeMessaging"],
+  "background": {
+    "scripts": ["service-worker.js"],
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*"],
+      "js": ["page-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://*/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "ISOLATED"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "webauthn@bioauth.local",
+      "strict_min_version": "128.0"
+    }
+  }
+}

@@ -33,6 +33,8 @@ void main() {
             },
             'verifySessionIdentity' => true,
             'requestBlePermissions' => true,
+            'setBackgroundSessionsEnabled' => true,
+            'performWebAuthn' => {'responseJson': '{"id":"credential"}'},
             'bleRequestMtu' => 247,
             'bleStartScan' ||
             'bleStopScan' ||
@@ -100,6 +102,21 @@ void main() {
 
   test('returns explicit BLE permission result', () async {
     expect(await const PhoneAuthBlePermissions().request(), isTrue);
+  });
+
+  test('controls the persistent background session service', () async {
+    expect(await const PhoneAuthBackgroundSessions().setEnabled(true), isTrue);
+  });
+
+  test('forwards a desktop WebAuthn operation to Android', () async {
+    expect(
+      await const PhoneAuthWebAuthnRelay().perform(
+        operation: 'get',
+        origin: 'https://example.com',
+        optionsJson: '{}',
+      ),
+      '{"id":"credential"}',
+    );
   });
 
   test('forwards native BLE lifecycle and bounded writes', () async {

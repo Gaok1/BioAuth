@@ -48,6 +48,9 @@ enum CredentialPurpose {
 
   /// Boot-time volume unwrapping. Requires a hardware-backed key.
   diskUnlock,
+
+  /// WebAuthn assertions. Uses a separate per-RP Keystore alias.
+  webAuthn,
 }
 
 class EnrolmentException implements Exception {

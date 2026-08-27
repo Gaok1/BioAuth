@@ -53,6 +53,8 @@ pub enum CredentialPurpose {
     Authorization,
     /// Boot-time volume unwrapping. Requires a hardware-backed key.
     DiskUnlock,
+    /// WebAuthn assertions. Uses per-RP keys held only by the phone.
+    WebAuthn,
 }
 
 /// One public credential belonging to a paired device.

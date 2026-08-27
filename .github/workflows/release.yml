@@ -280,9 +280,12 @@ jobs:
           mkdir -p artifacts staging/phone-auth
           cp desktop/target/release/phone-auth-agent \
              desktop/target/release/phone-auth \
+             desktop/target/release/phone-auth-webauthn-host \
              desktop/target/release/phone-auth-initrd \
              staging/phone-auth/
-          cp README.md docs/desktop.md docs/protocol-handshake.md staging/phone-auth/
+          cp -r desktop/browser-extension staging/phone-auth/
+          cp README.md docs/desktop.md docs/protocol-handshake.md docs/webauthn.md \
+             staging/phone-auth/
           tar -czf artifacts/phone-auth-linux-x86_64.tar.gz -C staging phone-auth
 
       - uses: actions/setup-node@v4

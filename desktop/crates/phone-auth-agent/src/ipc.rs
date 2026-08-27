@@ -22,7 +22,7 @@ use phone_auth_verifier::random;
 
 use crate::api::{
     AuthorizeParams, Call, ConfirmPairingParams, Event, ForgetParams, RecentParams, Reply,
-    SetPermissionsParams,
+    SetPermissionsParams, WebAuthnParams,
 };
 use crate::paths::Paths;
 use crate::service::Service;
@@ -256,6 +256,20 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
                 // The lock is held across the exchange so that the replay
                 // guard and the pairing store cannot change underneath it.
                 let result = service.lock().expect("service mutex").authorize(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        "webauthn.perform" => match parse::<WebAuthnParams>(call) {
+            Ok(params) => {
+                let result = service
+                    .lock()
+                    .expect("service mutex")
+                    .perform_webauthn(&params);
                 match result {
                     Ok(result) => to_reply(id, &result),
                     Err(error) => Reply::err(id, error.code, error.message),

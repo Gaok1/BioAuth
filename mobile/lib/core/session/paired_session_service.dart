@@ -11,6 +11,7 @@ import 'dart:async';
 
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
+import '../protocol/webauthn_relay.dart';
 import '../transport/auth_transport.dart';
 import '../transport/secure_session_establisher.dart';
 import 'phone_auth_core.dart';
@@ -37,6 +38,7 @@ class PairedSessionService {
   final AuthorizationConsent _consent;
   final DateTime Function()? _clock;
   final Set<SecureTransportSession> _active = {};
+  final WebAuthnRelayHandler _webAuthn = const WebAuthnRelayHandler();
   bool _stopped = false;
 
   /// Stops discovery and closes sessions when the app leaves the foreground.
@@ -91,15 +93,24 @@ class PairedSessionService {
       clock: _clock,
     );
     try {
-      return await core.serveOne(
-        outcome.session,
-        timeout: pairedSessionIdleTimeout,
+      final frame = await outcome.session.incomingFrames.first.timeout(
+        pairedSessionIdleTimeout,
       );
+      if (WebAuthnRelayRequest.recognizes(frame)) {
+        final request = WebAuthnRelayRequest.decode(
+          frame,
+          expectedVerifierId: record.verifierId,
+        );
+        await outcome.session.send(await _webAuthn.perform(request));
+        return null;
+      }
+      return await core.serveFrame(outcome.session, frame);
     } on TimeoutException {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
     } finally {
       _active.remove(outcome.session);
+      await outcome.session.close();
     }
   }
 }

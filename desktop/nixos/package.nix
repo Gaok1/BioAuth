@@ -18,7 +18,7 @@
 }:
 rustPlatform.buildRustPackage ({
   pname = "phone-auth";
-  version = "0.1.3";
+  version = "0.1.4";
 
   src = lib.cleanSource ../.;
 
@@ -43,7 +43,10 @@ rustPlatform.buildRustPackage ({
   nativeBuildInputs = [ pkg-config ] ++ lib.optionals withTray [ makeWrapper nodejs ];
   buildInputs = [ dbus ];
 
-  postInstall = lib.optionalString withTray ''
+  postInstall = ''
+    mkdir -p $out/share/phone-auth/browser-extension
+    cp -r ${../browser-extension}/. $out/share/phone-auth/browser-extension/
+  '' + lib.optionalString withTray ''
     mkdir -p $out/share/phone-auth
     cp -r ${../ui}/src ${../ui}/renderer ${../ui}/assets ${../ui}/package.json \
       $out/share/phone-auth/

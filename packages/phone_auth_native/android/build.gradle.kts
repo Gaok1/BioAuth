@@ -73,6 +73,8 @@ kotlin {
 
 dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.credentials:credentials:1.6.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
+    testImplementation("org.json:json:20240303")
 }

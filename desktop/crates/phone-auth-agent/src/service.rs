@@ -22,7 +22,7 @@ use phone_auth_verifier::{
 
 use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, PairingBootstrap,
-    PermissionSummary, StatusPayload,
+    PermissionSummary, StatusPayload, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::config::AgentConfig;
@@ -505,6 +505,92 @@ impl Service {
         }
     }
 
+    /// Relays a browser WebAuthn operation over an already authenticated phone
+    /// session. The browser extension's origin claim is shown on the phone and
+    /// validated there against the RP ID; it is not upgraded into session identity.
+    pub fn perform_webauthn(
+        &mut self,
+        params: &WebAuthnParams,
+    ) -> Result<WebAuthnResult, ServiceError> {
+        if !matches!(params.operation.as_str(), "create" | "get")
+            || params.origin.len() > 2048
+            || !params.origin.starts_with("https://")
+            || params.origin.chars().any(char::is_whitespace)
+            || !params.options.is_object()
+        {
+            return Err(ServiceError::new("bad-request", "invalid WebAuthn request"));
+        }
+        let encoded_options = serde_json::to_vec(&params.options)
+            .map_err(|_| ServiceError::new("bad-request", "invalid WebAuthn options"))?;
+        if encoded_options.len() > 6000 {
+            return Err(ServiceError::new(
+                "bad-request",
+                "WebAuthn options exceed the relay limit",
+            ));
+        }
+
+        let device_id = self.select_webauthn_device(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        if !session.security().suitable_for_authorization() {
+            let _ = session.close();
+            return Err(ServiceError::new(
+                "channel-unsuitable",
+                "desktop passkeys require an authenticated confidential session",
+            ));
+        }
+
+        let request_id = random::request_id();
+        let envelope = serde_json::json!({
+            "version": 1,
+            "type": "webauthn.request",
+            "requestId": request_id,
+            "verifierId": self.config.verifier_id,
+            "operation": params.operation,
+            "origin": params.origin,
+            "options": params.options,
+        });
+        let frame = webauthn_frame(&envelope)?;
+        let result = (|| {
+            session
+                .send(&frame)
+                .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
+            let response = session
+                .receive(RECEIVE_TIMEOUT)
+                .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
+            decode_webauthn_response(&response, &request_id)
+        })();
+        let _ = session.close();
+        result.map(|response| WebAuthnResult { response })
+    }
+
+    fn select_webauthn_device(&self, credential_id: Option<&str>) -> Result<String, ServiceError> {
+        if let Some(credential_id) = credential_id {
+            return self
+                .verifier
+                .store()
+                .find_credential(credential_id)
+                .map(|(device, _)| device.device_id.clone())
+                .ok_or_else(|| {
+                    ServiceError::new("unknown-credential", "unknown paired credential")
+                });
+        }
+        let devices: Vec<_> = self.verifier.store().devices().collect();
+        match devices.as_slice() {
+            [] => Err(ServiceError::new(
+                "not-paired",
+                "no phone is paired with this computer",
+            )),
+            [device] => Ok(device.device_id.clone()),
+            _ => Err(ServiceError::new(
+                "ambiguous-credential",
+                "more than one phone is paired; select a credential",
+            )),
+        }
+    }
+
     /// Sends the request and checks the answer.
     fn exchange(
         &mut self,
@@ -582,6 +668,52 @@ impl Service {
     }
 }
 
+const WEBAUTHN_MAGIC: &[u8] = b"BAWA1\n";
+
+fn webauthn_frame(value: &serde_json::Value) -> Result<Vec<u8>, ServiceError> {
+    let mut frame = WEBAUTHN_MAGIC.to_vec();
+    serde_json::to_writer(&mut frame, value)
+        .map_err(|_| ServiceError::new("bad-request", "could not encode WebAuthn request"))?;
+    if frame.len() > phone_auth_session::MAX_FRAME {
+        return Err(ServiceError::new(
+            "bad-request",
+            "WebAuthn request exceeds the secure-session frame limit",
+        ));
+    }
+    Ok(frame)
+}
+
+fn decode_webauthn_response(
+    frame: &[u8],
+    expected_request_id: &str,
+) -> Result<serde_json::Value, ServiceError> {
+    let json = frame.strip_prefix(WEBAUTHN_MAGIC).ok_or_else(|| {
+        ServiceError::new("bad-frame", "phone returned an invalid WebAuthn frame")
+    })?;
+    let value: serde_json::Value = serde_json::from_slice(json)
+        .map_err(|_| ServiceError::new("bad-frame", "phone returned invalid WebAuthn JSON"))?;
+    if value.get("version").and_then(|v| v.as_u64()) != Some(1)
+        || value.get("type").and_then(|v| v.as_str()) != Some("webauthn.response")
+        || value.get("requestId").and_then(|v| v.as_str()) != Some(expected_request_id)
+    {
+        return Err(ServiceError::new(
+            "bad-frame",
+            "WebAuthn response did not match the request",
+        ));
+    }
+    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        return Err(ServiceError::new(
+            "declined",
+            "passkey operation was cancelled or rejected",
+        ));
+    }
+    value
+        .get("response")
+        .filter(|response| response.is_object())
+        .cloned()
+        .ok_or_else(|| ServiceError::new("bad-frame", "phone returned no WebAuthn response"))
+}
+
 impl PairingProposalSummary {
     fn from_proposal(proposal: &crate::qr_network::PairingProposal) -> Self {
         let key_kind = map_key_kind(proposal.key_kind);
@@ -615,6 +747,7 @@ fn map_purpose(purpose: phone_auth_protocol::CredentialPurpose) -> CredentialPur
     match purpose {
         phone_auth_protocol::CredentialPurpose::Authorization => CredentialPurpose::Authorization,
         phone_auth_protocol::CredentialPurpose::DiskUnlock => CredentialPurpose::DiskUnlock,
+        phone_auth_protocol::CredentialPurpose::WebAuthn => CredentialPurpose::WebAuthn,
     }
 }
 
@@ -640,4 +773,41 @@ fn authorization_error(error: AuthorizationError) -> ServiceError {
         AuthorizationError::Malformed(_) => "bad-request",
     };
     ServiceError::new(code, error.to_string())
+}
+
+#[cfg(test)]
+mod webauthn_tests {
+    use super::*;
+
+    #[test]
+    fn response_is_bound_to_the_request_id() {
+        let matching = serde_json::json!({
+            "version": 1,
+            "type": "webauthn.response",
+            "requestId": "request-1",
+            "ok": true,
+            "response": {"id": "credential-1"},
+        });
+        let frame = webauthn_frame(&matching).unwrap();
+        assert_eq!(
+            decode_webauthn_response(&frame, "request-1").unwrap()["id"],
+            "credential-1"
+        );
+        assert!(decode_webauthn_response(&frame, "request-2").is_err());
+    }
+
+    #[test]
+    fn rejected_operation_never_becomes_a_response() {
+        let denied = serde_json::json!({
+            "version": 1,
+            "type": "webauthn.response",
+            "requestId": "request-1",
+            "ok": false,
+            "error": "secret detail that must not cross",
+        });
+        let frame = webauthn_frame(&denied).unwrap();
+        let error = decode_webauthn_response(&frame, "request-1").unwrap_err();
+        assert_eq!(error.code, "declined");
+        assert!(!error.message.contains("secret detail"));
+    }
 }

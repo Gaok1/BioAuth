@@ -2,12 +2,21 @@ package com.bioauth.phone_auth_native
 
 import android.app.Activity
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationCompat
 import androidx.fragment.app.FragmentActivity
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -15,6 +24,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.security.Signature
+import java.util.UUID
 
 class PhoneAuthNativePlugin :
     FlutterPlugin,
@@ -24,13 +34,16 @@ class PhoneAuthNativePlugin :
     private lateinit var keyStore: DeviceKeyStore
     private lateinit var biometricManager: BiometricManager
     private lateinit var bleController: BleController
+    private lateinit var applicationContext: Context
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var biometricPrompt: BiometricPrompt? = null
     private var pendingResult: MethodChannel.Result? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingBackgroundSessionResult: MethodChannel.Result? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        applicationContext = binding.applicationContext
         keyStore = DeviceKeyStore(binding.applicationContext)
         biometricManager = BiometricManager.from(binding.applicationContext)
         bleController = BleController(binding.applicationContext, binding.binaryMessenger)
@@ -48,6 +61,8 @@ class PhoneAuthNativePlugin :
             "verifySessionIdentity" -> verifySessionIdentity(call.arguments, result)
             "getSecurityCapabilities" -> result.success(securityCapabilities())
             "requestBlePermissions" -> requestBlePermissions(result)
+            "setBackgroundSessionsEnabled" -> setBackgroundSessionsEnabled(call.arguments, result)
+            "performWebAuthn" -> performWebAuthn(call.arguments, result)
             "sign" -> sign(call.arguments, result)
             else -> if (!bleController.handle(call, result)) result.notImplemented()
         }
@@ -177,14 +192,210 @@ class PhoneAuthNativePlugin :
         ActivityCompat.requestPermissions(currentActivity, required, BLE_PERMISSION_REQUEST)
     }
 
+    private fun setBackgroundSessionsEnabled(arguments: Any?, result: MethodChannel.Result) {
+        val enabled = (arguments as? Map<*, *>)?.get("enabled") as? Boolean
+        if (enabled == null) {
+            result.error("invalid_arguments", "enabled must be a boolean", null)
+            return
+        }
+        if (!enabled) {
+            applicationContext.stopService(Intent(applicationContext, BackgroundSessionService::class.java))
+            result.success(true)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            val currentActivity = activity
+            if (currentActivity == null) {
+                result.error("activity_unavailable", "A foreground activity is required", null)
+                return
+            }
+            if (pendingBackgroundSessionResult != null) {
+                result.error("operation_in_progress", "A permission request is active", null)
+                return
+            }
+            pendingBackgroundSessionResult = result
+            ActivityCompat.requestPermissions(
+                currentActivity,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_PERMISSION_REQUEST,
+            )
+            return
+        }
+        if (!backgroundNotificationAvailable()) {
+            result.error(
+                "background_sessions_unavailable",
+                "Background session notifications are disabled",
+                null,
+            )
+            return
+        }
+        if (BackgroundSessionService.running) {
+            result.success(true)
+            return
+        }
+        startBackgroundSessionService(result)
+    }
+
+    private fun startBackgroundSessionService(result: MethodChannel.Result) {
+        runCatching {
+            ContextCompat.startForegroundService(
+                applicationContext,
+                Intent(applicationContext, BackgroundSessionService::class.java),
+            )
+        }.onSuccess { waitForBackgroundSessionService(result, 0) }
+            .onFailure {
+                result.error(
+                    "background_sessions_unavailable",
+                    "Unable to start background sessions",
+                    null,
+                )
+            }
+    }
+
+    private fun waitForBackgroundSessionService(result: MethodChannel.Result, attempt: Int) {
+        if (BackgroundSessionService.running) {
+            result.success(true)
+        } else if (attempt >= 20) {
+            result.error(
+                "background_sessions_unavailable",
+                "Foreground session service did not start",
+                null,
+            )
+        } else {
+            Handler(Looper.getMainLooper()).postDelayed(
+                { waitForBackgroundSessionService(result, attempt + 1) },
+                50,
+            )
+        }
+    }
+
+    private fun backgroundNotificationAvailable(): Boolean {
+        if (!NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        val channel = applicationContext.getSystemService(NotificationManager::class.java)
+            .getNotificationChannel(BackgroundSessionService.CHANNEL_ID)
+        return channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    private fun performWebAuthn(arguments: Any?, result: MethodChannel.Result) {
+        val map = arguments as? Map<*, *>
+        val operation = map?.get("operation") as? String
+        val origin = map?.get("origin") as? String
+        val optionsJson = map?.get("optionsJson") as? String
+        if (operation !in setOf(WebAuthnRelayActivity.OP_CREATE, WebAuthnRelayActivity.OP_GET) ||
+            origin == null || origin.length !in 8..2048 ||
+            optionsJson == null || optionsJson.length !in 2..65536
+        ) {
+            result.error("invalid_arguments", "Invalid desktop passkey request", null)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            result.error(
+                "background_sessions_unavailable",
+                "Notification permission is required for desktop passkeys",
+                null,
+            )
+            return
+        }
+        if (!BackgroundSessionService.running || !backgroundNotificationAvailable()) {
+            result.error(
+                "background_sessions_unavailable",
+                "Foreground session service is not running",
+                null,
+            )
+            return
+        }
+
+        val manager = applicationContext.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    WEBAUTHN_CHANNEL,
+                    "Solicitacoes de passkey",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ),
+            )
+            if (manager.getNotificationChannel(WEBAUTHN_CHANNEL).importance == NotificationManager.IMPORTANCE_NONE) {
+                result.error("background_sessions_unavailable", "Passkey notifications are disabled", null)
+                return
+            }
+        }
+        val requestId = UUID.randomUUID().toString()
+        if (!WebAuthnRelayCoordinator.add(requestId, result)) {
+            result.error("operation_in_progress", "Passkey request already exists", null)
+            return
+        }
+        val intent = Intent(applicationContext, WebAuthnRelayActivity::class.java).apply {
+            putExtra(WebAuthnRelayActivity.EXTRA_REQUEST_ID, requestId)
+            putExtra(WebAuthnRelayActivity.EXTRA_OPERATION, operation)
+            putExtra(WebAuthnRelayActivity.EXTRA_ORIGIN, origin)
+            putExtra(WebAuthnRelayActivity.EXTRA_OPTIONS, optionsJson)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            WebAuthnRelayCoordinator.notificationId(requestId),
+            intent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val icon = applicationContext.applicationInfo.icon.takeIf { it != 0 }
+            ?: android.R.drawable.ic_lock_idle_lock
+        manager.notify(
+            WebAuthnRelayCoordinator.notificationId(requestId),
+            NotificationCompat.Builder(applicationContext, WEBAUTHN_CHANNEL)
+                .setSmallIcon(icon)
+                .setContentTitle("Passkey solicitada no computador")
+                .setContentText(origin)
+                .setStyle(NotificationCompat.BigTextStyle().bigText("Toque para revisar e autenticar: $origin"))
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_EVENT)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build(),
+        )
+        Handler(Looper.getMainLooper()).postDelayed({
+            manager.cancel(WebAuthnRelayCoordinator.notificationId(requestId))
+            WebAuthnRelayCoordinator.complete(
+                requestId,
+                null,
+                "Desktop passkey request expired",
+            )
+        }, WEBAUTHN_TIMEOUT_MS)
+    }
+
     private fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray,
     ): Boolean {
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            val result = pendingBackgroundSessionResult ?: return false
+            pendingBackgroundSessionResult = null
+            if (grantResults.singleOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startBackgroundSessionService(result)
+            } else {
+                result.success(false)
+            }
+            return true
+        }
         if (requestCode != BLE_PERMISSION_REQUEST) return false
         val result = pendingPermissionResult ?: return false
         pendingPermissionResult = null
+        pendingBackgroundSessionResult?.error(
+            "activity_unavailable",
+            "Permission activity detached",
+            null,
+        )
+        pendingBackgroundSessionResult = null
         result.success(grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED })
         return true
     }
@@ -317,5 +528,8 @@ class PhoneAuthNativePlugin :
     companion object {
         private const val CHANNEL = "phone_auth_native"
         private const val BLE_PERMISSION_REQUEST = 5710
+        private const val NOTIFICATION_PERMISSION_REQUEST = 5711
+        private const val WEBAUTHN_CHANNEL = "bioauth_webauthn_requests"
+        private const val WEBAUTHN_TIMEOUT_MS = 90_000L
     }
 }

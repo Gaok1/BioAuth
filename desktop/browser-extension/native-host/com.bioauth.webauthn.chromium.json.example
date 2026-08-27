@@ -1,0 +1,9 @@
+{
+  "name": "com.bioauth.webauthn",
+  "description": "PhoneAuth WebAuthn bridge",
+  "path": "/absolute/path/to/phone-auth-webauthn-host",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_CHROME_OR_EDGE_EXTENSION_ID/"
+  ]
+}
