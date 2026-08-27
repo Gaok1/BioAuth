@@ -1,11 +1,20 @@
 name: Release
 
 # Builds every artifact a user could install and attaches them to a GitHub
-# Release. Tagging is the trigger, so the release contents are always tied to a
-# commit that exists; `workflow_dispatch` builds the same set without publishing,
-# for checking a change to this file before cutting a tag.
+# Release. Three ways in, all landing in the same jobs:
+#
+#   push to main   bump the workspace version and the release cuts itself
+#   push of a tag  release that exact tag, for anything cut by hand
+#   dispatch       build the whole set without publishing, to test this file
+#
+# The tag is created by the release step rather than pushed by an earlier job,
+# because a tag pushed with GITHUB_TOKEN does not trigger workflows — GitHub
+# blocks that to stop runs feeding themselves. A two-workflow design would look
+# right and silently build nothing.
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -18,9 +27,88 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ------------------------------------------------------------------ Gate ---
+  # Decides the version and whether this run has anything to do, so an ordinary
+  # commit to main costs ten seconds instead of four parallel builds.
+  gate:
+    name: Decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+      build: ${{ steps.decide.outputs.build }}
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Four files carry the version independently. They are all read by
+      # something a user sees — the installer filename, the APK's versionName,
+      # the Nix package — so a release where they disagree ships artifacts that
+      # claim to be different versions of each other.
+      - name: Check the declared versions agree
+        id: version
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' \
+            desktop/Cargo.toml | head -1)
+          [ -n "$version" ] || { echo "no version in desktop/Cargo.toml"; exit 1; }
+          echo "canonical: $version"
+
+          fail=0
+          check() {
+            if [ "$2" != "$version" ]; then
+              echo "::error::$1 declares '$2', desktop/Cargo.toml says '$version'"
+              fail=1
+            fi
+          }
+          check mobile/pubspec.yaml \
+            "$(sed -n 's/^version: \([0-9.]*\).*/\1/p' mobile/pubspec.yaml | head -1)"
+          check desktop/ui/package.json \
+            "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/ui/package.json | head -1)"
+          check desktop/nixos/package.nix \
+            "$(sed -n 's/.*version = "\(.*\)".*/\1/p' desktop/nixos/package.nix | head -1)"
+          [ "$fail" = 0 ] || exit 1
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Decide what to do
+        id: decide
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              # Cut by hand. Build and publish exactly this tag.
+              echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+              echo "build=true" >> "$GITHUB_OUTPUT"
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            refs/heads/main)
+              tag="v$VERSION"
+              if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+                echo "$tag already exists — nothing to release."
+                echo "build=false" >> "$GITHUB_OUTPUT"
+                echo "publish=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "version bumped to $VERSION — releasing $tag."
+                echo "tag=$tag" >> "$GITHUB_OUTPUT"
+                echo "build=true" >> "$GITHUB_OUTPUT"
+                echo "publish=true" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            *)
+              # Manual dispatch: prove the workflow still works, publish nothing.
+              echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+              echo "build=true" >> "$GITHUB_OUTPUT"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
   # ---------------------------------------------------------------- Android --
   android:
     name: Android APK
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # Lifted to the job so a step condition can read it: the `secrets` context
@@ -102,6 +190,8 @@ jobs:
   # ---------------------------------------------------------------- Windows --
   windows:
     name: Windows installer
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -159,6 +249,8 @@ jobs:
   # ------------------------------------------------------------------ Linux --
   linux:
     name: Linux packages
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -226,6 +318,8 @@ jobs:
   # ------------------------------------------------------------------- Nix ---
   nix:
     name: NixOS package
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -283,8 +377,8 @@ jobs:
   # --------------------------------------------------------------- Release ---
   release:
     name: Publish release
-    needs: [android, windows, linux, nix]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [gate, android, windows, linux, nix]
+    if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -311,8 +405,13 @@ jobs:
             echo "note=**Debug-signed.** No release keystore is configured for this repository, so the APK is signed with Android's debug key. Fine for trying it out; do not treat it as a production build." >> "$GITHUB_OUTPUT"
           fi
 
+      # `tag_name` is explicit because on a push to main the ref is a branch.
+      # The action creates the tag at this commit as part of creating the
+      # release, so the tag only ever exists for a build that got this far.
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.gate.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: release/*
           generate_release_notes: true
           body: |
