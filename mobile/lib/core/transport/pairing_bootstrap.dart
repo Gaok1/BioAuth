@@ -95,7 +95,7 @@ class PairingBootstrap {
         case 'k':
           hash = _fixedBase64(value, 'invalid verifier identity hash');
         case 'ep':
-          endpoint = value;
+          endpoint = _routableEndpoint(value);
         case 'exp':
           expiresAtMs =
               int.tryParse(value) ??
@@ -122,6 +122,34 @@ class PairingBootstrap {
       endpoint: endpoint,
       expiresAtMs: expiresAtMs,
     );
+  }
+
+  /// Rejects an address this phone could never reach the desktop on.
+  ///
+  /// `0.0.0.0` is the case that matters: it is what a server binds to, not
+  /// something a client dials, and a phone that dials it dials itself. The
+  /// desktop used to put its bind address in the code, and the failure surfaced
+  /// as a connection error — which the UI reasonably, and wrongly, explained as
+  /// the two devices being on different networks. Naming the real fault here
+  /// costs one comparison and saves that whole diagnosis.
+  static String _routableEndpoint(String value) {
+    // BLE and anything else that does not dial an address carries no endpoint.
+    if (value.isEmpty) return value;
+
+    final colon = value.lastIndexOf(':');
+    if (colon <= 0) {
+      throw const BootstrapException('bootstrap endpoint has no port');
+    }
+    final address = value
+        .substring(0, colon)
+        .replaceAll(RegExp(r'^\[|\]$'), '');
+    if (address == '0.0.0.0' || address == '::' || address.isEmpty) {
+      throw BootstrapException(
+        'the computer advertised an address no phone can reach ($address). '
+        'It is running a version with a known pairing bug — update it.',
+      );
+    }
+    return value;
   }
 
   /// Renders the scannable string. Present so a test can round-trip against

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use phone_auth_agent::config::AgentConfig;
 use phone_auth_agent::ipc;
 use phone_auth_agent::paths::Paths;
-use phone_auth_agent::qr_network::QrNetworkTransport;
+use phone_auth_agent::qr_network::{self, QrNetworkTransport};
 use phone_auth_agent::service::Service;
 #[cfg(feature = "dev-simulator")]
 use phone_auth_agent::simulator;
@@ -131,11 +131,21 @@ fn run(args: Args) -> Result<(), String> {
         args.dev_simulator,
     )
     .map_err(|error| format!("could not listen for phones: {error}"))?;
-    let advertised_endpoint = format!("0.0.0.0:{}", network.port());
+    // The bind address, which is every interface. The address a phone should
+    // dial is a different question and is answered per pairing, in
+    // `Service::begin_pairing`, because it changes when this machine changes
+    // network.
     println!(
-        "phone-auth-agent: listening for phones on {}",
-        advertised_endpoint
+        "phone-auth-agent: listening for phones on 0.0.0.0:{}",
+        network.port()
     );
+    match qr_network::advertised_address() {
+        Ok(address) => println!("phone-auth-agent: phones should reach this machine at {address}"),
+        Err(error) => eprintln!(
+            "phone-auth-agent: no usable address on the local network ({error}); \
+             pairing codes cannot be produced until that is fixed"
+        ),
+    }
 
     let network = Arc::new(network);
     let port = args.port.unwrap_or(config.ipc_port);
@@ -144,7 +154,6 @@ fn run(args: Args) -> Result<(), String> {
         config,
         paths.clone(),
         Some(Arc::clone(&network)),
-        advertised_endpoint.clone(),
         args.dev_simulator,
     )
     .map_err(|error| error.to_string())?;
@@ -152,7 +161,11 @@ fn run(args: Args) -> Result<(), String> {
     let mut service = service;
     if args.dev_simulator {
         pair_simulator_if_needed(&mut service)?;
-        start_simulator(&advertised_endpoint, &identity_spki);
+        // Loopback, explicitly: the simulator is in this process. It used to be
+        // handed the bind address, which connects back here anyway — which is
+        // precisely why an unusable pairing address survived every local run.
+        let simulator_endpoint = format!("127.0.0.1:{}", network.port());
+        start_simulator(&simulator_endpoint, &identity_spki);
     }
     print_banner(&service);
 

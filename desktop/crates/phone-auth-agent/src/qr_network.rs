@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -96,6 +96,46 @@ struct Shared {
 pub struct QrNetworkTransport {
     shared: Arc<Shared>,
     local_addr: SocketAddr,
+}
+
+/// This machine's address on the network the phone is expected to be on.
+///
+/// The listener binds to every interface, but a pairing code has to name one
+/// address the phone can dial, and `0.0.0.0` is not one: it is a bind address.
+/// A phone that dials it is dialling itself, and the only reason that ever
+/// looked like it worked is that the development simulator runs on this same
+/// machine, where the connection loops back and succeeds.
+///
+/// Connecting a UDP socket sends no packet — it only fixes a route — and the
+/// local address that falls out is the interface this machine would use to
+/// reach the outside world, which on a home network is the one the phone can
+/// reach back on. Resolved per pairing rather than at startup, because a laptop
+/// that moved from Ethernet to Wi-Fi since boot would otherwise hand out an
+/// address it no longer answers on.
+pub fn advertised_address() -> io::Result<Ipv4Addr> {
+    let probe = UdpSocket::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))?;
+    probe.connect(SocketAddr::from((Ipv4Addr::new(8, 8, 8, 8), 53)))?;
+
+    let local = match probe.local_addr()? {
+        SocketAddr::V4(local) => *local.ip(),
+        SocketAddr::V6(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "no IPv4 route to the local network",
+            ))
+        }
+    };
+
+    // Either of these would produce a code that cannot be scanned from another
+    // device, which is the whole point of the code.
+    if local.is_unspecified() || local.is_loopback() {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            format!("no usable address for this machine (got {local})"),
+        ));
+    }
+
+    Ok(local)
 }
 
 impl QrNetworkTransport {
@@ -568,5 +608,42 @@ pub mod client {
         write_frame(&mut stream, &client_frame).map_err(|error| error.to_string())?;
 
         Ok((outcome.channel, stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_advertised_address_is_dialable_from_another_device() {
+        // The regression this guards. A pairing code used to carry the bind
+        // address, `0.0.0.0`, which a phone resolves to itself. It survived
+        // every local run because the development simulator connects from this
+        // same machine, where it loops back and succeeds.
+        //
+        // A machine with no network is a legitimate outcome, so the assertion
+        // is on the value when there is one, not on there being one.
+        if let Ok(address) = advertised_address() {
+            assert!(
+                !address.is_unspecified(),
+                "0.0.0.0 is a bind address; a phone dialling it dials itself"
+            );
+            assert!(
+                !address.is_loopback(),
+                "{address} is reachable only from this machine"
+            );
+            assert!(!address.is_broadcast(), "{address} is not a host");
+        }
+    }
+
+    #[test]
+    fn the_advertisement_is_resolved_fresh_each_time() {
+        // Two calls must agree while the network has not changed. The point of
+        // resolving per pairing is that the answer may change between
+        // pairings, not that it is unstable within one.
+        if let (Ok(first), Ok(second)) = (advertised_address(), advertised_address()) {
+            assert_eq!(first, second);
+        }
     }
 }

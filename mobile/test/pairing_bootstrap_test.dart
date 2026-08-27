@@ -123,4 +123,35 @@ void main() {
     expect(bootstrap.isExpiredAt(now), isTrue);
     expect(bootstrap.isExpiredAt(now + 1), isTrue);
   });
+
+  test('a bind address is refused with the real reason', () {
+    // The desktop shipped a code carrying `0.0.0.0`, its bind address. A phone
+    // dialling that dials itself, and the connection error it produced was
+    // reported to the user as the two devices being on different networks.
+    expect(
+      () => PairingBootstrap.parse(uri(ep: '0.0.0.0:8765')),
+      throwsA(
+        isA<BootstrapException>().having(
+          (e) => e.toString(),
+          'message',
+          contains('no phone can reach'),
+        ),
+      ),
+    );
+    expect(
+      () => PairingBootstrap.parse(uri(ep: '[::]:8765')),
+      throwsA(isA<BootstrapException>()),
+    );
+  });
+
+  test('an ordinary address still parses', () {
+    expect(
+      PairingBootstrap.parse(uri(ep: '192.168.100.80:8765')).endpoint,
+      '192.168.100.80:8765',
+    );
+    expect(
+      PairingBootstrap.parse(uri(ep: '[fe80::1]:8765')).endpoint,
+      '[fe80::1]:8765',
+    );
+  });
 }

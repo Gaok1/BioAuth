@@ -65,8 +65,6 @@ pub struct Service {
     /// The listening transport, held directly so that pairing can arm a code
     /// on it. `None` on a build or platform where it could not bind.
     network: Option<Arc<QrNetworkTransport>>,
-    /// Address to advertise in a pairing code.
-    advertised_endpoint: String,
     /// A completed pairing handshake waiting for the user to confirm its code.
     ///
     /// Behind its own lock so the UI can poll for it without taking the
@@ -82,7 +80,6 @@ impl Service {
         config: AgentConfig,
         paths: Paths,
         network: Option<Arc<QrNetworkTransport>>,
-        advertised_endpoint: String,
         development_mode: bool,
     ) -> Result<Self, ServiceError> {
         let store = PairingStore::load(paths.pairing_file())
@@ -102,7 +99,6 @@ impl Service {
             verifier: Verifier::new(identity, store),
             transports: TransportRegistry::new(available),
             network,
-            advertised_endpoint,
             held_proposal: Mutex::new(None),
             audit,
             development_mode,
@@ -287,10 +283,25 @@ impl Service {
             )
         })?;
 
+        // Resolved here rather than carried from startup: the answer changes
+        // when the machine changes network, and a code naming an address this
+        // machine no longer answers on fails with no way for the user to tell
+        // why.
+        let address = crate::qr_network::advertised_address().map_err(|error| {
+            ServiceError::new(
+                "no-address",
+                format!(
+                    "this computer has no usable address on the local network, \
+                     so a phone would have nowhere to connect: {error}"
+                ),
+            )
+        })?;
+        let endpoint = format!("{address}:{}", network.port());
+
         let bootstrap = ServerBootstrap::new(
             random::session_id(),
             self.config.verifier_id.clone(),
-            self.advertised_endpoint.clone(),
+            endpoint,
             network.identity(),
             now_ms(),
             PAIRING_WINDOW_MS,
