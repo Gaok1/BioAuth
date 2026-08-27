@@ -44,10 +44,11 @@
       });
     }
     if (operation === "create") {
+      const spki = json.response.publicKey;
       Object.defineProperties(response, {
         getTransports: { value: () => [...(json.response.transports ?? [])] },
-        getPublicKey: { value: () => null },
-        getPublicKeyAlgorithm: { value: () => -7 },
+        getPublicKey: { value: () => (spki == null ? null : fromBase64url(spki)) },
+        getPublicKeyAlgorithm: { value: () => json.response.publicKeyAlgorithm ?? -7 },
       });
     }
     return response;
@@ -67,6 +68,32 @@
     return credential;
   };
 
+  // Overriding `navigator.credentials` also bypasses the browser's own
+  // Permissions Policy gate, which is what normally stops a third-party iframe
+  // — an ad, an embedded widget — from asking for a passkey. Re-check it here.
+  // Firefox exposes no policy object, so a cross-origin frame fails closed
+  // there; WebAuthn inside one is rare and always needs an explicit `allow=`.
+  const framePermits = (operation) => {
+    if (window.top === window) return true;
+    const feature = operation === "create"
+      ? "publickey-credentials-create"
+      : "publickey-credentials-get";
+    const policy = document.permissionsPolicy ?? document.featurePolicy;
+    try {
+      return policy?.allowsFeature?.(feature) === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // The relying party's own deadline, kept inside bounds a person can actually
+  // meet: the phone has to wake, show a prompt, and take a fingerprint.
+  const deadline = (publicKey) => {
+    const requested = Number(publicKey?.timeout);
+    if (!Number.isFinite(requested) || requested <= 0) return 120000;
+    return Math.min(Math.max(requested, 15000), 300000);
+  };
+
   const relay = (operation, options) => {
     const id = crypto.randomUUID();
     const publicKey = jsonify(options.publicKey);
@@ -76,10 +103,17 @@
       publicKey.rpId ??= location.hostname;
     }
     return new Promise((resolve, reject) => {
+      if (!framePermits(operation)) {
+        reject(new DOMException(
+          "This frame is not allowed to use PhoneAuth passkeys",
+          "NotAllowedError",
+        ));
+        return;
+      }
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new DOMException("PhoneAuth request timed out", "NotAllowedError"));
-      }, 120000);
+      }, deadline(options.publicKey));
       pending.set(id, { operation, resolve, reject, timer });
       options.signal?.addEventListener("abort", () => {
         const current = pending.get(id);

@@ -34,10 +34,30 @@ the implementation runs inside the Kotlin security boundary.
   binding every current signer to `delegate_permission/common.get_login_creds`.
 - A desktop extension origin must be HTTPS and its host must equal the RP ID or
   be a subdomain. The phone performs this check again.
+- On every path the RP ID must be a *registrable* domain, checked against the
+  bundled Public Suffix List. Suffix matching alone is not enough: a page on
+  `evil.com.br` would otherwise claim `rpId = "com.br"` and every sibling site
+  could then ask for that credential. The list's private section is the part
+  that matters most — `github.io`, `vercel.app`, `pages.dev` are where someone
+  can host a page without owning the parent domain.
+- The extension re-checks the `publickey-credentials-create`/`-get` Permissions
+  Policy before relaying. Overriding `navigator.credentials` also bypasses the
+  browser's own gate, which is what normally stops a third-party iframe from
+  asking for a passkey. Firefox exposes no policy object, so a cross-origin
+  frame fails closed there.
 
-The privileged-browser allowlist is a deliberate snapshot of Google's
-published passkey allowlist retrieved on 2026-08-27; changes require review and
-an app release rather than a runtime network trust expansion.
+Two lists are bundled as Android raw resources, both verbatim from their
+canonical source so they can be re-pulled and diffed:
+
+| File | Source | Retrieved |
+|---|---|---|
+| `privileged_browsers.json` | `https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json` | 2026-08-27 |
+| `public_suffix_list.dat` | `https://publicsuffix.org/list/public_suffix_list.dat` | 2026-08-19 (list version) |
+
+Refresh them by downloading over the existing file and running
+`:phone_auth_native:testDebugUnitTest`, which asserts the shipped list still
+covers the suffixes that matter. Both are snapshots on purpose: trust is
+expanded by an app release under review, never by a runtime fetch.
 
 Every assertion uses a Keystore `Signature` inside `BiometricPrompt`. Desktop
 requests first appear as a notification containing the origin; tapping it opens
@@ -55,7 +75,15 @@ cargo build --release --bin phone-auth-agent --bin phone-auth-webauthn-host
 
 Load `desktop/browser-extension/` as an unpacked extension. Chrome and Edge use
 their extensions developer page; Firefox uses `about:debugging` for a temporary
-development install. Copy the matching example from
+development install.
+
+The extension carries both engines' shapes, because they disagree twice.
+Firefox resolves a promise returned from `runtime.onMessage`; Chrome ignores it
+and closes the channel, so replies go through `sendResponse` with `return true`.
+Sending to the native host is the mirror image — `browser.*` returns a promise
+and rejects a callback, `chrome.*` wants a callback and only returns a promise
+from Chrome 116 — so the code branches on the namespace rather than guessing.
+Firefox needs 128 or newer for `world: "MAIN"` content scripts. Copy the matching example from
 `desktop/browser-extension/native-host/` to `com.bioauth.webauthn.json`, replace
 the executable path, and for Chromium replace the unpacked extension ID.
 

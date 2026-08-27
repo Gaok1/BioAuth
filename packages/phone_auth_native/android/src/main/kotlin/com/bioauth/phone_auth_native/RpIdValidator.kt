@@ -1,5 +1,6 @@
 package com.bioauth.phone_auth_native
 
+import android.content.Context
 import androidx.credentials.provider.CallingAppInfo
 import androidx.annotation.RequiresApi
 import org.json.JSONArray
@@ -15,6 +16,7 @@ internal fun interface AssetLinksFetcher {
 
 internal class RpIdValidator(
     private val privilegedAllowlist: String,
+    private val publicSuffixes: PublicSuffixList,
     private val fetcher: AssetLinksFetcher = AssetLinksFetcher(::fetchAssetLinks),
 ) {
     @RequiresApi(28)
@@ -22,10 +24,11 @@ internal class RpIdValidator(
         if (caller.isOriginPopulated()) {
             val origin = caller.getOrigin(privilegedAllowlist)
                 ?: throw SecurityException("Privileged browser origin is unavailable")
-            requireOriginMatchesRpId(origin, rpId)
+            requireOriginMatchesRpId(origin, rpId, publicSuffixes)
             return WebAuthnClientData(origin = origin, packageName = null)
         }
 
+        requireRegistrableDomain(rpId, publicSuffixes)
         val signatures = caller.signingInfoCompat.apkContentsSigners
         require(signatures.size == 1) { "Calling app must have one current signing certificate" }
         val fingerprints = signatures.map { fingerprint(it.toByteArray()) }
@@ -42,16 +45,45 @@ internal class RpIdValidator(
     companion object {
         private const val RELATION = "delegate_permission/common.get_login_creds"
 
-        fun requireOriginMatchesRpId(origin: String, rpId: String) {
+        /** Builds a validator over the two bundled lists. */
+        fun fromResources(context: Context): RpIdValidator {
+            val resources = context.resources
+            val allowlist = resources.openRawResource(R.raw.privileged_browsers)
+                .bufferedReader().use { it.readText() }
+            val suffixes = resources.openRawResource(R.raw.public_suffix_list)
+                .bufferedReader().use { PublicSuffixList(it.readLines().asSequence()) }
+            return RpIdValidator(allowlist, suffixes)
+        }
+
+        /**
+         * A relying party may only scope credentials to a domain someone can
+         * register. Without this a page under a public suffix could claim the
+         * suffix itself and share the credential with every sibling site.
+         */
+        fun requireRegistrableDomain(rpId: String, publicSuffixes: PublicSuffixList) {
+            require(rpId.isNotEmpty() && !publicSuffixes.isPublicSuffix(rpId)) {
+                "`$rpId` is a public suffix, not a registrable domain"
+            }
+        }
+
+        fun requireOriginMatchesRpId(
+            origin: String,
+            rpId: String,
+            publicSuffixes: PublicSuffixList,
+        ) {
+            requireRegistrableDomain(rpId, publicSuffixes)
             val uri = URI(origin)
             val host = uri.host?.lowercase()
+            // The RP ID is compared case-insensitively: a relying party that
+            // sends `Example.com` means the same host as `example.com`.
+            val target = rpId.lowercase()
             require(uri.scheme == "https" &&
                 uri.rawPath.orEmpty() in setOf("", "/") &&
                 uri.rawQuery == null &&
                 uri.rawFragment == null &&
                 uri.userInfo == null &&
                 host != null &&
-                (host == rpId || host.endsWith(".$rpId"))
+                (host == target || host.endsWith(".$target"))
             ) { "Browser origin is not authorized for this relying party" }
         }
 

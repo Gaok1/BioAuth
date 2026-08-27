@@ -76,6 +76,11 @@ internal class WebAuthnCore(
                 clientData.bytes?.let { put("clientDataJSON", b64(it)) }
                 put("attestationObject", b64(Ctap2Encoder.noneAttestationObject(authData)))
                 put("transports", JSONArray().put("internal"))
+                // `getPublicKey()`/`getPublicKeyAlgorithm()` on the browser side
+                // read these. Without them a relying party using the convenience
+                // API has to parse the attestation object itself.
+                put("publicKey", b64(publicKey.encoded))
+                put("publicKeyAlgorithm", Ctap2Encoder.ES256)
             },
         )
     }

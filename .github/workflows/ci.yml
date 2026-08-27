@@ -43,11 +43,16 @@ jobs:
           dart format --output=none --set-exit-if-changed lib test
           flutter analyze
           flutter test
+      # `testDevDebugUnitTest` only reaches `:app`, which has no unit tests at
+      # all. The plugin is a library module with no flavours, so its Kotlin
+      # tests — including the RP ID validation ones — live behind
+      # `:phone_auth_native:testDebugUnitTest` and were never being run.
       - name: Android lint and native unit tests
         working-directory: mobile/android
         run: |
           chmod +x gradlew
-          ./gradlew lintDevDebug testDevDebugUnitTest
+          ./gradlew lintDevDebug testDevDebugUnitTest \
+            :phone_auth_native:testDebugUnitTest
 
   desktop:
     runs-on: ubuntu-latest

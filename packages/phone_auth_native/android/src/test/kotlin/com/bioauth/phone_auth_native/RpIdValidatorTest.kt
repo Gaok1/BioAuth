@@ -25,17 +25,49 @@ internal class RpIdValidatorTest {
         assertFalse(RpIdValidator.validateAssetLinks("[]", "com.example.app", listOf("AA:BB")))
     }
 
+    // Enough of the real list to cover an ICANN suffix, a multi-label one, a
+    // wildcard with its exception, and the private section that matters most.
+    private val suffixes = PublicSuffixList(
+        sequenceOf(
+            "// comment", "com", "net", "br", "com.br", "uk", "co.uk",
+            "*.ck", "!www.ck", "io", "github.io", "app", "vercel.app",
+        ),
+    )
+
     @Test
     fun webOriginsAreBoundToTheRpIdAndHttps() {
-        RpIdValidator.requireOriginMatchesRpId("https://login.example.com", "example.com")
+        RpIdValidator.requireOriginMatchesRpId("https://login.example.com", "example.com", suffixes)
         assertFailsWith<IllegalArgumentException> {
-            RpIdValidator.requireOriginMatchesRpId("https://example.net", "example.com")
+            RpIdValidator.requireOriginMatchesRpId("https://example.net", "example.com", suffixes)
         }
         assertFailsWith<IllegalArgumentException> {
-            RpIdValidator.requireOriginMatchesRpId("http://example.com", "example.com")
+            RpIdValidator.requireOriginMatchesRpId("http://example.com", "example.com", suffixes)
         }
         assertFailsWith<IllegalArgumentException> {
-            RpIdValidator.requireOriginMatchesRpId("https://example.com/phishing", "example.com")
+            RpIdValidator.requireOriginMatchesRpId("https://example.com/phishing", "example.com", suffixes)
         }
+    }
+
+    @Test
+    fun anRpIdIsComparedWithoutRegardToCase() {
+        RpIdValidator.requireOriginMatchesRpId("https://login.example.com", "Example.COM", suffixes)
+    }
+
+    /**
+     * The attack this closes: a page under a public suffix claiming the suffix
+     * itself, which every sibling site could then ask for.
+     */
+    @Test
+    fun aPublicSuffixIsNeverAValidRelyingParty() {
+        for (suffix in listOf("com", "com.br", "co.uk", "github.io", "vercel.app", "foo.ck")) {
+            assertFailsWith<IllegalArgumentException>("`$suffix` must be rejected") {
+                RpIdValidator.requireOriginMatchesRpId("https://evil.$suffix", suffix, suffixes)
+            }
+        }
+        // One label deeper is registrable and stays allowed.
+        RpIdValidator.requireOriginMatchesRpId("https://a.shop.com.br", "shop.com.br", suffixes)
+        RpIdValidator.requireOriginMatchesRpId("https://mine.github.io", "mine.github.io", suffixes)
+        // The exception rule makes `www.ck` registrable even under `*.ck`.
+        RpIdValidator.requireOriginMatchesRpId("https://www.ck", "www.ck", suffixes)
     }
 }

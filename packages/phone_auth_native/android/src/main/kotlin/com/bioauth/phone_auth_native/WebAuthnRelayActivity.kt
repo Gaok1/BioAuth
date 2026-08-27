@@ -11,6 +11,10 @@ import java.util.concurrent.Executors
 class WebAuthnRelayActivity : FragmentActivity() {
     private val executor = Executors.newSingleThreadExecutor()
     private val core by lazy { WebAuthnCore(PasskeyStore(this), WebAuthnKeyStore(this)) }
+    private val publicSuffixes by lazy {
+        resources.openRawResource(R.raw.public_suffix_list)
+            .bufferedReader().use { PublicSuffixList(it.readLines().asSequence()) }
+    }
     private var prompt: BiometricPrompt? = null
     private lateinit var requestId: String
 
@@ -37,7 +41,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
 
     private fun prepareCreate(origin: String, optionsJson: String) {
         val options = core.creationOptions(optionsJson)
-        RpIdValidator.requireOriginMatchesRpId(origin, options.rpId)
+        RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
         runOnUiThread {
             authenticate("Criar passkey", "${options.rpId} via $origin", null) {
                 core.create(options, WebAuthnClientData(origin, null))
@@ -47,7 +51,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
 
     private fun prepareGet(origin: String, optionsJson: String) {
         val options = core.requestOptions(optionsJson)
-        RpIdValidator.requireOriginMatchesRpId(origin, options.rpId)
+        RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
         val matches = core.credentialsFor(options)
         require(matches.size == 1) { "The desktop request must select one passkey" }
         val prepared = core.prepareAssertion(

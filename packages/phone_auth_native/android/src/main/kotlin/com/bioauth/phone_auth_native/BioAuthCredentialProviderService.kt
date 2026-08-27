@@ -27,10 +27,7 @@ import java.util.concurrent.Executors
 class BioAuthCredentialProviderService : CredentialProviderService() {
     private val executor = Executors.newCachedThreadPool()
     private val core by lazy { WebAuthnCore(PasskeyStore(this), WebAuthnKeyStore(this)) }
-    private val validator by lazy {
-        val allowlist = resources.openRawResource(R.raw.privileged_browsers).bufferedReader().use { it.readText() }
-        RpIdValidator(allowlist)
-    }
+    private val validator by lazy { RpIdValidator.fromResources(this) }
 
     override fun onBeginCreateCredentialRequest(
         request: BeginCreateCredentialRequest,

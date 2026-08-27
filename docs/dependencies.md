@@ -34,6 +34,28 @@ also keeps permission, lifecycle and callback behavior under project control.
   supports fixed PhoneAuth arrays, not integer-keyed COSE maps, and moving
   credential construction out of Kotlin would widen the key boundary.
 
+### Bundled data
+
+Two reference lists ship as raw resources. They are data, not code: nothing in
+them executes, and neither adds a build or runtime dependency. Both are stored
+verbatim from their canonical source so a refresh is a download and a diff.
+
+| File | Source | License |
+|---|---|---|
+| `public_suffix_list.dat` | `https://publicsuffix.org/list/public_suffix_list.dat` | MPL-2.0, header kept intact |
+| `privileged_browsers.json` | `https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json` | Google's published passkey allowlist |
+
+The suffix list is what makes an RP ID check mean anything — a hand-written
+approximation would miss the private section (`github.io`, `vercel.app`), which
+is precisely where a page can be hosted by someone who does not own the parent
+domain. `PublicSuffixListTest` asserts the shipped file still covers the
+suffixes that matter, so a truncated or emptied list fails the build rather
+than silently making every suffix registrable.
+
+Refreshing either file is a reviewed app release. Neither is fetched at
+runtime: a security decision must not depend on a network call that can fail
+open.
+
 ## Rust verifier
 
 The desktop workspace uses narrowly scoped crates for serialization, P-256

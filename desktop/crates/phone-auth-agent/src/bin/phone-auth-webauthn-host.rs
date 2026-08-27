@@ -7,9 +7,15 @@ use serde_json::{json, Value};
 
 const MAX_MESSAGE: usize = 128 * 1024;
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("phone-auth-webauthn-host: {error}");
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            // The browser restarts the host on the next request, so the exit
+            // status is what a person debugging this has to go on.
+            eprintln!("phone-auth-webauthn-host: {error}");
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 
