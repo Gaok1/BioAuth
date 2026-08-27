@@ -1,0 +1,12 @@
+[package]
+name = "phone-auth-protocol"
+description = "Transport-independent PhoneAuth wire format: canonical CBOR frames and validation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately dependency-free. This crate defines the bytes that get signed,
+# so its encoding rules must not drift with a third-party CBOR library's
+# choices, and it must stay small enough to link into an initrd binary.
+[dependencies]

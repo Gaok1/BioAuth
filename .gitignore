@@ -1,0 +1,13 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+.kotlin/
+.metadata
+build/
+coverage/
+local.properties
+*.iml
+*.jks
+*.keystore
+key.properties

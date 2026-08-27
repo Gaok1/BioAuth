@@ -1,0 +1,44 @@
+﻿[workspace]
+resolver = "2"
+members = [
+    "crates/phone-auth-protocol",
+    "crates/phone-auth-session",
+    "crates/phone-auth-verifier",
+    "crates/phone-auth-agent",
+    "crates/phone-auth-cli",
+    "crates/phone-auth-initrd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+
+[workspace.dependencies]
+phone-auth-protocol = { path = "crates/phone-auth-protocol" }
+phone-auth-session = { path = "crates/phone-auth-session" }
+phone-auth-verifier = { path = "crates/phone-auth-verifier" }
+phone-auth-agent = { path = "crates/phone-auth-agent" }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+sha2 = { version = "0.10", default-features = false }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+futures = "0.3"
+tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }
+uuid = "1"
+getrandom = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Optimised for size. The agent idles in the background almost all of its life
+# and the initrd binary is copied into every generation's boot image, so bytes
+# cost more here than the last few percent of speed on a once-a-day signature
+# check.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,19 @@
+[package]
+name = "phone-auth-initrd"
+description = "Minimal boot-time PhoneAuth client for unlocking an encrypted root volume."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "phone-auth-initrd"
+path = "src/main.rs"
+
+# Intentionally minimal. Anything linked here runs before the root filesystem
+# is mounted, with no service manager, no user session and no way to patch it
+# without regenerating the initrd, so the dependency list is the attack
+# surface. No agent, no IPC, no UI, no JSON-RPC.
+[dependencies]
+phone-auth-protocol.workspace = true
+phone-auth-verifier.workspace = true

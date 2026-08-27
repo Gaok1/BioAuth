@@ -1,0 +1,27 @@
+[package]
+name = "phone-auth-verifier"
+description = "PhoneAuth verifier core: pairing records, policy, replay defence and signature checking."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# Exposes the in-process session and the software authenticator used by tests
+# and by the development simulator. Never enable this in a shipped build: the
+# software authenticator signs without any biometric gate.
+testing = []
+
+[dependencies]
+phone-auth-protocol.workspace = true
+p256.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Self-dependency so `cargo test` enables the fixtures without the caller
+# having to remember `--features testing`. Integration tests link the library
+# as an external crate, where a `cfg(test)` module is not visible.
+[dev-dependencies]
+phone-auth-verifier = { path = ".", features = ["testing"] }

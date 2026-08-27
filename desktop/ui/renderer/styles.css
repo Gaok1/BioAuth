@@ -1,0 +1,338 @@
+/* Small window, dense information, no decoration that does not carry meaning. */
+
+:root {
+  --bg: #ffffff;
+  --fg: #16181d;
+  --muted: #6b7280;
+  --line: #e4e7ec;
+  --card: #f7f8fa;
+  --accent: #4f6ef7;
+  --ok: #1a7f4b;
+  --warn: #9a6700;
+  --warn-bg: #fff8e6;
+  --bad: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --fg: #e9eaee;
+    --muted: #9aa1ae;
+    --line: #2a2e37;
+    --card: #1d2027;
+    --accent: #8aa2ff;
+    --ok: #4ade80;
+    --warn: #f5c451;
+    --warn-bg: #2a2410;
+    --bad: #f87171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.wrap {
+  word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.label {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bar h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bar p {
+  margin: 2px 0 0;
+}
+
+.pill {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pill--on {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.pill--off {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.banner {
+  margin: 10px 14px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.banner--warn {
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  color: var(--warn);
+}
+
+.banner p {
+  margin: 6px 0 0;
+}
+
+.card {
+  margin: 10px 14px 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.card--live {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.card--live h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin: 0 0 8px;
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.facts dd {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin: 12px 14px 0;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--card);
+}
+
+.tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab--active {
+  background: var(--bg);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+main {
+  padding-bottom: 16px;
+}
+
+.entry {
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.entry h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.entry p {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+
+.entry ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.entry li {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+}
+
+.tag--ok {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.tag--bad {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.tag--warn {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+}
+
+.button {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 12px 14px 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.empty {
+  margin: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Always on white, whatever the theme: an inverted code defeats some
+   scanners, and a code that will not scan is the only failure that matters. */
+.qr {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  margin: 6px 0 8px;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.qr img {
+  width: 190px;
+  height: 190px;
+  image-rendering: pixelated;
+}
+
+.code {
+  margin: 2px 0 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-align: center;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.actions .button {
+  width: auto;
+  flex: 1;
+  margin: 0;
+}
+
+.button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.button--primary:hover {
+  background: var(--accent);
+  color: #fff;
+  filter: brightness(1.08);
+}
+
+details {
+  margin-top: 6px;
+}
+
+summary {
+  cursor: pointer;
+  font-size: 11px;
+}

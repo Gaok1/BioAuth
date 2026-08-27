@@ -1,0 +1,15 @@
+[package]
+name = "phone-auth-cli"
+description = "Command line client for the PhoneAuth agent; the entry point used by PAM, sudo and scripts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "phone-auth"
+path = "src/main.rs"
+
+[dependencies]
+phone-auth-agent.workspace = true
+serde_json.workspace = true

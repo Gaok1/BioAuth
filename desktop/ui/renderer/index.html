@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <!-- No remote origins, no inline script, no eval. The window renders local
+         files and talks to the main process; it has no business fetching. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self';"
+    />
+    <title>PhoneAuth</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div>
+        <h1 id="verifier-name">PhoneAuth</h1>
+        <p id="verifier-id" class="muted mono"></p>
+      </div>
+      <span id="connection" class="pill pill--off" title="Estado do agente">offline</span>
+    </header>
+
+    <div id="dev-banner" class="banner banner--warn" hidden>
+      <strong>Modo de desenvolvimento.</strong>
+      As autorizações são assinadas em processo por uma chave de software. Sem
+      biometria, sem telefone.
+    </div>
+
+    <div id="offline-banner" class="banner" hidden>
+      <strong>Agente indisponível.</strong>
+      <span id="offline-detail"></span>
+      <p class="muted mono" id="offline-endpoint"></p>
+    </div>
+
+    <section id="live" class="card card--live" hidden>
+      <p class="label">Aguardando o telefone</p>
+      <h2 id="live-action"></h2>
+      <dl class="facts">
+        <dt>serviço</dt><dd id="live-service"></dd>
+        <dt>recurso</dt><dd id="live-resource"></dd>
+        <dt>usuário</dt><dd id="live-user"></dd>
+        <dt>origem</dt><dd id="live-origin"></dd>
+      </dl>
+      <p class="muted">Aprove ou recuse no telefone. Esta janela não decide nada.</p>
+    </section>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab tab--active" data-panel="panel-devices" role="tab">Telefones</button>
+      <button class="tab" data-panel="panel-transports" role="tab">Conexão</button>
+      <button class="tab" data-panel="panel-history" role="tab">Histórico</button>
+    </nav>
+
+    <main>
+      <section id="panel-devices" class="panel">
+        <div id="devices"></div>
+        <button id="pair" class="button">Parear um telefone…</button>
+
+        <div id="pairing" class="card" hidden>
+          <p class="label">Escaneie no telefone</p>
+          <div class="qr"><img id="pairing-qr" alt="Código de pareamento" /></div>
+          <p class="muted" id="pairing-expiry"></p>
+          <details>
+            <summary class="muted">Ver o conteúdo do código</summary>
+            <p class="mono wrap" id="pairing-payload"></p>
+          </details>
+          <p id="pairing-blocked" class="muted"></p>
+          <button id="pairing-cancel" class="button">Cancelar</button>
+        </div>
+
+        <div id="confirm" class="card card--live" hidden>
+          <p class="label">Confirme no telefone</p>
+          <p class="code" id="confirm-code"></p>
+          <p>
+            Este número deve aparecer igual na tela do telefone. Se for
+            diferente, alguém está no meio da conexão — recuse.
+          </p>
+          <dl class="facts">
+            <dt>telefone</dt><dd id="confirm-device"></dd>
+            <dt>credencial</dt><dd id="confirm-credential"></dd>
+            <dt>chave</dt><dd id="confirm-key"></dd>
+          </dl>
+          <div class="actions">
+            <button id="confirm-yes" class="button button--primary">Confere</button>
+            <button id="confirm-no" class="button">Não confere</button>
+          </div>
+          <p id="confirm-error" class="muted"></p>
+        </div>
+      </section>
+
+      <section id="panel-transports" class="panel" hidden>
+        <div id="transports"></div>
+      </section>
+
+      <section id="panel-history" class="panel" hidden>
+        <div id="history"></div>
+      </section>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+[package]
+name = "phone-auth-agent"
+description = "Background PhoneAuth verifier daemon with a local IPC surface for the tray UI and the CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "phone-auth-agent"
+path = "src/main.rs"
+
+[features]
+# Enables the in-process simulator transport. Even with the feature compiled
+# in, the agent only activates it when started with `--dev-simulator`.
+dev-simulator = ["phone-auth-verifier/testing", "dep:p256"]
+
+[dependencies]
+phone-auth-protocol.workspace = true
+phone-auth-session.workspace = true
+phone-auth-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Only the simulator signs anything on this side; a production agent verifies
+# and never holds an authorization key.
+p256 = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17.4", features = ["bluetoothd"] }
+futures.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+phone-auth-verifier = { workspace = true, features = ["testing"] }
