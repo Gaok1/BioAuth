@@ -10,6 +10,7 @@ pub mod audit;
 pub mod ble;
 pub mod ble_framing;
 pub mod client;
+pub mod clipboard;
 pub mod config;
 pub mod framing;
 pub mod identity;
@@ -18,6 +19,7 @@ pub mod locker;
 pub mod password;
 pub mod paths;
 pub mod qr_network;
+pub mod secret_memory;
 pub mod service;
 #[cfg(feature = "dev-simulator")]
 pub mod simulator;

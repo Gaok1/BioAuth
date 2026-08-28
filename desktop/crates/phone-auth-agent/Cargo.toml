@@ -33,6 +33,21 @@ serde_json.workspace = true
 # and never holds an authorization key.
 p256 = { workspace = true, optional = true }
 
+# Page locking and the clipboard. Approved in `docs/dependencies.md`: a fetched
+# password waits in the agent while the user pastes, which is a longer exposure
+# window than the locker's data key gets, and the pagefile is reachable over it.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_ErrorReporting",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 bluer = { version = "0.17.4", features = ["bluetoothd"] }
 futures.workspace = true

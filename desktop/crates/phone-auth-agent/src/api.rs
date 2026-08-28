@@ -261,6 +261,52 @@ pub struct LockerRekeyResult {
     pub development: bool,
 }
 
+/// Generate a password and put it straight on the clipboard.
+///
+/// Every field is optional and falls back to the generator's own default, so a
+/// caller that has no opinion sends `{}`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultGenerateCopyParams {
+    #[serde(default)]
+    pub length: Option<usize>,
+    #[serde(default)]
+    pub lowercase: Option<bool>,
+    #[serde(default)]
+    pub uppercase: Option<bool>,
+    #[serde(default)]
+    pub digits: Option<bool>,
+    #[serde(default)]
+    pub symbols: Option<bool>,
+    /// How long the clipboard entry lives before it is removed.
+    #[serde(default)]
+    pub clear_after_ms: Option<u64>,
+}
+
+/// What a copy did — never what it copied.
+///
+/// There is deliberately no field carrying the password and no sibling method
+/// that returns one. The tray is an Electron process: a password that reaches
+/// it has entered a renderer, a V8 heap that may be dumped, and whatever
+/// devtools happens to be attached. Doing the copy in the agent is only worth
+/// anything if the plaintext never makes that trip, so the type that crosses
+/// IPC cannot express it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultCopyResult {
+    /// How many characters were generated. Not which ones.
+    pub length: usize,
+    pub clears_at_ms: i64,
+    /// The entry was marked to stay out of clipboard history.
+    pub history_excluded: bool,
+    /// The entry was marked to stay off the cloud clipboard.
+    pub cloud_excluded: bool,
+    /// Whether the plaintext sat in pages the OS agreed to keep out of the
+    /// pagefile. False is a report the UI should be able to show, not a
+    /// failure: quotas make it an ordinary outcome.
+    pub memory_locked: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForgetParams {
