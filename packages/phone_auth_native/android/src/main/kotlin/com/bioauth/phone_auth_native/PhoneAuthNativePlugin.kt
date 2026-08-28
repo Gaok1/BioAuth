@@ -31,12 +31,14 @@ class PhoneAuthNativePlugin :
     MethodChannel.MethodCallHandler,
     ActivityAware {
     private lateinit var channel: MethodChannel
+    private lateinit var vaultChannel: MethodChannel
     private lateinit var keyStore: DeviceKeyStore
     private lateinit var lockerKeyStore: LockerKeyStore
     private lateinit var biometricManager: BiometricManager
     private lateinit var bleController: BleController
     private lateinit var passkeyStore: PasskeyStore
     private lateinit var webAuthnKeyStore: WebAuthnKeyStore
+    private lateinit var vaultStoreChannel: VaultStoreChannel
     private lateinit var applicationContext: Context
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
@@ -53,8 +55,15 @@ class PhoneAuthNativePlugin :
         bleController = BleController(binding.applicationContext, binding.binaryMessenger)
         passkeyStore = PasskeyStore(binding.applicationContext)
         webAuthnKeyStore = WebAuthnKeyStore(binding.applicationContext)
+        vaultStoreChannel = VaultStoreChannel(
+            BiometricManager.from(binding.applicationContext),
+            VaultKeyStore(binding.applicationContext),
+            VaultFileStorage(binding.applicationContext),
+        )
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
+        vaultChannel = MethodChannel(binding.binaryMessenger, VAULT_CHANNEL)
+        vaultChannel.setMethodCallHandler(vaultStoreChannel)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -789,11 +798,13 @@ class PhoneAuthNativePlugin :
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
         activity = binding.activity
+        vaultStoreChannel.attach(binding.activity)
         binding.addRequestPermissionsResultListener(::onRequestPermissionsResult)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
         cancelPendingOperation()
+        vaultStoreChannel.detach()
         activityBinding?.removeRequestPermissionsResultListener(::onRequestPermissionsResult)
         activityBinding = null
         activity = null
@@ -802,11 +813,13 @@ class PhoneAuthNativePlugin :
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activityBinding = binding
         activity = binding.activity
+        vaultStoreChannel.attach(binding.activity)
         binding.addRequestPermissionsResultListener(::onRequestPermissionsResult)
     }
 
     override fun onDetachedFromActivity() {
         cancelPendingOperation()
+        vaultStoreChannel.detach()
         activityBinding?.removeRequestPermissionsResultListener(::onRequestPermissionsResult)
         activityBinding = null
         activity = null
@@ -814,12 +827,15 @@ class PhoneAuthNativePlugin :
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         cancelPendingOperation()
+        vaultStoreChannel.detach()
         bleController.dispose()
         channel.setMethodCallHandler(null)
+        vaultChannel.setMethodCallHandler(null)
     }
 
     companion object {
         private const val CHANNEL = "phone_auth_native"
+        private const val VAULT_CHANNEL = "bioauth/vault_store"
         private const val BLE_PERMISSION_REQUEST = 5710
         private const val NOTIFICATION_PERMISSION_REQUEST = 5711
         private const val WEBAUTHN_CHANNEL = "bioauth_webauthn_requests"
