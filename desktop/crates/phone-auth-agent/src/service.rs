@@ -161,6 +161,16 @@ impl Service {
             .retain(|subscriber| subscriber.send(event.clone()).is_ok());
     }
 
+    #[cfg(test)]
+    pub(crate) fn broadcast_for_test(&mut self, event: Event) {
+        self.broadcast(event);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscriber_count_for_test(&self) -> usize {
+        self.subscribers.len()
+    }
+
     pub fn status(&self) -> StatusPayload {
         let transports = self.transports.status();
         let blocked_on = transports
@@ -1277,7 +1287,7 @@ mod pairing_state_tests {
     use super::*;
     use crate::qr_network::PairingProposal;
 
-    fn service(name: &str) -> Service {
+    pub(super) fn service(name: &str) -> Service {
         let root = std::env::temp_dir().join(format!(
             "phone-auth-{name}-{}-{:?}",
             std::process::id(),
@@ -1428,5 +1438,58 @@ mod webauthn_tests {
         let error = decode_webauthn_response(&frame, "request-1").unwrap_err();
         assert_eq!(error.code, "declined");
         assert!(!error.message.contains("secret detail"));
+    }
+}
+
+#[cfg(test)]
+mod subscriber_tests {
+    use super::pairing_state_tests::service;
+    use super::*;
+
+    /// The tray reconnects on every restart, so a client that went away must
+    /// lose its slot. Holding the sender forever would grow the list without
+    /// bound and make every later broadcast pay for a receiver nobody reads.
+    #[test]
+    fn broadcasting_drops_subscribers_that_went_away() {
+        let mut service = service("subscriber-prune");
+        let live = service.subscribe();
+        let gone = service.subscribe();
+        assert_eq!(service.subscriber_count_for_test(), 2);
+
+        drop(gone);
+        service.broadcast_for_test(Event::DevicesChanged);
+
+        assert_eq!(service.subscriber_count_for_test(), 1);
+        assert!(matches!(live.try_recv(), Ok(Event::DevicesChanged)));
+    }
+
+    /// Every live client sees the same event: the tray and the CLI can both be
+    /// subscribed, and one must not consume the other's copy.
+    #[test]
+    fn every_live_subscriber_receives_the_event() {
+        let mut service = service("subscriber-fanout");
+        let first = service.subscribe();
+        let second = service.subscribe();
+
+        service.broadcast_for_test(Event::RequestFinished {
+            request_id: "request-1".into(),
+            granted: true,
+            reason: None,
+        });
+
+        for received in [first.try_recv(), second.try_recv()] {
+            match received.expect("event delivered") {
+                Event::RequestFinished {
+                    request_id,
+                    granted,
+                    ..
+                } => {
+                    assert_eq!(request_id, "request-1");
+                    assert!(granted);
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert_eq!(service.subscriber_count_for_test(), 2);
     }
 }
