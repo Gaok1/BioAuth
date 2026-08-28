@@ -105,3 +105,100 @@ is not both confidential and peer-authenticated.
 The shared vector is pinned in
 `desktop/crates/phone-auth-protocol/src/locker.rs` and
 `mobile/test/locker_payloads_test.dart`.
+
+## Vault operations
+
+Five operations are defined. The phone is the authoritative store: it holds the
+ciphertext, and the desktop never sees an item's secret until it asks for that
+one item and the user approves it.
+
+| Operation | Direction | Purpose |
+|---|---|---|
+| `vault.list` | desktop → phone | One page of item metadata; no secret crosses |
+| `vault.fetch` | desktop → phone | Release exactly one item's secret |
+| `vault.create` | desktop → phone | Store a new item |
+| `vault.update` | desktop → phone | Replace an item, naming the revision replaced |
+| `vault.delete` | desktop → phone | Remove an item, naming the revision removed |
+
+### Listing and reading are separate on purpose
+
+A list is metadata the user already agreed to show on the desktop. A fetch is
+one secret, released once, behind a biometric prompt. Collapsing them would mean
+the desktop holding the whole vault in memory just to render a search box, which
+is exactly what the phone-as-vault design exists to avoid.
+
+This is a statement about the session, not about storage. `DEC-06` governs what
+is encrypted **at rest on the phone** — names, sites, usernames and indexes all
+are. Metadata travels in the clear only inside the already-encrypted channel.
+
+### Optimistic revision
+
+Every item carries a `revision`, starting at 1. `vault.update` and
+`vault.delete` must name the revision they believe they are replacing; a phone
+holding a different one refuses, and the desktop re-reads instead of overwriting
+an edit it never saw. Revision `0` is refused everywhere: it means a caller
+built the request without reading the item first, which is the overwrite this
+rule exists to stop.
+
+Two computers paired to one phone is not hypothetical, and a last-writer-wins
+vault eats a password change in silence.
+
+### Payloads
+
+Every payload is a CBOR array whose element 0 is the schema, currently `1`.
+
+| Operation | Request elements | Response elements |
+|---|---|---|
+| `vault.list` | schema, verifier name, cursor | schema, item array, next cursor |
+| `vault.fetch` | schema, verifier name, item id | schema, item id, revision, secret |
+| `vault.create` | schema, verifier name, kind, name, username, uri, secret | schema, item id, revision |
+| `vault.update` | schema, verifier name, item id, expected revision, kind, name, username, uri, secret | schema, item id, revision |
+| `vault.delete` | schema, verifier name, item id, expected revision | schema, item id |
+
+An item summary is a nested seven-element array: id, revision, kind, name,
+username, uri, updated-at. `kind` is `0` for a login and `1` for a secure note;
+per `DEC-05`, cards, identities and attachments stay out until the threat model
+is revisited, so adding a kind is a schema change on both sides rather than a
+new free-text field.
+
+`username` and `uri` may be empty — a note has neither, and plenty of logins
+have no URL worth recording. `name` and `secret` may not: an empty secret would
+put an empty clipboard in front of the user and look like a successful copy.
+
+`vault.update` carries the whole item rather than a patch. A patch would need
+the desktop to hold the previous secret in order to know what it is *not*
+changing, and the point of the design is that it holds no secret between
+operations.
+
+### Limits
+
+| Field | Bound |
+|---|---|
+| item id | 64 units |
+| name, username | 255 units |
+| uri | 1024 units |
+| cursor | 128 units |
+| secret | 4096 units |
+| items per page | 32 |
+
+A page is additionally bounded by the 6 KiB application payload limit, checked
+after encoding. A page that does not fit is refused by the sender rather than
+built and dropped by the session layer for being oversized. On the receiving
+side the page's length prefix is checked *before* any allocation, because that
+prefix arrives ahead of the items and trusting it would be the whole denial of
+service.
+
+### What crosses the link
+
+One secret, for one item, per approved `vault.fetch` — plus the secret being
+stored on a `create` or `update`. Nothing else. The carriers wipe on drop, and
+none of them implement `Debug`/`toString`.
+
+That wipe is a limited promise: enough that freed memory is not still a
+password, and deliberately not a claim about pages, cores or optimisers. Keeping
+a fetched secret out of the swap file is the agent's job (`VLT-06`), and keeping
+it out of the Windows clipboard history is `VLT-07`.
+
+The shared vector is pinned in
+`desktop/crates/phone-auth-protocol/src/vault.rs` and
+`mobile/test/vault_payloads_test.dart`.

@@ -1,6 +1,6 @@
 # BioAuth — tracking para produto completo
 
-Auditoria do repositório em **2026-08-27**, no commit `bb600ed`, consolidada com
+Auditoria do repositório em **2026-08-28**, no commit `4026d92`, consolidada com
 o inventário que antes vivia em `docs/goals.md`. Este arquivo é a única fonte de
 verdade para requisitos concluídos, pendências verificadas e o que falta até o
 BioAuth ser utilizável por uma pessoa comum em três cenários:
@@ -38,7 +38,7 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; instalação ainda é manual e sem teste de navegador real |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
 | File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
-| Cofre de senhas | ⬜ | Não há modelo, criptografia de blobs, CRUD, import/export ou autofill |
+| Cofre de senhas | 🧪 | Schema de item e as cinco operações `vault.*` existem em Rust e Dart com vetor compartilhado; faltam store no Keystore, CRUD, agent, clipboard e autofill |
 | Recuperação do cofre/locker | 🧪 | O locker já tem wrapper offline e drill executado pelo binário; o cofre ainda não tem export/wrapper |
 | Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android; faltam secrets reais, instalação de extensão/native host e smoke test |
 
@@ -46,8 +46,11 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 integrado, ainda não um recurso instalável. O File Locker deixou de ser um
 projeto novo: o formato, a engine, os dois caminhos de recuperação e a CLI
 existem e são testados de ponta a ponta com um telefone simulado. O que falta
-nele é aparelho real, escala e revisão externa. O cofre de senhas continua
-sendo um produto ainda não começado.
+nele é aparelho real, escala e revisão externa. O cofre de senhas deixou de ser
+uma pasta vazia: o schema de item e as cinco operações `vault.*` existem nos
+dois lados e concordam byte a byte. Ainda não é um produto — não há onde guardar
+os itens, nem quem responda às operações — mas o contrato que todo o resto vai
+depender já está fixado e testado.
 
 ## Baseline já implementada
 
@@ -189,10 +192,10 @@ modelo de confiança e ficam fora do MVP.
 
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
-| VLT-01 | P0 | ⛔ | Especificar schema versionado para login e nota segura: ID, revisão, URLs/origens, usuário, senha, campos extras e datas. Definir claramente quais índices/metadados ficam cifrados. |
+| VLT-01 | P0 | ✅ | Schema v1 de login e nota segura em `phone-auth-protocol::vault` e `mobile/lib/core/protocol/vault_payloads.dart`: ID opaco, revisão, kind, nome, usuário, URI e data. `DEC-06` decide o que fica cifrado em repouso; `docs/protocol-application.md` registra que metadado viaja claro apenas dentro do canal já cifrado. Campos extras e múltiplas URLs ficaram fora, em `VLT-15`. |
 | VLT-02 | P0 | ⬜ | Implementar no Android uma chave AES-GCM (ou AEAD escolhida em revisão) no Keystore, auth-per-use, e blobs cifrados em storage privado. Criptografia/decriptação sensível permanece nativa, não em `shared_preferences`. |
 | VLT-03 | P0 | ⬜ | Criar CRUD mobile com busca, confirmação biométrica para revelar/copiar, auto-lock ao background e proteção contra screenshots/recents nas telas sensíveis. |
-| VLT-04 | P0 | ⬜ | Criar protocolo versionado de lista/fetch/create/update/delete com revisão otimista, request/session binding, limites e respostas genéricas que não vazem segredo em erro. |
+| VLT-04 | P0 | 🧪 | Formato de fio das cinco operações existe nos dois lados, com revisão otimista, paginação por cursor, limites e recusa do prefixo de tamanho antes de alocar; o binding vem do `ApplicationFrame` de `FND-05`. Vetor compartilhado prova que os encoders Rust e Dart concordam byte a byte. Falta o handler dos dois lados e a taxonomia de erro genérica, então o protocolo ainda não foi exercido de ponta a ponta. |
 | VLT-05 | P0 | ⬜ | Implementar exportação criptografada e restauração conforme `DEC-03`, com teste de aparelho novo. Export nunca pode gerar JSON/CSV claro sem aviso e gesto explícito. |
 | VLT-06 | P0 | ⬜ | No agent, manter plaintext somente em buffer zerável sob `VirtualLock`/`mlock` quando possível. Electron recebe no máximo metadata autorizada; nunca senha, chave ou TOTP seed. |
 | VLT-07 | P0 | ⬜ | Implementar clipboard seguro no agent: clear-on-timer e, no Windows, exclusão de histórico/monitor/cloud clipboard. Definir comportamento honesto para X11 e Wayland, onde garantias diferem. |
@@ -271,8 +274,9 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
    `FLK-02` em aparelho físico, `FLK-09` em lote, o disco cheio e o kill do
    `FLK-10`, a contagem de hardlink no Windows do `FLK-08` e a revisão externa
    de `REL-04`.
-5. **Release 3 — cofre pessoal:** storage/CRUD/recovery no telefone e cópia
-   segura via agent.
+5. **Release 3 — cofre pessoal:** schema e formato de fio (`VLT-01`, `VLT-04`)
+   estão fixados nos dois lados; o que resta é storage/CRUD/recovery no telefone
+   e cópia segura via agent.
 6. **Release 4 — autofill/import:** extensão de senhas, Android Autofill,
    importadores e TOTP opcional.
 7. **Release 5 — integrações extras:** LUKS, Windows Credential Provider, SSH,
@@ -285,7 +289,7 @@ próprios.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **273 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **288 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -294,13 +298,18 @@ próprios.
 - Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
   Ubuntu; a verificação Windows apenas prova compilação cruzada.
 - `desktop/ui/npm test`: **11 testes aprovados**.
-- `flutter analyze`: limpo. A suíte mobile soma **144 testes Flutter**, o
+- `flutter analyze`: limpo. A suíte mobile soma **153 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
   **30 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
   **5 testes instrumentados** são executados pelo job API 35, não contados como
   aprovados localmente sem emulador.
 - O drill de recuperação (`FLK-06`) roda pelo binário, sem agent e sem telefone.
+- O vetor compartilhado do cofre está fixado em
+  `phone-auth-protocol::vault::tests::a_fetch_response_pins_its_bytes` e em
+  `mobile/test/vault_payloads_test.dart`. Os dois encoders foram escritos
+  separadamente contra o mesmo hex, então um bug comum ao writer e ao reader de
+  um dos lados não faz o par passar sozinho.
 - Limitações confirmadas em código: plugin iOS é scaffold, native host depende
   de instalação manual, conditional mediation usa o autenticador nativo,
   passkeys são device-bound sem backup/sync e o locker não trava páginas.
