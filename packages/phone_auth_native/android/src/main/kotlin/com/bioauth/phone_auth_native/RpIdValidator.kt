@@ -19,6 +19,18 @@ internal class RpIdValidator(
     private val publicSuffixes: PublicSuffixList,
     private val fetcher: AssetLinksFetcher = AssetLinksFetcher(::fetchAssetLinks),
 ) {
+    /**
+     * The web origin a privileged browser is speaking for, or null when the
+     * caller is an ordinary app speaking for itself.
+     *
+     * Exists so callers can ask without the allowlist leaving this class. The
+     * allowlist is what decides whether a caller may claim to be a website at
+     * all, and handing it out invites a second, wronger copy of that check.
+     */
+    @RequiresApi(28)
+    fun originOf(caller: CallingAppInfo): String? =
+        if (caller.isOriginPopulated()) caller.getOrigin(privilegedAllowlist) else null
+
     @RequiresApi(28)
     fun validate(rpId: String, caller: CallingAppInfo): WebAuthnClientData {
         if (caller.isOriginPopulated()) {

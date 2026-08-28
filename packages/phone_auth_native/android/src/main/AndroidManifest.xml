@@ -40,6 +40,16 @@
             android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
             tools:targetApi="upside_down_cake" />
 
+        <!-- Autofill's release step. `excludeFromRecents` because a recents
+             thumbnail of a screen that just handed over a password is a
+             screenshot of a password field. -->
+        <activity
+            android:name=".VaultCredentialActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
+            tools:targetApi="upside_down_cake" />
+
         <activity
             android:name=".WebAuthnRelayActivity"
             android:excludeFromRecents="true"
