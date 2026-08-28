@@ -336,6 +336,39 @@ per-RP passkey over WebAuthn `authenticatorData || clientDataHash`, while the
 PhoneAuth session authenticates the paired computer carrying that operation.
 Installation and the desktop-origin trust asymmetry are in `webauthn.md`.
 
+## Copying a secret
+
+A secret is copied by the agent, never by the tray. `vault.generate-copy`
+generates a password, writes it into page-locked memory, and puts it on the
+clipboard:
+
+```text
+vault.generate-copy
+  params: { length?, lowercase?, uppercase?, digits?, symbols?, clearAfterMs? }
+  result: { length, clearsAtMs, historyExcluded, cloudExcluded, memoryLocked }
+```
+
+Every parameter is optional and falls back to the generator's default, so `{}`
+is a valid call. **The result carries no field holding the password**, and that
+is the point rather than an omission: a password that crossed this boundary
+would enter a renderer and a V8 heap that may be dumped. A test goes through the
+real socket, reads back what actually landed on the clipboard, and searches for
+that text in the raw response bytes — a new field, a debug echo or an error
+message carrying the secret fails there.
+
+`historyExcluded`, `cloudExcluded` and `memoryLocked` report what the OS
+actually granted. They are not decoration: on a platform that refuses page
+locking or offers no exclusion markers they come back false, and the UI must
+show what is true rather than a lock that is not there.
+
+`clearAfterMs` is bounded to 5s–600s, defaulting to 45s. The scheduled clear
+fires only if the clipboard sequence number is still the one we set — otherwise
+the timer would erase whatever the user copied in the meantime.
+
+Fetching an existing vault item over `vault.copy` is not implemented yet: the
+handler that retrieves a secret from the phone is `VLT-04`. It will reuse this
+same clipboard path.
+
 ## Files the agent owns
 
 | Path (Linux) | Contents |

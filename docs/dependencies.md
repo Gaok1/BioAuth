@@ -107,6 +107,21 @@ The open question recorded here — whether vault plaintext may use the
 put to the owner on 2026-08-28 and **approved**. `VLT-06` and `VLT-07` may add
 `windows-sys` under `cfg(windows)` and `libc` under `cfg(unix)`.
 
+Both landed in `phone-auth-agent` on 2026-08-28, declared per target so neither
+enters the other platform's build:
+
+| Crate | Version | License | Target | Used for |
+|---|---|---|---|---|
+| `windows-sys` | 0.61 | MIT OR Apache-2.0 | `cfg(windows)` | `VirtualLock`, `WerRegisterExcludedMemoryBlock`, clipboard |
+| `libc` | 0.2 | MIT OR Apache-2.0 | `cfg(unix)` | `mlock`, `madvise`, `sysconf` |
+
+`windows-sys` features are limited to `Win32_Foundation`,
+`Win32_System_DataExchange`, `Win32_System_ErrorReporting`,
+`Win32_System_Memory` and `Win32_System_SystemInformation`; `CF_UNICODETEXT` is
+written as a local constant rather than imported, which avoids pulling in the
+whole `Win32_System_Ole` feature for one `u16`. The `libc` 1.0 line is still
+pre-release and is not used.
+
 The File Locker section is not wrong and stays as written. The two cases differ
 in exposure window: a data key lives for one operation, whereas a fetched
 password sits in the agent while the user goes to paste it. The same dependency
@@ -139,13 +154,17 @@ on 2026-08-28 under the same rule as the two Android lists above: stored
 verbatim from its canonical source, licensed **CC-BY**, attribution recorded,
 refreshed by download and diff.
 
-| File | Source | License |
-|---|---|---|
-| `eff_large_wordlist.txt` | `https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt` | CC-BY 3.0 US |
+| File | Source | License | SHA-256 |
+|---|---|---|---|
+| `desktop/crates/phone-auth-agent/src/eff_large_wordlist.txt` | `https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt` | CC-BY 3.0 US | `addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e` |
+
+Attribution: Electronic Frontier Foundation. The hash above was recomputed
+against the committed file at integration time, not copied from the handoff.
 
 The list length is load-bearing: entropy per word is `log2(7776)` ≈ 12.9 bits,
 so a truncated or substituted list silently weakens every passphrase without
-failing to produce one. A test pins the count.
+failing to produce one. A test pins the count, and a second test pins strict
+alphabetical order, which also proves the 7776 entries are distinct.
 
 ## Review rule
 

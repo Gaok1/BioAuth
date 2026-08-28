@@ -193,19 +193,19 @@ modelo de confiança e ficam fora do MVP.
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
 | VLT-01 | P0 | ✅ | Schema v1 de login e nota segura em `phone-auth-protocol::vault` e `mobile/lib/core/protocol/vault_payloads.dart`: ID opaco, revisão, kind, nome, usuário, URI e data. `DEC-06` decide o que fica cifrado em repouso; `docs/protocol-application.md` registra que metadado viaja claro apenas dentro do canal já cifrado. Campos extras e múltiplas URLs ficaram fora, em `VLT-15`. |
-| VLT-02 | P0 | ⬜ | Implementar no Android uma chave AES-GCM (ou AEAD escolhida em revisão) no Keystore, auth-per-use, e blobs cifrados em storage privado. Criptografia/decriptação sensível permanece nativa, não em `shared_preferences`. |
+| VLT-02 | P0 | 🧪 | Store Android no canal `bioauth/vault_store`: AES-256-GCM no Keystore, auth-per-use com `BIOMETRIC_STRONG` apenas, invalidação em novo enrollment, tentativa de StrongBox com fallback só para outra implementação do Keystore, blob cifrado em storage privado e CRUD paginado com revisão otimista. Nada sensível passa por `shared_preferences`. Testes JVM passam; a suíte instrumentada API 35 compila mas **nunca rodou** — não havia device nem emulador. Teto é 🧪 até rodar em hardware. Entregue por `T3`. |
 | VLT-03 | P0 | ⬜ | Criar CRUD mobile com busca, confirmação biométrica para revelar/copiar, auto-lock ao background e proteção contra screenshots/recents nas telas sensíveis. |
 | VLT-04 | P0 | 🧪 | Formato de fio das cinco operações existe nos dois lados, com revisão otimista, paginação por cursor, limites e recusa do prefixo de tamanho antes de alocar; o binding vem do `ApplicationFrame` de `FND-05`. Vetor compartilhado prova que os encoders Rust e Dart concordam byte a byte. Falta o handler dos dois lados e a taxonomia de erro genérica, então o protocolo ainda não foi exercido de ponta a ponta. |
 | VLT-05 | P0 | ⬜ | Implementar exportação criptografada e restauração conforme `DEC-03`, com teste de aparelho novo. Export nunca pode gerar JSON/CSV claro sem aviso e gesto explícito. |
-| VLT-06 | P0 | ⬜ | **Desbloqueado em 2026-08-28**: o dono aprovou `windows-sys`/`libc`. Implementar buffer que não sai do processo — `VirtualLock` + `WerRegisterExcludedMemoryBlock` no Windows, `mlock` + `MADV_DONTDUMP` no Linux, wipe volátil no drop — reportando honestamente quando o SO recusa o lock. Hibernação continua fora de alcance, e `docs/dependencies.md` registra por quê. A parte já valendo — Electron nunca receber senha, chave ou TOTP seed — continua. Executado por `T1` em `docs/parallel-work-plan.md`. |
-| VLT-07 | P0 | ⬜ | **Aprovado em 2026-08-28.** Implementar clipboard seguro no agent: clear-on-timer e, no Windows, exclusão de histórico/monitor/cloud clipboard. Definir comportamento honesto para X11 e Wayland, onde garantias diferem — o resultado reporta o que conseguiu, sem exibir cadeado que não existe. Executado por `T1` em `docs/parallel-work-plan.md`. |
+| VLT-06 | P0 | 🧪 | `phone-auth-agent::secret_memory` aloca alinhado a página, trava com `VirtualLock` (Windows) ou `mlock` (Unix), exclui de dump com `WerRegisterExcludedMemoryBlock` / `MADV_DONTDUMP`, e faz wipe volátil **antes** de destravar — entre unlock e free as páginas voltariam a ser elegíveis para o pagefile. `is_locked()` reporta recusa do SO em vez de fingir sucesso. 7 testes. Hibernação continua fora de alcance; `docs/dependencies.md` registra por quê. **Não é ✅ porque o caminho Linux nunca foi executado**, só compilado e verificado com clippy para `x86_64-unknown-linux-gnu`. Entregue por `T1`. |
+| VLT-07 | P0 | 🧪 | `phone-auth-agent::clipboard` copia com prazo e marca `CanIncludeInClipboardHistory`, `CanUploadToCloudClipboard` e `ExcludeClipboardContentFromMonitorProcessing`. A limpeza só dispara se o número de sequência ainda for o nosso — sem isso o timer apagaria o que o usuário copiou depois, que é perda de dado vestida de segurança. No Unix o segredo vai por **stdin**, nunca por argv, porque linha de comando é visível a qualquer usuário via `/proc`. O IPC expõe `vault.generate-copy` e o resultado não carrega a senha: um teste vai pelo socket real, lê o clipboard e procura esse texto nos bytes crus da resposta. 5 testes de módulo + 2 de IPC. **Mesma razão para 🧪**: o caminho X11/Wayland é compilado, não exercido. Entregue por `T1`. |
 | VLT-08 | P1 | ⬜ | Criar UI desktop para busca e pedido de cópia; mostrar no telefone computador, operação, item e domínio antes de cada liberação. |
 | VLT-09 | P1 | ⬜ | Criar extensão de autofill separada do relay de passkeys: correspondência exata de origem, seleção com gesto do usuário, bloqueio de iframe inesperado e nenhuma injeção automática. Documentar que o navegador recebe o plaintext. |
 | VLT-10 | P1 | ⬜ | Integrar Android Autofill/Credential Manager para senhas; iOS Password AutoFill depende de `FND-09` e não bloqueia o primeiro corte Android. |
 | VLT-11 | P1 | ⬜ | Importar Bitwarden JSON e CSV genérico com preview, relatório de rejeições e limpeza segura do arquivo temporário. Importadores de outros formatos entram só com fixtures reais. |
-| VLT-12 | P1 | 🧪 | Gerador de **senha** em `phone-auth-agent::password`: alfabeto de 89 caracteres, amostragem uniforme por rejeição (nunca `%`), classes exigidas garantidas por redraw e não por posicionamento, saída em `Zeroizing` e nenhum histórico. Um teste de controle roda o amostrador enviesado pela mesma métrica para provar que o teste de viés não é vazio. Falta o gerador de **passphrase**: a wordlist da EFF (7776 palavras, CC-BY) foi **aprovada em 2026-08-28** e está registrada em `docs/dependencies.md`. Executado por `T2` em `docs/parallel-work-plan.md`. |
+| VLT-12 | P1 | 🧪 | Gerador de **senha** em `phone-auth-agent::password`: alfabeto de 89 caracteres, amostragem uniforme por rejeição (nunca `%`), classes exigidas garantidas por redraw e não por posicionamento, saída em `Zeroizing` e nenhum histórico. Um teste de controle roda o amostrador enviesado pela mesma métrica para provar que o teste de viés não é vazio. O gerador de **passphrase** usa a wordlist da EFF (7776 palavras, CC-BY, SHA-256 conferido na integração), separador configurável e declara `log2(7776) × palavras` bits; `index_below` passou a amostrar 64 bits por rejeição para cobrir um alfabeto maior que 256. Entregue por `T2`. **Ressalva aberta**: `generate_passphrase` monta a saída num `String` que cresce, então cada realocação deixa um fragmento da passphrase no heap sem wipe — o `Zeroizing` só limpa o buffer final. `generate` já evita isso com `String::with_capacity`. Contabilizado em `VLT-14`. |
 | VLT-13 | P1 | ⬜ | Resolver conflitos, migrações, corrupção parcial e operação concorrente entre mobile, desktop e browser. Toda escrita precisa de revisão e commit atômico. |
-| VLT-14 | P1 | ⬜ | Testes de vazamento: logs, stack traces, notificações, screenshots, recents, audit log, IPC, crash dumps, clipboard e arquivos temporários. |
+| VLT-14 | P1 | ⬜ | Testes de vazamento: logs, stack traces, notificações, screenshots, recents, audit log, IPC, crash dumps, clipboard, arquivos temporários e **fragmentos deixados no heap por realocação** — o caso concreto conhecido é `generate_passphrase` em `VLT-12`. |
 | VLT-15 | P2 | ⬜ | TOTP local, favoritos e múltiplas URLs. Compartilhamento, organizações, anexos, cartões e identidades permanecem fora até nova threat model. |
 
 ### Gate de conclusão do cofre
@@ -293,10 +293,34 @@ em worktrees separados sem colidir, e define o que o agente integrador faz no
 fim. Regra que vale aqui: **nenhum track edita este arquivo**. Cada um deixa
 `docs/handoff/<TRACK-ID>.md` e o integrador dobra tudo aqui num commit só.
 
+**Onda 1, integrada em 2026-08-28.** `T3` (`VLT-02`), `T1` (`VLT-06`, `VLT-07`)
+e `T2` (`VLT-12`) foram mergeados nesta ordem, sem conflito textual nem
+semântico, e os três toolchains passaram depois do merge. `T4` (`WEB-02`) não
+produziu commit e continua aberto. Os handoffs foram dobrados neste arquivo e em
+`docs/dependencies.md`, e `docs/handoff/` foi removido.
+
+Duas coisas que a onda 1 deixou para quem pegar a onda 2:
+
+- **`T1` desviou do contrato do plano.** `vault.copy` com `item_id`/`revision`
+  **não existe**: não há store do cofre deste lado, então o comando só saberia
+  responder "não implementado". Entrou `vault.generate-copy`, documentado em
+  `docs/desktop.md`. `T6`/`VLT-04` deve acrescentar `vault.copy` chamando
+  `clipboard::copy_secret(&SecretBuffer, Duration) -> Result<CopyOutcome, ClipboardError>`
+  com o segredo vindo do telefone.
+- **`T3` fixou o canal `bioauth/vault_store`** com `list`/`fetch`/`create`/
+  `update`/`delete`; revisão começa em 1 e revisão 0 é sempre recusada. `T5`
+  (`VLT-03`) consome esse contrato do lado Dart.
+
+A suíte Rust ficou ~11s mais lenta: `MIN_TTL` do clipboard é 5s e dois testes
+esperam a expiração real, em série. Encurtar `MIN_TTL` só para o teste deixaria
+o teste rápido e o produto pior. Rodar a suíte **apaga o clipboard do
+desenvolvedor** — não há como testar a coisa que importa sem tocar no recurso
+real, e ele é um só por sessão.
+
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **301 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **318 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -307,9 +331,9 @@ fim. Regra que vale aqui: **nenhum track edita este arquivo**. Cada um deixa
 - `desktop/ui/npm test`: **11 testes aprovados**.
 - `flutter analyze`: limpo. A suíte mobile soma **153 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
-  **30 testes Kotlin**.
+  **36 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
-  **5 testes instrumentados** são executados pelo job API 35, não contados como
+  **7 testes instrumentados** são executados pelo job API 35, não contados como
   aprovados localmente sem emulador.
 - O drill de recuperação (`FLK-06`) roda pelo binário, sem agent e sem telefone.
 - O vetor compartilhado do cofre está fixado em
