@@ -178,12 +178,11 @@ is an explicit four-file list. Nothing here reaches a user's machine.
 | `yazl` | 3.3.1 | MIT | Writes the store archives. Replaced a hand-rolled ZIP writer — local headers, central directory, CRC-32 — that existed only to avoid a dependency. |
 | `addons-linter` | 10.10.0 | MPL-2.0 | Mozilla's own add-on validator, the same one AMO runs on submission. |
 
-`addons-linter` is the expensive one: it takes the tray's dev tree from 439 to
-590 packages, and it pulls its own ESLint and Babel. That is a real cost and it
-is recorded here so it can be reversed deliberately rather than discovered.
-
-It is kept because it knows the stores' rules as they are, not as we remember
-them. On its first run it caught that AMO now requires
+`addons-linter` brings its own ESLint and Babel, taking the tray's dev tree from
+439 to 590 packages. Noted for the record, not as an objection — it knows the
+stores' rules as they are rather than as we remember them, which is exactly the
+kind of knowledge worth not reimplementing. On its first run it caught that AMO
+now requires
 `browser_specific_settings.gecko.data_collection_permissions` on new
 submissions — a rule that no amount of reading our own code would have
 surfaced, and that would have bounced the first upload. The extension collects
@@ -195,10 +194,28 @@ The floor is 128 because `world: "MAIN"` content scripts need it. Raising it to
 142 would silence the warnings by dropping those versions, which is a product
 decision, so the warnings stand and only errors fail the build.
 
-## Review rule
+## Adding a dependency
 
-Before adding or upgrading a package, record maintenance activity, current
-platform support, license, sensitive-data behavior, transitive dependencies,
-and why a platform or standard-library API is insufficient. Production logs
-must never contain challenges, signatures, session secrets, or private-key
-material.
+Prefer the library. A well-used package has had more eyes and more bug reports
+than anything written here for the same job, and code this project does not
+write is code this project cannot get wrong. A hand-rolled implementation is
+the thing that needs justifying, not the dependency.
+
+Record what you added — name, version, license, and what it does — in the
+section above that fits. That is documentation, not a gate: it exists so a
+future reader knows why something is in the tree, and so licence obligations
+are traceable. It is not a reason to delay adding something useful.
+
+Two things still hold, and neither is about the count:
+
+- **A build-time dependency reaches the artifact.** It runs on the machine that
+  compiles and signs a release, so a compromised one can alter what ships even
+  though it never installs on a user's computer. Pin versions, keep the
+  lockfiles committed, and treat an unexplained lockfile change in review the
+  same way as an unexplained source change.
+- **Nothing fetches at runtime.** A security decision must not depend on a
+  network call that can fail open. Trust data is bundled and hash-checked;
+  see the two `Bundled data` sections above.
+
+Production logs must never contain challenges, signatures, session secrets, or
+private-key material.
