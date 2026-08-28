@@ -4,6 +4,7 @@ import '../features/devices/devices_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/pairing/pairing_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/vault/vault_screen.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -18,6 +19,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _screens = [
     DevicesScreen(),
     PairingScreen(),
+    VaultScreen(),
     HistoryScreen(),
     SettingsScreen(),
   ];
@@ -40,6 +42,11 @@ class _HomeShellState extends State<HomeShell> {
           NavigationDestination(
             icon: Icon(Icons.qr_code_scanner),
             label: 'Parear',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.lock_outline),
+            selectedIcon: Icon(Icons.lock),
+            label: 'Cofre',
           ),
           NavigationDestination(icon: Icon(Icons.history), label: 'Histórico'),
           NavigationDestination(
