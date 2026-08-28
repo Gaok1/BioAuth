@@ -86,6 +86,36 @@ warning, and every audit entry it produces is tagged. It cannot satisfy a
 boot-time unlock: the verifier refuses both its software key and its
 development-flagged transport.
 
+## Property tests
+
+Three suites sit over the code that reads bytes nobody has authenticated yet:
+
+| Suite | Covers |
+|---|---|
+| `phone-auth-protocol/tests/decoder_properties.rs` | every `decode` in the crate |
+| `phone-auth-agent/tests/framing_properties.rs` | socket framing and BLE reassembly |
+| `phone-auth-locker/tests/container_properties.rs` | the container format |
+
+What they assert is mostly not correctness. It is that a peer cannot make this
+process panic, and cannot make it allocate an amount of memory the peer chose —
+a length header is a number somebody else wrote down, and a decoder that
+believes one is an out-of-memory waiting to be sent a packet.
+
+Two properties are about meaning rather than resources, and both are the same
+rule: **no byte string decodes to a value whose canonical encoding differs from
+those bytes.** Every decoder re-encodes what it read and compares. Without it,
+one signature could cover two frames.
+
+The locker's is the sentence `locker-format.md` already claims: no edit
+anywhere in a container can make it open and produce a *different* file.
+Removing a wrapper is a denial of service and allowed to be one; producing
+bytes nobody sealed is not.
+
+They run at proptest's default in an ordinary `cargo test`. CI raises
+`PROPTEST_CASES` to 4096 under a ten-minute timeout — which is the memory limit
+as much as the clock one, since a case that hangs is a case that found
+something.
+
 ## The authorization flow
 
 ```text

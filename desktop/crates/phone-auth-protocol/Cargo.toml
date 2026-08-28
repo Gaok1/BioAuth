@@ -10,3 +10,6 @@ license.workspace = true
 # so its encoding rules must not drift with a third-party CBOR library's
 # choices, and it must stay small enough to link into an initrd binary.
 [dependencies]
+
+[dev-dependencies]
+proptest = "1.9.0"

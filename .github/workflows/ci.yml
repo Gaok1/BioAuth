@@ -111,3 +111,20 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
+      # The property suites run at proptest's default of 256 cases in a normal
+      # `cargo test`, so a local run stays quick. Here they get a budget worth
+      # having: these are the decoders that read bytes nobody has authenticated
+      # yet, and 256 random frames is a smoke test, not a search.
+      #
+      # The timeout is the memory limit as well as the clock one — the
+      # properties that matter are about a peer making this process allocate,
+      # and a case that hangs is a case that found one.
+      - name: Decoder and framing properties
+        working-directory: desktop
+        timeout-minutes: 10
+        env:
+          PROPTEST_CASES: 4096
+        run: |
+          cargo test -p phone-auth-protocol --test decoder_properties
+          cargo test -p phone-auth-agent --test framing_properties
+          PROPTEST_CASES=256 cargo test -p phone-auth-locker --test container_properties
