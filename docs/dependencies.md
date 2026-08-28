@@ -88,6 +88,27 @@ Three things were deliberately **not** added:
   flag and one AAD value, and writing those out keeps the format readable next
   to its specification.
 
+### Personal vault
+
+The vault wire format adds no crate at all: `phone-auth-protocol::vault` uses
+the same dependency-free canonical CBOR the rest of that crate uses, and its
+Dart counterpart uses `mobile/lib/core/protocol/cbor.dart`.
+
+The password generator in `phone-auth-agent` reuses `getrandom` for OS
+randomness and `zeroize` to hold the generated password. Both were already
+workspace dependencies; `zeroize` was promoted from a `phone-auth-locker`
+declaration to a workspace one when the agent became its second consumer, so
+the version is pinned in one place.
+
+An open decision is carried forward here rather than settled quietly. `VLT-06`
+asks for vault plaintext to sit in a `VirtualLock`/`mlock` buffer in the agent,
+which is exactly the `libc`/`windows-sys` dependency the File Locker section
+above declined for the data key. The two are not obviously the same case — a
+data key lives for one operation, whereas a fetched password may sit in the
+agent while the user pastes it — but the argument that swap is what full-disk
+encryption defends applies to both. Resolve it explicitly before implementing
+`VLT-06`, and update whichever of the two sections turns out to be wrong.
+
 ## Review rule
 
 Before adding or upgrading a package, record maintenance activity, current

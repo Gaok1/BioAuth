@@ -197,13 +197,13 @@ modelo de confiança e ficam fora do MVP.
 | VLT-03 | P0 | ⬜ | Criar CRUD mobile com busca, confirmação biométrica para revelar/copiar, auto-lock ao background e proteção contra screenshots/recents nas telas sensíveis. |
 | VLT-04 | P0 | 🧪 | Formato de fio das cinco operações existe nos dois lados, com revisão otimista, paginação por cursor, limites e recusa do prefixo de tamanho antes de alocar; o binding vem do `ApplicationFrame` de `FND-05`. Vetor compartilhado prova que os encoders Rust e Dart concordam byte a byte. Falta o handler dos dois lados e a taxonomia de erro genérica, então o protocolo ainda não foi exercido de ponta a ponta. |
 | VLT-05 | P0 | ⬜ | Implementar exportação criptografada e restauração conforme `DEC-03`, com teste de aparelho novo. Export nunca pode gerar JSON/CSV claro sem aviso e gesto explícito. |
-| VLT-06 | P0 | ⬜ | No agent, manter plaintext somente em buffer zerável sob `VirtualLock`/`mlock` quando possível. Electron recebe no máximo metadata autorizada; nunca senha, chave ou TOTP seed. |
+| VLT-06 | P0 | ⛔ | Bloqueado por decisão em aberto, não por trabalho: `docs/dependencies.md` recusou explicitamente `libc`/`windows-sys` para `mlock`/`VirtualLock` no File Locker, argumentando que swap é o que a criptografia de disco cobre. O mesmo argumento se aplica aqui, mas uma senha buscada pode ficar no agent enquanto o usuário cola, e uma chave de dados não. Decidir antes de implementar. A parte não bloqueada — Electron nunca receber senha, chave ou TOTP seed — continua valendo. |
 | VLT-07 | P0 | ⬜ | Implementar clipboard seguro no agent: clear-on-timer e, no Windows, exclusão de histórico/monitor/cloud clipboard. Definir comportamento honesto para X11 e Wayland, onde garantias diferem. |
 | VLT-08 | P1 | ⬜ | Criar UI desktop para busca e pedido de cópia; mostrar no telefone computador, operação, item e domínio antes de cada liberação. |
 | VLT-09 | P1 | ⬜ | Criar extensão de autofill separada do relay de passkeys: correspondência exata de origem, seleção com gesto do usuário, bloqueio de iframe inesperado e nenhuma injeção automática. Documentar que o navegador recebe o plaintext. |
 | VLT-10 | P1 | ⬜ | Integrar Android Autofill/Credential Manager para senhas; iOS Password AutoFill depende de `FND-09` e não bloqueia o primeiro corte Android. |
 | VLT-11 | P1 | ⬜ | Importar Bitwarden JSON e CSV genérico com preview, relatório de rejeições e limpeza segura do arquivo temporário. Importadores de outros formatos entram só com fixtures reais. |
-| VLT-12 | P1 | ⬜ | Gerador de senha/passphrase usando CSPRNG nativo, sem histórico/log/clipboard persistente. |
+| VLT-12 | P1 | 🧪 | Gerador de **senha** em `phone-auth-agent::password`: alfabeto de 89 caracteres, amostragem uniforme por rejeição (nunca `%`), classes exigidas garantidas por redraw e não por posicionamento, saída em `Zeroizing` e nenhum histórico. Um teste de controle roda o amostrador enviesado pela mesma métrica para provar que o teste de viés não é vazio. Falta o gerador de **passphrase**: depende de escolher uma wordlist, que é decisão de licença e de tamanho de binário. |
 | VLT-13 | P1 | ⬜ | Resolver conflitos, migrações, corrupção parcial e operação concorrente entre mobile, desktop e browser. Toda escrita precisa de revisão e commit atômico. |
 | VLT-14 | P1 | ⬜ | Testes de vazamento: logs, stack traces, notificações, screenshots, recents, audit log, IPC, crash dumps, clipboard e arquivos temporários. |
 | VLT-15 | P2 | ⬜ | TOTP local, favoritos e múltiplas URLs. Compartilhamento, organizações, anexos, cartões e identidades permanecem fora até nova threat model. |
@@ -289,7 +289,7 @@ próprios.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **288 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **296 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de

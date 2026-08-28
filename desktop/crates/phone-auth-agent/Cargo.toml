@@ -24,6 +24,8 @@ phone-auth-protocol.workspace = true
 phone-auth-session.workspace = true
 phone-auth-verifier.workspace = true
 phone-auth-locker.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
