@@ -40,31 +40,16 @@ fn create(path: &Path) -> io::Result<IdentityKey> {
         .to_pkcs8_der()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    // Write to a temporary path, tighten permissions, then rename. Creating
-    // the final file first would leave a private key briefly world-readable.
-    let temp = path.with_extension("pkcs8.tmp");
-    fs::write(&temp, &encoded)?;
-    restrict(&temp)?;
-    fs::rename(&temp, path)?;
+    // Restricted before a byte is written, then renamed into place. Creating
+    // the final file first would leave a private key readable for as long as
+    // it took to tighten it, and that window is the whole attack.
+    //
+    // The old version of this did the same thing on Unix and nothing at all on
+    // Windows, where a private key was left at whatever the parent directory's
+    // ACL happened to be.
+    crate::private_files::write_private(path, &encoded)?;
 
     Ok(identity)
-}
-
-#[cfg(unix)]
-fn restrict(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-}
-
-/// On Windows the containing directory's ACL protects the key; there is no
-/// per-file mode equivalent. The agent keeps it under the user's local app
-/// data, or under a root-owned state directory when run as a system service.
-#[cfg(not(unix))]
-fn restrict(_path: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

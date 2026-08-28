@@ -264,7 +264,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 | REL-08 | P1 | ⬜ | SBOM, auditoria automática de dependências/licenças e processo de atualização de Flutter/Rust/Electron sem quebrar stores. |
 | REL-09 | P1 | ⬜ | Testes de acessibilidade, leitor de tela, teclado, contraste e localização consistente. Operações críticas não podem depender só de cor/ícone. |
 | REL-10 | P1 | ⬜ | Backups e restore drill em toda release que mude schema/crypto; fixtures antigas ficam versionadas no repositório. |
-| REL-11 | P1 | ⬜ | Hardening de IPC e arquivos locais por plataforma, incluindo ACL no Windows, permissões Unix, múltiplas sessões de usuário e prevenção de symlink/race. |
+| REL-11 | P1 | 🧪 | `private_files` narra o diretório em vez de cada arquivo, porque o store de pareamento e o audit log são escritos por `fs::write` em código que não tem motivo para saber de permissão: `0o700` no Unix nega travessia, e no Windows uma DACL explícita só do dono, marcada herdável e `PROTECTED` para que um pai permissivo não reintroduza entradas. A chave de identidade e o arquivo de endpoint ganham escrita própria — restrita **antes** do primeiro byte, `create_new` contra symlink plantado, e rename, que também torna o endpoint atômico para leitores. Antes disso a chave privada do agent não era protegida em plataforma nenhuma além do Unix, e o audit log em nenhuma. 5 testes + verificação real via `icacls`: endpoint sai com uma entrada só, e `devices.json` sai com a mesma, herdada. Teto é 🧪: a metade negativa — que outro usuário **não** lê — precisa de duas contas, que um teste unitário não tem. |
 | REL-12 | P2 | ⬜ | Auto-update seguro e rollback depois que assinatura e migrações estiverem resolvidos. |
 | REL-13 | P0 | ⬜ | Criar integração física PC ↔ celular com injeção de queda em cada fronteira de `pairing-reliability-plan.md`; os testes atuais usam duplos. |
 | REL-14 | P0 | ⬜ | Smoke test do release: instalar APK + desktop a partir dos artefatos, iniciar agent, parear, autorizar e desinstalar. Apenas construir o pacote não prova que ele funciona. |
@@ -350,7 +350,7 @@ real, e ele é um só por sessão.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **370 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **375 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de

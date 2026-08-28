@@ -84,24 +84,13 @@ impl Endpoint {
     }
 
     fn write(&self, paths: &Paths) -> io::Result<()> {
-        std::fs::create_dir_all(&paths.runtime_dir)?;
-        let path = paths.endpoint_file();
         let json = serde_json::to_vec_pretty(self)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        std::fs::write(&path, json)?;
-        restrict(&path)
+        // Atomic as well as private. This file carries the IPC token, and a
+        // client that read it half-written would look for the agent on port
+        // zero rather than retry.
+        crate::private_files::write_private(&paths.endpoint_file(), &json)
     }
-}
-
-#[cfg(unix)]
-fn restrict(path: &std::path::Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn restrict(_path: &std::path::Path) -> io::Result<()> {
-    Ok(())
 }
 
 /// Compares two tokens without an early exit on the first differing byte.

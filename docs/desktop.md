@@ -484,6 +484,32 @@ phone serves all three, but a write driven from the computer needs a screen on
 the phone that names what is being changed, and until that exists the phone's
 own UI is the only place a vault item is edited.
 
+## Who can read the agent's files
+
+Four things are worth protecting: the handshake private key, the pairing
+store, the audit log and the endpoint file that carries the IPC token.
+
+The directories are narrowed rather than each file, because the pairing store
+and the audit log are written by plain `fs::write` in code that has no reason
+to know about permissions. On Unix that is `0o700`, which denies traversal and
+so covers everything inside. On Windows it is an explicit DACL granting the
+owning user alone, marked inheritable so files created later get it, and
+marked `PROTECTED` so a permissive parent cannot merge entries back in.
+
+Two files get a private write of their own — the identity key and the endpoint
+file — which is restricted *before* a byte is written and then renamed into
+place. Creating the final file first and tightening afterwards leaves a window,
+and the window is the whole attack. The temporary is opened with `create_new`,
+so a link somebody planted in its place is an error rather than a write
+somewhere else.
+
+The rename also makes the endpoint file atomic to readers. A client that read
+it half-written would look for the agent on port zero instead of retrying.
+
+Verified on Windows by reading the ACLs back: the endpoint file carries one
+entry for the current user, and `devices.json` — written by a crate that knows
+none of this — carries the same one, inherited.
+
 ## Files the agent owns
 
 | Path (Linux) | Contents |

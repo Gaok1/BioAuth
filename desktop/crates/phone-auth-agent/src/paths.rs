@@ -62,9 +62,20 @@ impl Paths {
         self.runtime_dir.join("agent-endpoint.json")
     }
 
+    /// Creates the three directories and narrows them to this user.
+    ///
+    /// Narrowing the *directory* rather than each file is what makes this one
+    /// call enough: the pairing store and the audit log are written by plain
+    /// `fs::write` in code that has no reason to know about permissions, and
+    /// a directory nobody else can enter covers them.
+    ///
+    /// On Windows the entry is inheritable, so files created later get it too.
+    /// On Unix `0o700` denies traversal, which has the same effect without
+    /// touching the files at all.
     pub fn create_all(&self) -> io::Result<()> {
         for dir in [&self.config_dir, &self.data_dir, &self.runtime_dir] {
             fs::create_dir_all(dir)?;
+            crate::private_files::restrict_dir(dir)?;
         }
         Ok(())
     }
