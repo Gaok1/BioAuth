@@ -496,6 +496,85 @@ fn a_directory_is_not_a_file_the_locker_will_pretend_to_encrypt() {
     ));
 }
 
+/// Four gigabytes and three bytes: the size where the arithmetic stops being
+/// boring.
+///
+/// The plaintext length no longer fits in a `u32`, the chunk index passes
+/// 65536, and the file ends in a three-byte tail. Every one of those is a place
+/// where a narrowing cast or an off-by-one would produce a container that locks
+/// fine and comes back wrong.
+///
+/// Ignored by default: it moves something like 28 GiB past the disk and needs
+/// about 8 GiB of free space. Run it deliberately, and in release, because the
+/// debug build of an AEAD is slow enough to make it look broken:
+///
+/// ```text
+/// cargo test -p phone-auth-locker --release -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "4 GiB round trip: needs ~8 GiB free and minutes of disk; run it deliberately"]
+fn a_file_past_the_four_gigabyte_boundary_survives_the_round_trip() {
+    const SIZE: u64 = (4 << 30) + 3;
+    let sandbox = Sandbox::new("multi-gigabyte");
+    let source = sandbox.path("archive.bin");
+    let digest = write_pattern(&source, SIZE);
+    let mut phone = FakePhone::new();
+
+    let locked = lock_file(&source, &LockPlan::default(), &mut phone).expect("lock");
+    let info = inspect(&locked.container).expect("inspect");
+    assert_eq!(info.plaintext_len, SIZE);
+    assert_eq!(
+        info.chunk_count, 65_537,
+        "the chunk index has to pass 65536"
+    );
+
+    let unlocked =
+        unlock_file(&locked.container, None, true, UnlockKey::Phone(&mut phone)).expect("unlock");
+    assert_eq!(unlocked.plaintext_len, SIZE);
+    assert_eq!(digest_of(&unlocked.restored), (SIZE, digest));
+}
+
+/// Writes `size` bytes of a pattern that never repeats and returns their hash.
+///
+/// Streamed on both sides on purpose: a test that held the file in memory to
+/// check it would not be a test of a streaming engine.
+fn write_pattern(path: &Path, size: u64) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut block: Vec<u8> = (0..1u32 << 20).map(|index| (index % 251) as u8).collect();
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path).expect("create"));
+    let mut hasher = Sha256::new();
+    let mut written = 0u64;
+    while written < size {
+        // The offset goes into every block, so two blocks are never the same
+        // and a chunk moved from elsewhere in the file changes the hash.
+        block[..8].copy_from_slice(&written.to_be_bytes());
+        let take = (size - written).min(block.len() as u64) as usize;
+        file.write_all(&block[..take]).expect("write");
+        hasher.update(&block[..take]);
+        written += take as u64;
+    }
+    file.flush().expect("flush");
+    hasher.finalize().into()
+}
+
+fn digest_of(path: &Path) -> (u64, [u8; 32]) {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::io::BufReader::new(std::fs::File::open(path).expect("open"));
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut total = 0u64;
+    loop {
+        let read = file.read(&mut buffer).expect("read");
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        total += read as u64;
+    }
+    (total, hasher.finalize().into())
+}
+
 /// Links, where a name and the bytes behind it stop being the same thing.
 ///
 /// Every locker operation that reports something as gone works by removing or

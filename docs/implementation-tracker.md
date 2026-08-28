@@ -37,7 +37,7 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | Passkeys Android | 🧪 | Credential Provider + Keystore implementados; falta instrumentação e matriz real |
 | Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; instalação ainda é manual e sem teste de navegador real |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
-| File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste; falta o telefone físico, arquivos multi-GB e revisão externa |
+| File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
 | Cofre de senhas | ⬜ | Não há modelo, criptografia de blobs, CRUD, import/export ou autofill |
 | Recuperação do cofre/locker | 🧪 | O locker já tem wrapper offline e drill executado pelo binário; o cofre ainda não tem export/wrapper |
 | Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android; faltam secrets reais, instalação de extensão/native host e smoke test |
@@ -166,7 +166,7 @@ O formato está especificado em `docs/locker-format.md`, a engine vive em
 | FLK-07 | P1 | ✅ | `phone-auth locker lock/unlock/status/rekey`, com `status` e recuperação rodando no próprio processo da CLI. `lock` exige `--recovery-out` e o agent devolve apenas o caminho, nunca o código: nenhuma UI recebe chave, código ou plaintext. Ainda não existe UI gráfica de locker — quando existir, ela chama os mesmos métodos IPC. |
 | FLK-08 | P1 | 🧪 | Diretórios e não-arquivos são recusados em vez de seguidos; nomes com separador, `..`, controle ou nome reservado do Windows são recusados na leitura da metadata; modo Unix e mtime são restaurados quando a plataforma permite. Symlink e hardlink agora têm comportamento decidido e implementado em `docs/locker-format.md`: um caminho é recusado antes de qualquer biometria quando é link simbólico/diretório/dispositivo, ou quando tem um segundo hardlink **e** a operação apagaria ou renomearia o nome; rekey é sempre estrito; destino usa `symlink_metadata` para não consumir um symlink pendurado. O agent também faz a checagem porque ele mesmo apaga o plaintext. Faltam: contagem de hardlink no Windows (exige `windows-sys`), aviso de que ACL/ADS/xattr não são carregados, e os quatro testes novos são `cfg(unix)` — compilam cruzado mas só executam no CI Ubuntu. |
 | FLK-09 | P1 | ⬜ | Não há operação em lote, e cada unlock exige biometria por uso, então não existe caminho automático hoje. Falta o trabalho real: limites, confirmação por lote e o detalhe de quantidade/tamanho/origem quando o lote existir. |
-| FLK-10 | P1 | 🧪 | Cobertos: round-trip byte a byte, arquivo vazio, chunk exato, cauda parcial, corrupção amostrada em todo o container, truncamento, bytes sobrando, troca de chunks, splice entre containers, chave errada, recusa em cada fase, destino ocupado e arquivo que cresce durante a leitura. Faltam multi-GB, disco cheio e kill do processo por sinal. |
+| FLK-10 | P1 | 🧪 | Cobertos: round-trip byte a byte, arquivo vazio, chunk exato, cauda parcial, corrupção amostrada em todo o container, truncamento, bytes sobrando, troca de chunks, splice entre containers, chave errada, recusa em cada fase, destino ocupado e arquivo que cresce durante a leitura. Multi-GB **foi executado**: 4 GiB + 3 bytes (comprimento além de `u32`, índice de chunk passando de 65536, cauda de 3 bytes) fazem round-trip com SHA-256 idêntico e 65 537 chunks, em 136,88 s no perfil release. O teste é `#[ignore]` porque move ~28 GiB de disco, então é evidência sob demanda e não cobertura contínua: `cargo test -p phone-auth-locker --release -- --ignored`. Faltam disco cheio e kill do processo por sinal — os dois exigem uma costura de injeção de erro ou um binário de teste separado, que ainda não existem. |
 | FLK-11 | P2 | ⬜ | Integração com Explorer/Nautilus e drag-and-drop depois da CLI estar estável. Montagem de drive virtual/FUSE fica fora do MVP. |
 
 ### Gate de conclusão File Locker
@@ -267,9 +267,11 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
    física, background, permissões separadas, frames e recovery design.
 3. **Release 1 — passkeys instaláveis:** `WEB-01..14`, gestão de credenciais e
    instaladores reais. Isso transforma o recurso mais avançado atual em produto.
-4. **Release 2 — File Locker mínimo:** formato, CLI, recovery e testes de falha
-   estão feitos; o que resta é `FLK-02` em aparelho físico, `FLK-08/09/10` e a
-   revisão externa de `REL-04`.
+4. **Release 2 — File Locker mínimo:** formato, CLI, recovery, testes de falha,
+   comportamento de links e o round-trip de 4 GiB estão feitos; o que resta é
+   `FLK-02` em aparelho físico, `FLK-09` em lote, o disco cheio e o kill do
+   `FLK-10`, a contagem de hardlink no Windows do `FLK-08` e a revisão externa
+   de `REL-04`.
 5. **Release 3 — cofre pessoal:** storage/CRUD/recovery no telefone e cópia
    segura via agent.
 6. **Release 4 — autofill/import:** extensão de senhas, Android Autofill,
@@ -291,6 +293,11 @@ próprios.
   `cargo check --tests --target x86_64-unknown-linux-gnu`, o que prova que
   compilam, não que passam. O CI Ubuntu é quem os executa, e no Linux o total
   esperado é 274.
+- O round-trip de 4 GiB do `FLK-10` **rodou aqui**: `cargo test -p
+  phone-auth-locker --release -- --ignored` em 136,88 s, com SHA-256 igual nas
+  duas pontas. Ele fica `#[ignore]` de propósito — mover ~28 GiB por push seria
+  um CI inutilizável — então conta como evidência datada, não como cobertura
+  que se repete sozinha.
 - `cargo clippy --workspace --all-targets` e `cargo fmt --all --check`: limpos.
 - `desktop/ui/npm test`: **7 testes aprovados** localmente.
 - `flutter test` e a suíte Kotlin **não puderam ser executados nesta máquina**
