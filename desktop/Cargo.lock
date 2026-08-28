@@ -682,6 +682,7 @@ dependencies = [
  "bluer",
  "futures",
  "getrandom 0.2.17",
+ "libc",
  "p256",
  "phone-auth-locker",
  "phone-auth-protocol",
@@ -691,6 +692,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+ "windows-sys",
  "zeroize",
 ]
 

@@ -25,9 +25,12 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
-    SetPermissionsParams, WebAuthnParams,
+    SetPermissionsParams, VaultCopyResult, VaultGenerateCopyParams, WebAuthnParams,
 };
+use crate::clipboard;
+use crate::password::{self, Policy};
 use crate::paths::Paths;
+use crate::secret_memory::SecretBuffer;
 use crate::service::Service;
 
 static WEBAUTHN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
@@ -365,6 +368,15 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
             Err(reply) => reply(id),
         },
 
+        // No vault store exists on this side yet, so the secret this copies is
+        // one the agent just generated. The clipboard path is identical for a
+        // fetched secret, which is what makes it worth wiring now rather than
+        // waiting for the store.
+        "vault.generate-copy" => match parse::<VaultGenerateCopyParams>(call) {
+            Ok(params) => vault_generate_copy(id, &params),
+            Err(reply) => reply(id),
+        },
+
         "subscribe" => {
             let receiver = service.lock().expect("service mutex").subscribe();
             let writer = Arc::clone(writer);
@@ -379,6 +391,47 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         }
 
         other => Reply::err(id, "unknown-method", format!("unknown method `{other}`")),
+    }
+}
+
+/// Generates a password and copies it, without the plaintext crossing IPC.
+///
+/// The generated password lives in a `Zeroizing<String>` for exactly as long as
+/// it takes to copy it into locked pages, and both are wiped when this function
+/// returns. What goes back to the caller describes the copy.
+fn vault_generate_copy(id: u64, params: &VaultGenerateCopyParams) -> Reply {
+    let defaults = Policy::default();
+    let policy = Policy {
+        length: params.length.unwrap_or(defaults.length),
+        lowercase: params.lowercase.unwrap_or(defaults.lowercase),
+        uppercase: params.uppercase.unwrap_or(defaults.uppercase),
+        digits: params.digits.unwrap_or(defaults.digits),
+        symbols: params.symbols.unwrap_or(defaults.symbols),
+    };
+
+    let generated = match password::generate(policy) {
+        Ok(generated) => generated,
+        Err(error) => return Reply::err(id, "bad-params", error.to_string()),
+    };
+    let secret = SecretBuffer::from_slice(generated.as_bytes());
+    drop(generated);
+
+    let ttl = params
+        .clear_after_ms
+        .map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
+
+    match clipboard::copy_secret(&secret, ttl) {
+        Ok(outcome) => to_reply(
+            id,
+            &VaultCopyResult {
+                length: secret.len(),
+                clears_at_ms: outcome.clears_at_ms,
+                history_excluded: outcome.history_excluded,
+                cloud_excluded: outcome.cloud_excluded,
+                memory_locked: secret.is_locked(),
+            },
+        ),
+        Err(error) => Reply::err(id, "clipboard-unavailable", error.to_string()),
     }
 }
 
@@ -632,5 +685,59 @@ mod concurrent_client_tests {
         assert!(impostor.call("status", json!({})).is_err());
 
         assert!(honest.call("status", json!({})).is_ok());
+    }
+
+    /// The claim the whole module rests on: the password reaches the clipboard
+    /// without reaching the caller.
+    ///
+    /// Asserting on the shape of `VaultCopyResult` would only prove the struct
+    /// has no password field. This goes through the real socket, reads back
+    /// what actually landed on the clipboard, and looks for it in the raw reply
+    /// bytes — so adding a field, a debug echo or a stray error message
+    /// carrying the plaintext fails here.
+    #[cfg(windows)]
+    #[test]
+    fn a_generated_password_reaches_the_clipboard_but_not_the_caller() {
+        let _guard = crate::clipboard::test_lock();
+        let (_service, paths) = start_agent("vault-copy");
+        let mut client = AgentClient::connect(&paths).expect("client");
+
+        let result = client
+            .call("vault.generate-copy", json!({ "clearAfterMs": 5000 }))
+            .expect("generate-copy");
+
+        let copied = crate::clipboard::read_for_test().expect("clipboard holds the password");
+        assert_eq!(copied.chars().count(), 20, "default policy length");
+        assert_eq!(
+            result["length"].as_u64(),
+            Some(20),
+            "the reply reports the length"
+        );
+        assert!(result["clearsAtMs"].as_i64().unwrap_or(0) > 0);
+        assert_eq!(result["historyExcluded"].as_bool(), Some(true));
+        assert_eq!(result["cloudExcluded"].as_bool(), Some(true));
+
+        let serialised = serde_json::to_string(&result).expect("serialise reply");
+        assert!(
+            !serialised.contains(&copied),
+            "the generated password crossed the IPC boundary"
+        );
+
+        crate::clipboard::clear_now().expect("clear");
+    }
+
+    /// A policy no password can satisfy must come back as a refusal, not as an
+    /// agent that loops forever holding the service mutex.
+    #[test]
+    fn an_impossible_password_policy_is_refused_over_ipc() {
+        let (_service, paths) = start_agent("vault-copy-policy");
+        let mut client = AgentClient::connect(&paths).expect("client");
+
+        let refused = client.call(
+            "vault.generate-copy",
+            json!({ "lowercase": false, "uppercase": false, "digits": false, "symbols": false }),
+        );
+
+        assert!(refused.is_err(), "an empty alphabet must be refused");
     }
 }
