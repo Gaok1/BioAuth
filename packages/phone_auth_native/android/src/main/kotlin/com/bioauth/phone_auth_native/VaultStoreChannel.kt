@@ -53,6 +53,21 @@ internal class VaultStoreChannel(
     }
 
     private fun load(request: Request) {
+        // Discarding needs neither the key nor the blob to be readable — that
+        // is the whole point of it. A vault whose key a new fingerprint
+        // invalidated, or whose file is corrupt, cannot be unlocked by anyone
+        // ever again, so requiring an unlock here would leave the user with a
+        // permanently bricked vault and no button.
+        //
+        // No biometric prompt either, for the same reason: there is nothing to
+        // authorise against. The confirmation is on the screen instead, which
+        // is why this is the one operation whose safety lives in the UI.
+        if (request is Request.Discard) {
+            storage.delete()
+            runCatching { keyStore.deleteKey() }
+            succeed(mapOf("discarded" to true))
+            return
+        }
         if (!storage.exists()) {
             when (request) {
                 is Request.List -> succeed(VaultStoreData.page(emptyList(), request.cursor))
@@ -81,6 +96,12 @@ internal class VaultStoreChannel(
                 val item = VaultStoreData.fetch(items, request.id)
                 succeed(mapOf("id" to item.id, "revision" to item.revision, "secret" to item.secret))
             }
+            // Answered in `load`, before anything is decrypted — that is the
+            // point of it. Reaching here would mean discarding had waited on
+            // an unlock that a discardable vault cannot provide.
+            is Request.Discard -> fail(
+                VaultStoreFailure("vault_operation_failed", "Discard is handled before unlocking"),
+            )
             is Request.Export -> succeed(mapOf("items" to VaultStoreData.export(items)))
             is Request.Restore -> restore(items, request)
             is Request.Create -> write(items, request)
@@ -210,6 +231,7 @@ internal class VaultStoreChannel(
                 arguments.requiredString("id"),
                 arguments.requiredRevision("expectedRevision"),
             )
+            "discard" -> Request.Discard
             "export" -> Request.Export
             "restore" -> Request.Restore(
                 (arguments["items"] as? List<*> ?: throw VaultStoreFailure(
@@ -275,6 +297,19 @@ internal class VaultStoreChannel(
 
         /** Every item, secrets included, for one encrypted backup file. */
         data object Export : Request
+
+        /**
+         * Throws the vault away: the file and the key.
+         *
+         * The way out of a vault nothing can open — a key a new biometric
+         * enrolment invalidated, a file that fails its tag. Both are permanent,
+         * so the alternative to this is an app with a tab that only ever shows
+         * an error.
+         *
+         * Destroys data by design, and is the only operation here that does so
+         * without an unlock, because an unlock is exactly what is unavailable.
+         */
+        data object Discard : Request
 
         /** Items read back out of a backup file, to be added to this vault. */
         data class Restore(val items: kotlin.collections.List<VaultItemInput>) : Request

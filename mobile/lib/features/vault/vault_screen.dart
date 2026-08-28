@@ -97,11 +97,15 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
           const SizedBox(height: 8),
           const Text('Use sua biometria para abrir os itens deste aparelho.'),
           const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: controller.busy ? null : controller.unlock,
-            icon: const Icon(Icons.fingerprint),
-            label: const Text('Desbloquear'),
-          ),
+          // Hidden once the failure is one no unlock can fix. Leaving the
+          // button there invites the user to keep tapping something that
+          // cannot work.
+          if (!controller.unrecoverable)
+            FilledButton.icon(
+              onPressed: controller.busy ? null : controller.unlock,
+              icon: const Icon(Icons.fingerprint),
+              label: const Text('Desbloquear'),
+            ),
           if (controller.error case final message?) ...[
             const SizedBox(height: 12),
             Text(
@@ -109,10 +113,54 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
+          if (controller.canDiscard) ...[
+            const SizedBox(height: 20),
+            const Text(
+              'Descartar apaga o cofre deste telefone e começa vazio. Só faça '
+              'isso se você tiver um backup — ou se aceitar perder o que '
+              'estava aqui, já que ninguém mais consegue abrir.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: controller.busy ? null : _discard,
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: const Text('Descartar e começar de novo'),
+            ),
+          ],
         ],
       ),
     ),
   );
+
+  /// The only path to destroying the vault, and it asks twice: once here, and
+  /// once by making the user read what is lost.
+  Future<void> _discard() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Descartar o cofre?'),
+        content: const Text(
+          'Todos os itens guardados neste telefone são apagados, junto com a '
+          'chave. Isso não tem volta.\n\n'
+          'O conteúdo já está inacessível — descartar não perde nada que '
+          'ainda desse para recuperar aqui, mas também não recupera nada. Se '
+          'você tem um backup, poderá restaurá-lo depois.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Descartar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await controller.discard();
+  }
 
   Widget _unlocked() => Column(
     children: [

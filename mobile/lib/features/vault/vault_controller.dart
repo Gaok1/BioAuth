@@ -42,6 +42,25 @@ class VaultController extends ChangeNotifier {
   bool busy = false;
   String? error;
 
+  /// Whether the last failure was one no retry can fix.
+  ///
+  /// An invalidated key, a corrupt file and a store from a newer build are all
+  /// permanent from this app's side, and the screen has to offer something
+  /// other than the button that just failed.
+  bool unrecoverable = false;
+
+  bool _discardable = false;
+
+  /// Whether the vault can be thrown away and started over.
+  ///
+  /// Narrower than [unrecoverable]: only failures that no future version of
+  /// this app could read either. A vault written by a newer build is
+  /// unreadable here and fine after an update, so it is never offered.
+  ///
+  /// Never true after a transient failure. A data-loss button that appears
+  /// next to "authentication cancelled" is a data-loss button somebody taps.
+  bool get canDiscard => _discardable;
+
   List<VaultItemSummary> get items {
     final query = _query.trim().toLowerCase();
     if (query.isEmpty) return _items;
@@ -160,6 +179,22 @@ class VaultController extends ChangeNotifier {
     return outcome;
   }
 
+  /// Throws the vault away — the file and the key — and starts over empty.
+  ///
+  /// Only reachable when [canDiscard] says the vault is unopenable by anyone,
+  /// which is the only situation where destroying it is better than leaving
+  /// it. Needs no unlock, because an unlock is exactly what is unavailable.
+  ///
+  /// The screen is where the confirmation lives, so this is the one operation
+  /// whose safety is not enforced here.
+  Future<void> discard() => _run(() async {
+    await _store.discard();
+    _items = const [];
+    _revealedId = null;
+    _revealedSecret = null;
+    locked = true;
+  });
+
   /// Writes an already-previewed import into the vault.
   ///
   /// Takes the items rather than the file: parsing and reporting happen on the
@@ -186,16 +221,49 @@ class VaultController extends ChangeNotifier {
     if (busy) return;
     busy = true;
     error = null;
+    unrecoverable = false;
+    _discardable = false;
     notifyListeners();
     try {
       await action();
     } on PlatformException catch (failure) {
+      // Three of these no retry can fix, and saying so is the whole message. A
+      // user whose key a new fingerprint invalidated has lost the vault for
+      // good; "could not complete the operation" leaves them retrying forever.
+      unrecoverable = const {
+        'key_invalidated',
+        'store_corrupt',
+        'store_version_unsupported',
+      }.contains(failure.code);
+
+      // A store written by a newer build is unreadable *here* and perfectly
+      // readable after an update. It must never be offered for discarding:
+      // that button would destroy data a version bump recovers.
+      _discardable = const {
+        'key_invalidated',
+        'store_corrupt',
+      }.contains(failure.code);
+
       error = switch (failure.code) {
         'authentication_cancelled' => 'Autenticação cancelada.',
         'biometric_unavailable' =>
           'Cadastre uma biometria forte para usar o cofre.',
         'revision_conflict' =>
           'Este item mudou. Atualize o cofre e tente novamente.',
+        'operation_in_progress' =>
+          'Outra operação do cofre está em andamento. Tente de novo em '
+              'instantes.',
+        'vault_full' => 'O cofre está cheio.',
+        'key_invalidated' =>
+          'A chave deste cofre foi invalidada por um novo cadastro de '
+              'biometria. O conteúdo não pode mais ser aberto — nem por você, '
+              'nem por ninguém. Restaure a partir de um backup.',
+        'store_corrupt' =>
+          'O arquivo do cofre não passou na verificação de integridade. '
+              'Ele não pode ser aberto. Restaure a partir de um backup.',
+        'store_version_unsupported' =>
+          'Este cofre foi gravado por uma versão mais nova do aplicativo. '
+              'Atualize antes de abri-lo — não apague nada.',
         _ => 'Não foi possível concluir a operação do cofre.',
       };
     } on VaultExportException catch (failure) {
