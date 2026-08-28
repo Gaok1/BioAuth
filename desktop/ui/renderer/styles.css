@@ -336,3 +336,54 @@ summary {
   cursor: pointer;
   font-size: 11px;
 }
+
+/* --- vault ---------------------------------------------------------------
+   The panel's own row sits at the panel edge rather than inside a card, so it
+   carries the margin the .entry blocks below it already have. */
+#panel-vault > .row {
+  margin: 12px 14px 0;
+  align-items: center;
+}
+
+#panel-vault > .muted {
+  margin: 8px 14px 0;
+  font-size: 11px;
+}
+
+.search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* The button that starts a copy. Kept visually quiet: the decision that
+   matters happens on the phone, and a loud call to action here would suggest
+   this window is the thing granting access. */
+.entry .tag[data-copy] {
+  cursor: pointer;
+}
+
+.entry .tag[data-copy]:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.entry .tag[disabled] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.note--bad {
+  color: var(--bad);
+}

@@ -13,6 +13,7 @@ import '../auth/phone_authenticator.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
 import '../transport/auth_transport.dart';
+import '../vault/vault_approval.dart';
 import 'paired_session_service.dart';
 import 'phone_auth_core.dart';
 
@@ -38,18 +39,26 @@ class PairedSessionRunner {
     required AuthTransport transport,
     required BiometricAuthorizer authorizer,
     required InteractiveAuthorizer consent,
+    InteractiveVaultApproval? vaultApproval,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
          transport: transport,
          authorizer: authorizer,
          consent: consent,
+         vaultApproval: vaultApproval,
          clock: clock,
        ),
-       _consent = consent;
+       _consent = consent,
+       _vaultApproval = vaultApproval;
 
   final PairedSessionService _service;
   final InteractiveAuthorizer _consent;
+
+  /// Held so that stopping the runner refuses whatever sheet is still up: a
+  /// session that is gone cannot be answered, and leaving the sheet tappable
+  /// would let a later tap approve a request that no longer has a session.
+  final InteractiveVaultApproval? _vaultApproval;
 
   /// Reports connection state per verifier, for the devices list.
   final void Function(String verifierId, PairedSessionStatus status)? onStatus;
@@ -86,6 +95,7 @@ class PairedSessionRunner {
     for (final requestId in _consent.pendingRequestIds.toList()) {
       _consent.abandon(requestId, StateError('Conexão encerrada'));
     }
+    _vaultApproval?.abandonAll();
   }
 
   /// Drops one verifier now, without waiting for the next [sync].

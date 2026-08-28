@@ -15,6 +15,7 @@ import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/enrolment.dart';
 import '../protocol/webauthn_relay.dart';
+import '../vault/vault_approval.dart';
 import '../vault/vault_service.dart';
 import '../../features/vault/vault_store.dart';
 import '../transport/auth_transport.dart';
@@ -33,11 +34,12 @@ class PairedSessionService {
     required BiometricAuthorizer authorizer,
     required AuthorizationConsent consent,
     VaultStore? vaultStore,
+    VaultApproval? vaultApproval,
     DateTime Function()? clock,
   }) : _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
-       _vault = VaultService(repository: vaultStore),
+       _vault = VaultService(repository: vaultStore, approval: vaultApproval),
        _clock = clock;
 
   final AuthTransport _transport;

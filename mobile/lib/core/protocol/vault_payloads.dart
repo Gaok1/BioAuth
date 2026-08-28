@@ -193,10 +193,8 @@ class VaultListRequest {
     return _decode(
       payload,
       _fields,
-      (reader) => VaultListRequest(
-        verifierName: reader.text(),
-        cursor: reader.text(),
-      ),
+      (reader) =>
+          VaultListRequest(verifierName: reader.text(), cursor: reader.text()),
       (value) => value.encode(),
     );
   }
@@ -248,7 +246,8 @@ class VaultListResponse {
         throw const FormatException('Página de cofre grande demais');
       }
       final items = <VaultItemSummary>[
-        for (var index = 0; index < count; index++) VaultItemSummary.read(reader),
+        for (var index = 0; index < count; index++)
+          VaultItemSummary.read(reader),
       ];
       return VaultListResponse(items: items, nextCursor: reader.text());
     }, (value) => value.encode());
@@ -283,10 +282,8 @@ class VaultFetchRequest {
     return _decode(
       payload,
       _fields,
-      (reader) => VaultFetchRequest(
-        verifierName: reader.text(),
-        itemId: reader.text(),
-      ),
+      (reader) =>
+          VaultFetchRequest(verifierName: reader.text(), itemId: reader.text()),
       (value) => value.encode(),
     );
   }
@@ -512,10 +509,8 @@ class VaultWriteResponse {
     return _decode(
       payload,
       _fields,
-      (reader) => VaultWriteResponse(
-        itemId: reader.text(),
-        revision: reader.uint(),
-      ),
+      (reader) =>
+          VaultWriteResponse(itemId: reader.text(), revision: reader.uint()),
       (value) => value.encode(),
     );
   }

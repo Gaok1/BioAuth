@@ -114,6 +114,19 @@ abstract class VaultStore {
     return result;
   }
 
+  /// One item's metadata, or null when nothing carries that id.
+  ///
+  /// Costs no biometric prompt, which is the whole point: the approval sheet
+  /// has to name the item *before* the user is asked to unlock it, and going
+  /// through [fetch] to learn the name would release the secret to draw the
+  /// screen that asks whether to release the secret.
+  Future<VaultItemSummary?> summary(String id) async {
+    for (final item in await listAll()) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
+
   Future<VaultSecret> fetch(String id);
   Future<VaultWrite> create(VaultItemInput item);
   Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item);

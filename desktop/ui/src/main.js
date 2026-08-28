@@ -26,6 +26,15 @@ const ALLOWED_METHODS = new Set([
   'pair.pending',
   'pair.confirm',
   'audit.recent',
+  // The vault panel. `vault.copy` mutates nothing and reveals nothing to this
+  // process: the secret goes from the phone into locked pages in the agent and
+  // then to the clipboard, and the reply describes the copy without carrying
+  // it. Unlike `authorize`, a copy is exactly the kind of thing a person means
+  // to start by clicking, and the phone still shows what was asked before it
+  // releases anything.
+  'vault.list',
+  'vault.copy',
+  'vault.generate-copy',
 ]);
 
 /**

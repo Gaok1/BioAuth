@@ -1,0 +1,181 @@
+/// The screen a desktop's vault request has to pass before the Keystore is
+/// asked for anything.
+///
+/// Everything on it is there to make one question answerable: *is this the
+/// thing I just did on my computer?* The computer's name, the operation and
+/// the item are all shown before the biometric, because after the biometric
+/// there is nothing left to decide.
+library;
+
+import 'package:flutter/material.dart';
+
+import '../../core/vault/vault_approval.dart';
+
+/// Shows the sheet and resolves to what the user chose.
+///
+/// Dismissing it — back gesture, tap outside — resolves false. There is no
+/// path through this function that returns true without a tap on the button
+/// that says so.
+Future<bool> showVaultApprovalSheet(
+  BuildContext context,
+  VaultApprovalRequest request,
+) async {
+  final approved = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    // Not dismissible by accident, but still dismissible: a sheet the user
+    // cannot get rid of is a sheet they will approve to make it go away.
+    isDismissible: true,
+    builder: (context) => _VaultApprovalSheet(request: request),
+  );
+  return approved ?? false;
+}
+
+class _VaultApprovalSheet extends StatelessWidget {
+  const _VaultApprovalSheet({required this.request});
+
+  final VaultApprovalRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final domain = request.domain;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: colors.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Icon(
+                request.operation.releasesSecret
+                    ? Icons.content_paste_go
+                    : Icons.edit_outlined,
+                color: colors.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Pedido do computador',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+
+          // The computer's own claim about its name, framed as a claim. The
+          // phone verified the *pairing*, not that the name is honest, and the
+          // wording must not promise more than that.
+          _Field(label: 'Computador', value: request.verifierName),
+          _Field(label: 'Operação', value: request.operation.label),
+          _Field(label: 'Item', value: request.itemName, emphasis: true),
+          if (request.username.isNotEmpty)
+            _Field(label: 'Usuário', value: request.username),
+          if (domain.isNotEmpty) _Field(label: 'Domínio', value: domain),
+
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 18, color: colors.onSurface),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    request.operation.releasesSecret
+                        ? 'Se você aprovar, a senha vai para a área de '
+                              'transferência desse computador. O telefone '
+                              'deixa de controlá-la a partir daí.'
+                        : 'Se você aprovar, o item guardado neste telefone '
+                              'muda. A alteração vem do computador acima.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              request.operation.releasesSecret ? 'Aprovar cópia' : 'Aprovar',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Recusar'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.label,
+    required this.value,
+    this.emphasis = false,
+  });
+
+  final String label;
+  final String value;
+  final bool emphasis;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 104,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: emphasis
+                  ? theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    )
+                  : theme.textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

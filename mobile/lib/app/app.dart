@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import 'app_controller.dart';
 import 'config.dart';
+import 'navigation.dart';
 import 'providers.dart';
 import 'router.dart';
 import 'theme.dart';
@@ -15,6 +16,7 @@ class PhoneAuthApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       title: 'Phone Auth',
+      navigatorKey: rootNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
@@ -60,6 +62,14 @@ class _SessionHostState extends ConsumerState<_SessionHost>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.invalidate(backgroundSessionsReadyProvider);
+      return;
+    }
+    // A vault sheet the user can no longer see must not stay answerable. The
+    // app going to the background is not an answer, so it becomes a refusal —
+    // otherwise a tap landing on the sheet as the phone comes back would
+    // approve a request the user never read.
+    if (!ref.read(appConfigProvider).mockEnabled) {
+      ref.read(vaultApprovalProvider).abandonAll();
     }
   }
 

@@ -46,6 +46,7 @@
 
     <nav class="tabs" role="tablist">
       <button class="tab tab--active" data-panel="panel-devices" role="tab">Telefones</button>
+      <button class="tab" data-panel="panel-vault" role="tab">Cofre</button>
       <button class="tab" data-panel="panel-transports" role="tab">Conexão</button>
       <button class="tab" data-panel="panel-history" role="tab">Histórico</button>
     </nav>
@@ -84,6 +85,37 @@
             <button id="confirm-no" class="button">Não confere</button>
           </div>
           <p id="confirm-error" class="muted"></p>
+        </div>
+      </section>
+
+      <section id="panel-vault" class="panel" hidden>
+        <div class="row">
+          <input
+            id="vault-search"
+            class="search"
+            type="search"
+            placeholder="Buscar no cofre…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="vault-refresh" class="tag">atualizar</button>
+        </div>
+
+        <p class="muted">
+          A lista não tem senha nenhuma. Cada cópia é aprovada no telefone, que
+          mostra este computador, o item e o domínio antes de liberar.
+        </p>
+
+        <div id="vault-items"></div>
+        <p id="vault-note" class="muted" aria-live="polite"></p>
+
+        <div class="card">
+          <p class="label">Senha nova</p>
+          <p class="muted">
+            Gerada neste computador e copiada direto. Não passa pelo telefone e
+            não fica guardada em lugar nenhum — cole antes que ela expire.
+          </p>
+          <button id="vault-generate" class="button">Gerar e copiar</button>
         </div>
       </section>
 

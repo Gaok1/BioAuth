@@ -3,13 +3,20 @@ import 'package:flutter/services.dart';
 import '../../features/vault/vault_store.dart' as store;
 import '../protocol/application_frame.dart';
 import '../protocol/vault_payloads.dart' as wire;
+import 'vault_approval.dart';
 
 /// Serves vault application frames without exposing storage failure details.
 class VaultService {
-  VaultService({store.VaultStore? repository})
-    : _store = repository ?? const store.NativeVaultStore();
+  VaultService({store.VaultStore? repository, VaultApproval? approval})
+    : _store = repository ?? const store.NativeVaultStore(),
+      // Defaulting to a refusal rather than to a pass is deliberate. A build
+      // that forgets to wire the sheet serves an empty list and nothing else,
+      // which is a visible bug; defaulting the other way would serve secrets
+      // behind a bare Keystore prompt, which is an invisible one.
+      _approval = approval ?? const DenyVaultApproval();
 
   final store.VaultStore _store;
+  final VaultApproval _approval;
 
   Future<Uint8List> handle(
     Uint8List frame, {
@@ -26,23 +33,26 @@ class VaultService {
     }
     if (!authorized) return _error(request, ApplicationErrorCode.rejected);
 
-    late final Future<Uint8List> operation;
+    // Decoding is separated from running so that a malformed payload is an
+    // `invalidRequest` and a refused operation is a `rejected`, without the
+    // approval sheet sitting inside a `try` that would swallow its answer.
+    late final Object decoded;
     try {
-      operation = switch (request.operation) {
-        wire.vaultListOperation => _list(
-          wire.VaultListRequest.decode(request.payload),
+      decoded = switch (request.operation) {
+        wire.vaultListOperation => wire.VaultListRequest.decode(
+          request.payload,
         ),
-        wire.vaultFetchOperation => _fetch(
-          wire.VaultFetchRequest.decode(request.payload),
+        wire.vaultFetchOperation => wire.VaultFetchRequest.decode(
+          request.payload,
         ),
-        wire.vaultCreateOperation => _create(
-          wire.VaultCreateRequest.decode(request.payload),
+        wire.vaultCreateOperation => wire.VaultCreateRequest.decode(
+          request.payload,
         ),
-        wire.vaultUpdateOperation => _update(
-          wire.VaultUpdateRequest.decode(request.payload),
+        wire.vaultUpdateOperation => wire.VaultUpdateRequest.decode(
+          request.payload,
         ),
-        wire.vaultDeleteOperation => _delete(
-          wire.VaultDeleteRequest.decode(request.payload),
+        wire.vaultDeleteOperation => wire.VaultDeleteRequest.decode(
+          request.payload,
         ),
         _ => throw const FormatException('Operação de cofre desconhecida'),
       };
@@ -51,7 +61,22 @@ class VaultService {
     }
 
     try {
-      return _reply(request, await operation);
+      // Listing is the one operation that needs no approval: it releases no
+      // secret, and a sheet on every list would train the user to dismiss the
+      // one that matters.
+      if (decoded is wire.VaultListRequest) {
+        return _reply(request, await _list(decoded));
+      }
+
+      final approved = await _approval.confirm(
+        await _describe(request.requestId, decoded),
+      );
+      // The same code a missing item gets. Whether the user said no, the item
+      // was never there, or the revision had moved on is not something the
+      // desktop is told — see `protocol-application.md`.
+      if (!approved) return _error(request, ApplicationErrorCode.rejected);
+
+      return _reply(request, await _run(decoded));
     } on PlatformException {
       // not_found, revision_conflict and biometric refusal are intentionally
       // indistinguishable on the wire.
@@ -59,6 +84,66 @@ class VaultService {
     } on Object {
       return _error(request, ApplicationErrorCode.unavailable);
     }
+  }
+
+  Future<Uint8List> _run(Object decoded) => switch (decoded) {
+    wire.VaultFetchRequest request => _fetch(request),
+    wire.VaultCreateRequest request => _create(request),
+    wire.VaultUpdateRequest request => _update(request),
+    wire.VaultDeleteRequest request => _delete(request),
+    _ => throw ArgumentError.value(decoded),
+  };
+
+  /// Builds the sentence the user reads before deciding.
+  ///
+  /// The item's name comes from the store rather than from the frame: for a
+  /// fetch, a delete or an update the desktop sends only an id, and a desktop
+  /// that could name the item on the sheet itself could name it whatever made
+  /// approval likeliest. Only `create` describes an item that does not exist
+  /// yet, so only there is the frame the source.
+  Future<VaultApprovalRequest> _describe(String id, Object decoded) async {
+    if (decoded is wire.VaultCreateRequest) {
+      return VaultApprovalRequest(
+        id: id,
+        verifierName: decoded.verifierName,
+        operation: VaultOperation.create,
+        itemName: decoded.name,
+        username: decoded.username,
+        uri: decoded.uri,
+      );
+    }
+
+    final (verifierName, itemId, operation) = switch (decoded) {
+      wire.VaultFetchRequest request => (
+        request.verifierName,
+        request.itemId,
+        VaultOperation.read,
+      ),
+      wire.VaultUpdateRequest request => (
+        request.verifierName,
+        request.itemId,
+        VaultOperation.update,
+      ),
+      wire.VaultDeleteRequest request => (
+        request.verifierName,
+        request.itemId,
+        VaultOperation.delete,
+      ),
+      _ => throw ArgumentError.value(decoded),
+    };
+
+    // An id nothing matches still gets a sheet. Skipping straight to a refusal
+    // would answer faster for a missing item than for a present one, and that
+    // difference is exactly what lets a paired desktop enumerate the vault.
+    final item = await _store.summary(itemId);
+    return VaultApprovalRequest(
+      id: id,
+      verifierName: verifierName,
+      operation: operation,
+      itemName: item?.name ?? 'Item desconhecido',
+      username: item?.username ?? '',
+      uri: item?.uri ?? '',
+    );
   }
 
   Future<Uint8List> _list(wire.VaultListRequest request) async {

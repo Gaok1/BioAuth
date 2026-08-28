@@ -11,8 +11,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phone_auth_native/phone_auth_native.dart';
 
 import 'app_controller.dart';
+import 'navigation.dart';
 
 import '../core/auth/interactive_authorizer.dart';
+import '../core/vault/vault_approval.dart';
+import '../features/vault/vault_approval_sheet.dart';
 import '../core/auth/native_biometric_authorizer.dart';
 import '../core/bluetooth/ble_transport.dart';
 import '../core/pairing/pairing_record.dart';
@@ -131,6 +134,31 @@ final interactiveAuthorizerProvider = Provider<InteractiveAuthorizer>((ref) {
   );
 });
 
+/// The bridge between a desktop's vault request and the sheet that names it.
+///
+/// The Keystore prompt the store raises proves a finger, not an intention: it
+/// looks identical whether the computer asked for a `sudo` or for a bank
+/// password. This is where the request is turned into something a person can
+/// actually agree or object to, and it runs before the store is touched.
+final vaultApprovalProvider = Provider<InteractiveVaultApproval>((ref) {
+  late final InteractiveVaultApproval approval;
+  approval = InteractiveVaultApproval(
+    onRequest: (request) async {
+      // No activity on screen — the phone is locked, or Android killed the UI
+      // and kept the service. There is nobody to ask, and an unasked question
+      // is a refusal.
+      final context = rootNavigatorKey.currentContext;
+      if (context == null) {
+        approval.settle(request.id, approved: false);
+        return;
+      }
+      final approved = await showVaultApprovalSheet(context, request);
+      approval.settle(request.id, approved: approved);
+    },
+  );
+  return approval;
+});
+
 /// Holds a connection to every paired desktop while the foreground service is
 /// available. The cached engine keeps this provider watched without an activity.
 final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
@@ -144,6 +172,7 @@ final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
     transport: transport,
     authorizer: ref.watch(biometricAuthorizerProvider),
     consent: ref.watch(interactiveAuthorizerProvider),
+    vaultApproval: ref.watch(vaultApprovalProvider),
     // Without this the devices list had no source of truth for connection
     // state at all, so every paired desktop sat on `connecting` forever.
     //

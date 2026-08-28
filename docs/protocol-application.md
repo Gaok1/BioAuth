@@ -157,6 +157,35 @@ This is a statement about the session, not about storage. `DEC-06` governs what
 is encrypted **at rest on the phone** — names, sites, usernames and indexes all
 are. Metadata travels in the clear only inside the already-encrypted channel.
 
+### The approval is not the biometric
+
+Every `vault.*` operation except `vault.list` passes a screen on the phone
+before the store is touched. The screen names the computer that asked, the
+operation, the item, the username and the domain; refusing there means the
+Keystore is never asked for anything.
+
+The biometric alone cannot carry this. A fingerprint proves a finger, not an
+intention: the system prompt looks the same whether the computer asked to
+unlock `sudo` or to read a bank password, and a person holding an unlocked
+phone has no way to tell those apart. `DEC-02` asks for a gesture *and* an
+approval, and the prompt is only the gesture.
+
+Three details of the screen are load-bearing:
+
+- **The item's name comes from the phone's own store, not from the frame.** A
+  fetch, an update and a delete carry only an id. A desktop that could supply
+  the label would label a request for the bank password "Spotify".
+- **`verifierName` is presented as a claim.** The phone verified the pairing,
+  not the honesty of the name in it.
+- **An id nothing matches still gets a screen.** Refusing early would answer
+  faster for an item that is absent than for one that is present, and that
+  difference is enough to enumerate a vault without ever reading it.
+
+A service with no screen attached refuses everything but `vault.list`. That is
+the default rather than a configuration: a build that forgets to wire the
+screen then serves an empty vault, which is visible, instead of serving secrets
+behind a bare prompt, which is not.
+
 ### Optimistic revision
 
 Every item carries a `revision`, starting at 1. `vault.update` and

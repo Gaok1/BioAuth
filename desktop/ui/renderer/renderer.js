@@ -360,3 +360,157 @@ document.addEventListener('visibilitychange', () => {
 });
 
 startPolling();
+
+// --- vault -----------------------------------------------------------------
+
+// Held so that filtering does not go back to the phone. `vault.list` crosses
+// the network to a device that may be in a pocket, so it happens when the user
+// opens the panel or asks for it, and never on the 4-second poll.
+let vaultItems = null;
+let vaultLoading = false;
+
+function vaultNote(text, kind) {
+  const note = el('vault-note');
+  note.textContent = text;
+  note.className = kind === 'bad' ? 'muted note--bad' : 'muted';
+}
+
+async function loadVault() {
+  if (vaultLoading) return;
+  vaultLoading = true;
+  vaultNote('Perguntando ao telefone…');
+  try {
+    const listed = await api.call('vault.list', {});
+    vaultItems = listed.items || [];
+    vaultNote(
+      listed.development
+        ? 'ATENÇÃO — esta lista veio do simulador de desenvolvimento, não de um telefone.'
+        : `${vaultItems.length} itens em ${listed.deviceName || 'telefone'}.`
+    );
+  } catch (error) {
+    vaultItems = null;
+    vaultNote(error.message, 'bad');
+  } finally {
+    vaultLoading = false;
+    renderVault();
+  }
+}
+
+function matchesQuery(item, query) {
+  if (!query) return true;
+  return [item.name, item.username, item.uri].some(
+    (field) => (field || '').toLowerCase().includes(query)
+  );
+}
+
+function renderVault() {
+  const container = el('vault-items');
+  clear(container);
+
+  if (vaultItems === null) return;
+  const query = el('vault-search').value.trim().toLowerCase();
+  const shown = vaultItems.filter((item) => matchesQuery(item, query));
+
+  if (shown.length === 0) {
+    container.appendChild(
+      node(
+        'p',
+        'empty',
+        vaultItems.length === 0
+          ? 'O cofre está vazio. Adicione itens no telefone.'
+          : 'Nada corresponde a essa busca.'
+      )
+    );
+    return;
+  }
+
+  for (const item of shown) {
+    const entry = node('div', 'entry');
+    const row = node('div', 'row');
+    row.appendChild(node('h3', null, item.name));
+
+    const copy = node('button', 'tag', 'copiar');
+    copy.dataset.copy = item.id;
+    copy.addEventListener('click', () => copyItem(item, copy));
+    row.appendChild(copy);
+    entry.appendChild(row);
+
+    const detail = [item.username, hostOf(item.uri)].filter(Boolean).join(' · ');
+    if (detail) entry.appendChild(node('p', 'muted', detail));
+    container.appendChild(entry);
+  }
+}
+
+/** The host, for the line a person reads. Falls back to the raw string. */
+function hostOf(uri) {
+  if (!uri) return '';
+  try {
+    return new URL(uri).host || uri;
+  } catch {
+    return uri;
+  }
+}
+
+async function copyItem(item, button) {
+  button.disabled = true;
+  button.textContent = 'no telefone…';
+  vaultNote(`Aprove no telefone: ${item.name}.`);
+  try {
+    // The revision of the row that is on screen. If the phone answers with a
+    // different one the agent refuses the copy — the item was edited somewhere
+    // else, and pasting it would hand over a value nobody looked at.
+    const result = await api.call('vault.copy', {
+      itemId: item.id,
+      expectedRevision: item.revision,
+    });
+    const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
+    const warnings = [];
+    if (!result.memoryLocked) warnings.push('a senha pode ter chegado ao pagefile');
+    if (!result.historyExcluded) warnings.push('o histórico da área de transferência pode ter guardado uma cópia');
+    if (!result.cloudExcluded) warnings.push('a área de transferência pode ter sincronizado com a nuvem');
+
+    vaultNote(
+      `Copiado. A área de transferência se limpa em ${seconds}s.` +
+        (warnings.length ? ` ATENÇÃO — ${warnings.join('; ')}.` : '')
+    );
+    button.textContent = 'copiado';
+  } catch (error) {
+    // A refusal on the phone, a stale revision and a missing item all arrive
+    // as the same code. Saying which one it was is not something this window
+    // is able to do, so it does not guess.
+    vaultNote(error.message, 'bad');
+    button.textContent = 'copiar';
+  } finally {
+    button.disabled = false;
+    // The revision may have moved on, and the row on screen would then copy a
+    // value the user never saw. Re-listing costs nothing the user notices.
+    if (!vaultLoading) setTimeout(() => { if (!document.hidden) loadVault(); }, 1200);
+  }
+}
+
+el('vault-search').addEventListener('input', renderVault);
+el('vault-refresh').addEventListener('click', loadVault);
+
+el('vault-generate').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api.call('vault.generate-copy', {});
+    const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
+    vaultNote(
+      `Senha de ${result.length} caracteres copiada. Some da área de transferência em ${seconds}s.`
+    );
+  } catch (error) {
+    vaultNote(error.message, 'bad');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// Listing is deferred until the panel is actually opened: a tray that dials
+// the phone every time it starts would wake the device for nothing.
+for (const tab of document.querySelectorAll('.tab')) {
+  tab.addEventListener('click', () => {
+    if (tab.dataset.panel === 'panel-vault' && vaultItems === null) loadVault();
+  });
+}

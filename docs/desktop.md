@@ -402,6 +402,26 @@ stale, or the user dismissed the prompt. That is `protocol-application.md`'s
 coarse taxonomy surfacing at the IPC edge, and it is why `vault.copy` cannot be
 used to discover which item IDs exist.
 
+### From the tray
+
+The Cofre tab lists the vault, filters it locally, and copies one item at a
+time. Two things about it are deliberate:
+
+- **Listing happens when the panel is opened or the user asks, never on the
+  4-second status poll.** A list crosses the network to a device that is
+  probably in a pocket, and a tray that woke the phone every few seconds would
+  be a battery bug dressed as a feature.
+- **Filtering never goes back to the phone.** The rows are already on this
+  side; a search box that re-listed on every keystroke would be both slow and
+  a way to keep the link busy.
+
+The copy button sends the revision of the row it is showing, and the panel
+re-lists shortly after a copy so a row left on screen cannot copy a value the
+user never saw. What the reply says about the clipboard — page locking,
+history exclusion, cloud exclusion — is shown when any of it came back false,
+because on a platform that refuses those the UI has to say so rather than
+imply a protection that is not there.
+
 ### From the command line
 
 ```sh
