@@ -166,6 +166,35 @@ so a truncated or substituted list silently weakens every passphrase without
 failing to produce one. A test pins the count, and a second test pins strict
 alphabetical order, which also proves the 7776 entries are distinct.
 
+## Tray and extension packaging
+
+Both are **devDependencies of `desktop/ui`**. Neither is bundled into the tray,
+the extension, or any shipped artifact: `electron-builder`'s `files` list names
+`src`, `renderer`, `assets` and `package.json` only, and the extension package
+is an explicit four-file list. Nothing here reaches a user's machine.
+
+| Package | Version | License | Why |
+|---|---|---|---|
+| `yazl` | 3.3.1 | MIT | Writes the store archives. Replaced a hand-rolled ZIP writer — local headers, central directory, CRC-32 — that existed only to avoid a dependency. |
+| `addons-linter` | 10.10.0 | MPL-2.0 | Mozilla's own add-on validator, the same one AMO runs on submission. |
+
+`addons-linter` is the expensive one: it takes the tray's dev tree from 439 to
+590 packages, and it pulls its own ESLint and Babel. That is a real cost and it
+is recorded here so it can be reversed deliberately rather than discovered.
+
+It is kept because it knows the stores' rules as they are, not as we remember
+them. On its first run it caught that AMO now requires
+`browser_specific_settings.gecko.data_collection_permissions` on new
+submissions — a rule that no amount of reading our own code would have
+surfaced, and that would have bounced the first upload. The extension collects
+nothing, so it declares `required: ["none"]`.
+
+Two warnings remain, both saying `strict_min_version: 128` predates the Firefox
+142 that introduced that key, so the declaration is ignored on 128 through 141.
+The floor is 128 because `world: "MAIN"` content scripts need it. Raising it to
+142 would silence the warnings by dropping those versions, which is a product
+decision, so the warnings stand and only errors fail the build.
+
 ## Review rule
 
 Before adding or upgrading a package, record maintenance activity, current

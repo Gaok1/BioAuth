@@ -144,7 +144,8 @@ cargo build --release --bin phone-auth-agent --bin phone-auth-webauthn-host
 
 Load `desktop/browser-extension/` as an unpacked extension. Chrome and Edge use
 their extensions developer page; Firefox uses `about:debugging` for a temporary
-development install.
+development install. That is a development path only — see **Distribution**
+below for what an ordinary user gets.
 
 The extension carries both engines' shapes, because they disagree twice.
 Firefox resolves a promise returned from `runtime.onMessage`; Chrome ignores it
@@ -193,6 +194,56 @@ The registry default value is the absolute path to the JSON host manifest. The
 agent must be running and the phone paired. If several phones are paired, the
 IPC request must name a credential; the extension fails rather than selecting
 one by map order.
+
+## Distribution
+
+Build the store packages from `desktop/ui`:
+
+```console
+npm run package:extension
+```
+
+That writes `desktop/dist/extension/phone-auth-passkeys-<version>-chromium.zip`
+and `-firefox.zip`, and prints each archive's SHA-256. The release workflow
+builds the same two files and folds them into `SHA256SUMS.txt`.
+
+The two archives differ because the engines do. Chrome MV3 wants
+`background.service_worker` and treats `background.scripts` as invalid; Firefox
+uses `scripts` and needs the `browser_specific_settings.gecko` block that Chrome
+has no use for. The checked-in `manifest.json` carries both so "load unpacked"
+works in either engine, and `desktop/ui/tools/package-extension.js` splits them
+for packaging. Neither archive contains `native-host/`, which lives inside the
+extension folder but belongs to the desktop side; the packager works from an
+explicit file list so a new file cannot ride along unnoticed.
+
+The archives are reproducible — fixed entry order, fixed timestamps, fixed
+modes — so the same tag always produces the same bytes. That is what lets you
+check that what a store serves is what this repository built.
+
+### Signing is not done
+
+Publishing to Chrome Web Store, Edge Add-ons and AMO needs developer accounts
+and signing credentials that live with the project owner, not in this
+repository. **No store listing exists yet**, so today the honest options are:
+
+| Channel | What it means |
+|---|---|
+| Chromium enterprise policy | Host the `.zip`/`.crx` and force-install by ID through `ExtensionSettings` or `ExtensionInstallForcelist`. Requires a managed browser. |
+| Firefox self-distribution | Upload the `.xpi` to AMO for signing but decline listing; Firefox refuses unsigned extensions outside Developer Edition and Nightly. |
+| Developer install | Load unpacked. Fine for development, not for a user. |
+
+Nothing here is a substitute for a store listing, and this document should not
+be read as claiming the extension is distributable today.
+
+### The extension ID is load-bearing
+
+The native host allowlists exactly one extension, so the ID has to be final
+before `install.ps1` / `install.sh` run. On Firefox it is fixed in the manifest
+(`webauthn@bioauth.local`). On Chromium it is derived from the signing key: the
+store assigns it on first upload, and a self-hosted CRX gets it from whatever
+key packs it. A load-unpacked install gets a different ID per machine, which is
+why the installers refuse anything that is not a real 32-character `a`–`p` ID
+rather than accepting a placeholder that would widen the allowlist.
 
 ## Foreground lifetime
 
