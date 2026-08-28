@@ -56,6 +56,32 @@ jobs:
           ./gradlew lintDevDebug testDevDebugUnitTest \
             :phone_auth_native:testDebugUnitTest
 
+  android-instrumentation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Resolve Flutter plugins
+        working-directory: mobile
+        run: |
+          flutter pub get
+          chmod +x android/gradlew
+      - name: Android 15 credential-provider instrumentation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: ./mobile/android/gradlew -p mobile/android :phone_auth_native:connectedDebugAndroidTest
+
   desktop:
     runs-on: ubuntu-latest
     timeout-minutes: 15

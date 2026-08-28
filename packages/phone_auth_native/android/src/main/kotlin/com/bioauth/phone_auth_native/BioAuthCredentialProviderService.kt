@@ -47,7 +47,7 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
                 if (cancellationSignal.isCanceled) return@execute
                 val entry = CreateEntry.Builder(
                     options.userName,
-                    pendingIntent(WebAuthnCredentialActivity.ACTION_CREATE, null),
+                    credentialEntryPendingIntent(this, WebAuthnCredentialActivity.ACTION_CREATE, null),
                 ).setPublicKeyCredentialCount(core.credentialsFor(
                     WebAuthnRequestOptions(options.rpId, options.challenge, emptyList()),
                 ).size).build()
@@ -81,7 +81,11 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
                             PublicKeyCredentialEntry.Builder(
                                 this,
                                 record.userName,
-                                pendingIntent(WebAuthnCredentialActivity.ACTION_GET, record.credentialId),
+                                credentialEntryPendingIntent(
+                                    this,
+                                    WebAuthnCredentialActivity.ACTION_GET,
+                                    record.credentialId,
+                                ),
                                 option,
                             ).setDisplayName(record.userDisplayName)
                                 .setLastUsedTime(Instant.ofEpochMilli(record.createdAtMillis))
@@ -105,20 +109,26 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
         callback.onResult(null)
     }
 
-    private fun pendingIntent(action: String, credentialId: ByteArray?): PendingIntent {
-        val intent = Intent(this, WebAuthnCredentialActivity::class.java).setAction(action)
-        credentialId?.let { intent.putExtra(WebAuthnCredentialActivity.EXTRA_CREDENTIAL_ID, it) }
-        val requestCode = credentialId?.contentHashCode() ?: action.hashCode()
-        return PendingIntent.getActivity(
-            this,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-    }
-
     override fun onDestroy() {
         executor.shutdownNow()
         super.onDestroy()
     }
+}
+
+/** Mutable only because Credential Manager must fill its provider request into the explicit intent. */
+@RequiresApi(34)
+internal fun credentialEntryPendingIntent(
+    context: android.content.Context,
+    action: String,
+    credentialId: ByteArray?,
+): PendingIntent {
+    val intent = Intent(context, WebAuthnCredentialActivity::class.java).setAction(action)
+    credentialId?.let { intent.putExtra(WebAuthnCredentialActivity.EXTRA_CREDENTIAL_ID, it) }
+    val requestCode = credentialId?.contentHashCode() ?: action.hashCode()
+    return PendingIntent.getActivity(
+        context,
+        requestCode,
+        intent,
+        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 }

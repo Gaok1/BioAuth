@@ -128,14 +128,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                 }
             },
         )
-        val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .setSubtitle(subtitle)
-            .setDescription(description)
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("Cancelar")
-            .setConfirmationRequired(true)
-            .build()
+        val info = webAuthnPromptInfo(title, subtitle, description)
         if (crypto == null) prompt?.authenticate(info) else prompt?.authenticate(info, crypto)
     }
 
@@ -211,3 +204,16 @@ class WebAuthnCredentialActivity : FragmentActivity() {
         const val EXTRA_CREDENTIAL_ID = "credential_id"
     }
 }
+
+internal fun webAuthnPromptInfo(
+    title: String,
+    subtitle: String,
+    description: String?,
+): BiometricPrompt.PromptInfo = BiometricPrompt.PromptInfo.Builder()
+    .setTitle(title)
+    .setSubtitle(subtitle)
+    .setDescription(description)
+    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+    .setNegativeButtonText("Cancelar")
+    .setConfirmationRequired(true)
+    .build()

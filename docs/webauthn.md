@@ -81,6 +81,23 @@ when a snapshot changes (or its verification date needs refreshing). CI checks
 the committed hashes and rejects snapshots older than 45 days. Both remain
 release-reviewed snapshots: trust is never expanded by a runtime fetch.
 
+## Android instrumentation boundary
+
+`CredentialProviderInstrumentationTest` runs on a Google APIs Android 15
+emulator in CI. It asks the platform Credential Manager to recognize an enabled
+`BioAuthCredentialProviderService`, verifies the system-only bind permission and
+public-key capability, and checks that selection uses a mutable explicit
+`PendingIntent` targeting the non-exported provider activity. It also exercises
+`CallingAppInfo.getOrigin()` with the installed test certificate, the native-app
+asset-links package/certificate decision, and the production prompt policy of
+`BIOMETRIC_STRONG` with confirmation.
+
+This is intentionally still a partial gate: the emulator test does not select
+an entry in the system sheet, complete a fingerprint prompt, or trust a live RP
+over HTTPS. Those remain part of the physical/manual matrix below; injected
+asset-links content tests the authorization decision without turning a public
+website into a CI dependency.
+
 Every assertion uses a Keystore `Signature` inside `BiometricPrompt`. Desktop
 requests first appear as a notification containing the origin; tapping it opens
 the biometric flow whose subtitle repeats RP ID and origin. No challenge,

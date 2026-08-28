@@ -34,7 +34,7 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | Pareamento e transporte LAN/QR | 🧪 | Código dos dois lados existe; falta certificar dispositivos/redes reais |
 | BLE Android ↔ Linux | 🧪 | Cliente GATT e servidor BlueZ existem; falta teste físico e de OEM |
 | Sessões Android em background | 🧪 | Foreground service existe; falta matriz de fabricantes/task removal |
-| Passkeys Android | 🧪 | Credential Provider + Keystore implementados; falta instrumentação e matriz real |
+| Passkeys Android | 🧪 | Credential Provider + Keystore implementados; instrumentação API 35 cobre registro e fronteiras, mas falta cerimônia completa e matriz real |
 | Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; instalação ainda é manual e sem teste de navegador real |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
 | File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
@@ -128,7 +128,7 @@ dados. Reabrir somente com evidência de assimetria que o reparing não resolva.
 | WEB-05 | P0 | ✅ | O parser Android valida `authenticatorSelection`, `residentKey`, `userVerification` e `attestation`; rejeita attachment/attestation/valores incompatíveis antes da cerimônia. Criação suporta somente `credProps` e responde `rk: true`; demais extensions e extensions de assertion falham explicitamente. Coberto por teste Kotlin. |
 | WEB-06 | P1 | ✅ | `Ajustes → Passkeys` lista RP/conta/data e saúde da chave. O inventário Android cruza metadata com aliases `bioauth_webauthn_v1_`, sinaliza chave ausente/inválida e alias órfão; exclusão exige `BIOMETRIC_STRONG` e remove primeiro o alias, depois a metadata retryable. Coberto por testes de channel/widget e build Kotlin. |
 | WEB-07 | P1 | ✅ | Credential Manager publica uma entry por conta discoverable; o relay desktop agora mostra seletor no telefone quando mais de uma passkey combina e só então inicializa a assinatura da escolhida. `mediation: "conditional"` permanece decisão explícita de fallback ao autenticador nativo do browser. |
-| WEB-08 | P1 | ⬜ | Testes instrumentados Android 14+ para Credential Provider, PendingIntent, BiometricPrompt, caller privilegiado e asset links. Teste unitário de parser não valida integração do sistema. |
+| WEB-08 | P1 | 🧪 | Instrumentação API 35 verifica registro/habilitação pelo Credential Manager real, permissão de bind, capability, activity privada, `PendingIntent` mutável explícito, política `BIOMETRIC_STRONG`, caller privilegiado com certificado instalado e asset links com package/certificado reais. O job de emulador está no CI; ainda faltam seleção do sistema + prompt biométrico concluído e fetch HTTPS real, portanto não é ✅. |
 | WEB-09 | P1 | ✅ | Passkeys permanecem device-bound/sem sync neste corte. O onboarding avisa “sem backup” e exige manter outro método de acesso em cada RP; os prompts `BIOMETRIC_STRONG` de criação via Credential Manager e relay desktop repetem o aviso antes de criar a chave. |
 | WEB-10 | P1 | ✅ | `scripts/update_android_trust_snapshots.py` baixa apenas as fontes HTTPS canônicas, limita/valida conteúdo, registra SHA-256 e idade em `trust-snapshots.json` e grava atomicamente. Workflow semanal testa a fronteira Android e abre PR com o diff; CI alerta após 45 dias. Nada é buscado em runtime. |
 | WEB-11 | P1 | ✅ | A revisão em `docs/webauthn.md` enumera cada fronteira, confiança e risco residual. O bridge isolado agora repete Permissions Policy contra evento DOM forjado; worker deriva origin de `sender.url` e revalida shape; manifests limitam IDs; host rejeita >128 KiB antes de alocar e agent limita options a 6.000 bytes. Testes Node/Rust cobrem os gates. |
@@ -247,7 +247,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 | REL-03 | P0 | ✅ | `SECURITY.md` define disclosure privado, escopo, prazos e resposta a incidentes; `PRIVACY.md` documenta armazenamento local, tráfego LAN/BLE/asset links, logs, retenção e contato. Ambos estão ligados no README. |
 | REL-04 | P0 | ⬜ | Revisão externa do protocolo novo de vault/locker, container, recovery e fronteiras de autofill antes de declarar produção. A revisão existente do código pelo próprio projeto não substitui isso. O container do locker (`docs/locker-format.md`) é o primeiro item da fila. |
 | REL-05 | P0 | ⬜ | Fuzz/property tests para CBOR, handshake, native messaging, frames vault/locker, importadores e container de arquivos, com limites de CPU/memória. |
-| REL-06 | P1 | ⬜ | CI em Windows além de Ubuntu; Android instrumentation em emulador/API suportada; job iOS apenas quando iOS entrar no escopo. |
+| REL-06 | P1 | 🧪 | CI ganhou instrumentação Android em emulador Google APIs/API 35. Ainda falta CI Windows; job iOS entra apenas quando iOS voltar ao escopo. |
 | REL-07 | P1 | ⬜ | Code signing do instalador Windows, assinatura/verificação de updates e checksums dos artefatos Linux. |
 | REL-08 | P1 | ⬜ | SBOM, auditoria automática de dependências/licenças e processo de atualização de Flutter/Rust/Electron sem quebrar stores. |
 | REL-09 | P1 | ⬜ | Testes de acessibilidade, leitor de tela, teclado, contraste e localização consistente. Operações críticas não podem depender só de cor/ícone. |
@@ -297,6 +297,9 @@ próprios.
 - `flutter analyze`: limpo. A suíte mobile soma **144 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
   **30 testes Kotlin**.
+- `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
+  **5 testes instrumentados** são executados pelo job API 35, não contados como
+  aprovados localmente sem emulador.
 - O drill de recuperação (`FLK-06`) roda pelo binário, sem agent e sem telefone.
 - Limitações confirmadas em código: plugin iOS é scaffold, native host depende
   de instalação manual, conditional mediation usa o autenticador nativo,
