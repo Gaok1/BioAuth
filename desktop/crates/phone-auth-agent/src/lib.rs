@@ -14,6 +14,7 @@ pub mod config;
 pub mod framing;
 pub mod identity;
 pub mod ipc;
+pub mod locker;
 pub mod paths;
 pub mod qr_network;
 pub mod service;

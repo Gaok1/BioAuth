@@ -94,6 +94,80 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
     );
   }
 
+  @override
+  Future<LockerKeyStatus> generateLockerKey() async => _lockerStatus(
+    await methodChannel.invokeMapMethod<String, Object?>('generateLockerKey'),
+  );
+
+  @override
+  Future<LockerKeyStatus> getLockerKeyStatus() async => _lockerStatus(
+    await methodChannel.invokeMapMethod<String, Object?>('lockerKeyStatus'),
+  );
+
+  @override
+  Future<Uint8List> wrapLockerKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List dataKey,
+    required String fileName,
+    required String verifierName,
+  }) async {
+    final response = await methodChannel.invokeMapMethod<String, Object?>(
+      'lockerWrapKey',
+      {
+        'binding': binding,
+        'credentialId': credentialId,
+        'dataKey': dataKey,
+        'fileName': fileName,
+        'verifierName': verifierName,
+      },
+    );
+    final wrapper = response?['wrapper'];
+    if (wrapper is! Uint8List || wrapper.isEmpty) {
+      throw const FormatException('Wrapper de locker inválido');
+    }
+    return wrapper;
+  }
+
+  @override
+  Future<Uint8List> unwrapLockerKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String fileName,
+    required String verifierName,
+    bool rekeying = false,
+  }) async {
+    final response = await methodChannel.invokeMapMethod<String, Object?>(
+      'lockerUnwrapKey',
+      {
+        'binding': binding,
+        'credentialId': credentialId,
+        'wrapper': wrapper,
+        'fileName': fileName,
+        'verifierName': verifierName,
+        'rekeying': rekeying,
+      },
+    );
+    final dataKey = response?['dataKey'];
+    if (dataKey is! Uint8List || dataKey.length != 32) {
+      throw const FormatException('Chave de locker inválida');
+    }
+    return dataKey;
+  }
+
+  LockerKeyStatus _lockerStatus(Map<String, Object?>? response) {
+    if (response == null) {
+      throw const FormatException('Estado da chave de locker ausente');
+    }
+    return LockerKeyStatus(
+      keyExists: _bool(response, 'keyExists'),
+      hardwareBacked: _bool(response, 'hardwareBacked'),
+      strongBoxBacked: _bool(response, 'strongBoxBacked'),
+      strongBiometrics: _bool(response, 'strongBiometrics'),
+    );
+  }
+
   DevicePublicKey _publicKey(Map<String, Object?>? response) {
     final bytes = response?['publicKey'];
     final algorithm = response?['algorithm'];

@@ -4,9 +4,12 @@
 //! wait for one answer, check a signature — and a single lock keeps the replay
 //! guard and the pairing store consistent without a scheduler.
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use phone_auth_locker::{LockPlan, UnlockKey};
 
 use phone_auth_session::ServerBootstrap;
 
@@ -21,11 +24,13 @@ use phone_auth_verifier::{
 };
 
 use crate::api::{
-    AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, PairingBootstrap,
-    PermissionSummary, StatusPayload, WebAuthnParams, WebAuthnResult,
+    AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
+    LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
+    PairingBootstrap, PermissionSummary, StatusPayload, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::config::AgentConfig;
+use crate::locker::PhoneCustodian;
 use crate::paths::Paths;
 use crate::transport::{Transport, TransportAvailability, TransportRegistry};
 
@@ -715,6 +720,397 @@ impl Service {
             )),
         }
     }
+
+    /// Locks a file, with the phone wrapping the container's data key.
+    ///
+    /// The plaintext is removed last, after the container has been written and
+    /// verified *and* the recovery code has been written where the caller
+    /// asked. Losing the code and the original in the same step is exactly the
+    /// failure this ordering exists to prevent.
+    pub fn locker_lock(
+        &mut self,
+        params: &LockerLockParams,
+    ) -> Result<LockerLockResult, ServiceError> {
+        let source = absolute_path(&params.path)?;
+        let recovery_path = absolute_path(&params.recovery_code_path)?;
+        // Claimed up front: finding out the code has nowhere to go after the
+        // container exists would be finding out too late.
+        let recovery_slot = claim_recovery_file(&recovery_path)?;
+
+        let (device_id, credential_id) =
+            self.select_locker_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        // Never `remove_original` here: this call returns before the recovery
+        // code has been stored, and the engine would already have deleted it.
+        let plan = LockPlan {
+            destination: None,
+            remove_original: false,
+        };
+        let outcome = {
+            let mut custodian = PhoneCustodian::new(
+                &mut session,
+                self.config.verifier_name.clone(),
+                credential_id.clone(),
+            );
+            phone_auth_locker::lock_file(&source, &plan, &mut custodian)
+        };
+        let _ = session.close();
+
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let error = locker_error(error);
+                self.record_locker(&source, "lock", &device_name, development, Err(&error));
+                return Err(error);
+            }
+        };
+        recovery_slot.write(&outcome.recovery_code)?;
+
+        let original_removed = !params.keep_original && {
+            std::fs::remove_file(&source)
+                .map_err(|error| ServiceError::new("io-failed", error.to_string()))?;
+            true
+        };
+        self.record_locker(&source, "lock", &device_name, development, Ok(()));
+
+        Ok(LockerLockResult {
+            container: outcome.container.to_string_lossy().into_owned(),
+            recovery_code_path: recovery_path.to_string_lossy().into_owned(),
+            plaintext_len: outcome.plaintext_len,
+            original_removed,
+            device_name,
+            development,
+        })
+    }
+
+    /// Unlocks a container with the phone. The offline recovery path does not
+    /// come through here: it runs in the caller's own process, with no agent
+    /// and no session, which is the whole point of having it.
+    pub fn locker_unlock(
+        &mut self,
+        params: &LockerUnlockParams,
+    ) -> Result<LockerUnlockResult, ServiceError> {
+        let container = absolute_path(&params.path)?;
+        let destination = params
+            .destination_dir
+            .as_deref()
+            .map(absolute_path)
+            .transpose()?;
+
+        let (device_id, credential_id) =
+            self.select_locker_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let outcome = {
+            let mut custodian = PhoneCustodian::new(
+                &mut session,
+                self.config.verifier_name.clone(),
+                credential_id,
+            );
+            phone_auth_locker::unlock_file(
+                &container,
+                destination.as_deref(),
+                !params.keep_container,
+                UnlockKey::Phone(&mut custodian),
+            )
+        };
+        let _ = session.close();
+
+        match outcome {
+            Ok(outcome) => {
+                self.record_locker(&container, "unlock", &device_name, development, Ok(()));
+                Ok(LockerUnlockResult {
+                    restored: outcome.restored.to_string_lossy().into_owned(),
+                    plaintext_len: outcome.plaintext_len,
+                    container_removed: outcome.container_removed,
+                    device_name,
+                    development,
+                })
+            }
+            Err(error) => {
+                let error = locker_error(error);
+                self.record_locker(&container, "unlock", &device_name, development, Err(&error));
+                Err(error)
+            }
+        }
+    }
+
+    /// Binds an existing container to this phone's current key, optionally
+    /// issuing a new recovery code.
+    pub fn locker_rekey(
+        &mut self,
+        params: &LockerRekeyParams,
+    ) -> Result<LockerRekeyResult, ServiceError> {
+        let container = absolute_path(&params.path)?;
+        let recovery_slot = match (params.new_recovery_code, &params.recovery_code_path) {
+            (true, Some(path)) => Some(claim_recovery_file(&absolute_path(path)?)?),
+            (true, None) => {
+                return Err(ServiceError::new(
+                    "bad-request",
+                    "a new recovery code needs a path to be written to",
+                ))
+            }
+            (false, _) => None,
+        };
+
+        let (device_id, credential_id) =
+            self.select_locker_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let outcome = {
+            let mut custodian = PhoneCustodian::new(
+                &mut session,
+                self.config.verifier_name.clone(),
+                credential_id,
+            )
+            .rekeying();
+            phone_auth_locker::rekey_file(
+                &container,
+                &mut custodian,
+                None,
+                params.new_recovery_code,
+            )
+        };
+        let _ = session.close();
+
+        let code = match outcome {
+            Ok(code) => code,
+            Err(error) => {
+                let error = locker_error(error);
+                self.record_locker(&container, "rekey", &device_name, development, Err(&error));
+                return Err(error);
+            }
+        };
+        let recovery_code_path = match (recovery_slot, code) {
+            (Some(slot), Some(code)) => {
+                let path = slot.path().to_string_lossy().into_owned();
+                slot.write(&code)?;
+                Some(path)
+            }
+            _ => None,
+        };
+        self.record_locker(&container, "rekey", &device_name, development, Ok(()));
+
+        Ok(LockerRekeyResult {
+            container: container.to_string_lossy().into_owned(),
+            recovery_code_path,
+            device_name,
+            development,
+        })
+    }
+
+    /// Picks the credential that may wrap locker keys.
+    ///
+    /// A named credential still has to hold the `FileLocker` purpose: an IPC
+    /// caller must not be able to point the locker at the credential that
+    /// authorizes `sudo`.
+    fn select_locker_credential(
+        &self,
+        credential_id: Option<&str>,
+    ) -> Result<(String, String), ServiceError> {
+        let store = self.verifier.store();
+        let purpose = CredentialPurpose::for_service("locker");
+
+        if let Some(requested) = credential_id {
+            let (device, credential) = store.find_credential(requested).ok_or_else(|| {
+                ServiceError::new("unknown-credential", format!("no credential `{requested}`"))
+            })?;
+            if credential.purpose != purpose {
+                return Err(ServiceError::new(
+                    "policy-denied",
+                    format!("credential `{requested}` is not a file-locker credential"),
+                ));
+            }
+            return Ok((device.device_id.clone(), requested.to_owned()));
+        }
+
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        for device in store.devices() {
+            for credential in &device.credentials {
+                if credential.purpose == purpose {
+                    candidates.push((device.device_id.clone(), credential.credential_id.clone()));
+                }
+            }
+        }
+        match candidates.len() {
+            0 if store.is_empty() => Err(ServiceError::new(
+                "not-paired",
+                "no phone is paired with this computer",
+            )),
+            0 => Err(ServiceError::new(
+                "policy-denied",
+                "no paired credential is enrolled for the file locker",
+            )),
+            1 => Ok(candidates.remove(0)),
+            _ => Err(ServiceError::new(
+                "ambiguous-credential",
+                format!(
+                    "{} credentials could open this; pass credentialId to choose",
+                    candidates.len()
+                ),
+            )),
+        }
+    }
+
+    fn device_name(&self, device_id: &str) -> String {
+        self.verifier
+            .store()
+            .device(device_id)
+            .map(|device| device.display_name.clone())
+            .unwrap_or_else(|| device_id.to_owned())
+    }
+
+    /// Records that a locker operation happened.
+    ///
+    /// The file's name is recorded, never its contents, its key, or the path
+    /// of a recovery code.
+    fn record_locker(
+        &mut self,
+        path: &Path,
+        action: &str,
+        device_name: &str,
+        development: bool,
+        result: Result<(), &ServiceError>,
+    ) {
+        let entry = AuditEntry {
+            at_ms: now_ms(),
+            outcome: match result {
+                Ok(()) => Outcome::Granted,
+                Err(error) if error.code == "declined" => Outcome::Denied,
+                Err(_) => Outcome::Failed,
+            },
+            request_id: random::request_id(),
+            service: "locker".into(),
+            action: action.into(),
+            resource: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            user: String::new(),
+            device_name: device_name.to_owned(),
+            origin: String::new(),
+            detail: result.err().map(|error| error.message.clone()),
+            development,
+        };
+        if let Err(error) = self.audit.append(&entry) {
+            eprintln!("phone-auth-agent: could not write audit entry: {error}");
+        }
+    }
+}
+
+/// Rejects a relative path rather than resolving it against the agent's own
+/// working directory, which is not the caller's and has no reason to be.
+fn absolute_path(path: &str) -> Result<PathBuf, ServiceError> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err(ServiceError::new(
+            "bad-request",
+            "locker paths must be absolute",
+        ));
+    }
+    Ok(path)
+}
+
+/// A recovery-code file claimed before the work starts.
+///
+/// Created empty and exclusively, so the name is taken and the directory is
+/// known to be writable before there is a container whose only other key lives
+/// on a phone.
+struct RecoverySlot {
+    path: PathBuf,
+    written: bool,
+}
+
+impl RecoverySlot {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn write(mut self, code: &str) -> Result<(), ServiceError> {
+        std::fs::write(&self.path, format!("{code}\n"))
+            .map_err(|error| ServiceError::new("io-failed", error.to_string()))?;
+        self.written = true;
+        Ok(())
+    }
+}
+
+impl Drop for RecoverySlot {
+    fn drop(&mut self) {
+        if !self.written {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn claim_recovery_file(path: &Path) -> Result<RecoverySlot, ServiceError> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                ServiceError::new(
+                    "recovery-file-exists",
+                    "that recovery code file already exists; choose another path",
+                )
+            } else {
+                ServiceError::new("io-failed", error.to_string())
+            }
+        })?;
+    restrict_to_owner(&file);
+    Ok(RecoverySlot {
+        path: path.to_path_buf(),
+        written: false,
+    })
+}
+
+/// A recovery code is a key. On Unix that means 0600; on Windows the file
+/// inherits the directory's ACL, and the CLI tells the user to move it
+/// somewhere that is not this computer.
+#[cfg(unix)]
+fn restrict_to_owner(file: &std::fs::File) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_file: &std::fs::File) {}
+
+/// Maps an engine error to a stable IPC code, without repeating anything the
+/// engine deliberately refused to say.
+fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
+    use phone_auth_locker::LockerError as Error;
+    let code = match &error {
+        Error::Denied(_) => "declined",
+        Error::Corrupt => "corrupt-container",
+        Error::NotAContainer | Error::UnsupportedVersion(_) | Error::Malformed(_) => {
+            "not-a-container"
+        }
+        Error::TooLarge { .. } => "container-too-large",
+        Error::NoWrapper(_) => "no-wrapper",
+        Error::BadRecoveryCode => "bad-recovery-code",
+        Error::UnsafeName => "unsafe-name",
+        Error::DestinationExists(_) => "destination-exists",
+        Error::InputChanged => "input-changed",
+        Error::Io(_) => "io-failed",
+    };
+    ServiceError::new(code, error.to_string())
 }
 
 const WEBAUTHN_MAGIC: &[u8] = b"BAWA1\n";
@@ -798,6 +1194,8 @@ fn map_purpose(purpose: phone_auth_protocol::CredentialPurpose) -> CredentialPur
         phone_auth_protocol::CredentialPurpose::Authorization => CredentialPurpose::Authorization,
         phone_auth_protocol::CredentialPurpose::DiskUnlock => CredentialPurpose::DiskUnlock,
         phone_auth_protocol::CredentialPurpose::WebAuthn => CredentialPurpose::WebAuthn,
+        phone_auth_protocol::CredentialPurpose::Vault => CredentialPurpose::Vault,
+        phone_auth_protocol::CredentialPurpose::FileLocker => CredentialPurpose::FileLocker,
     }
 }
 

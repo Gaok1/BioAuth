@@ -682,6 +682,7 @@ dependencies = [
  "bluer",
  "futures",
  "p256",
+ "phone-auth-locker",
  "phone-auth-protocol",
  "phone-auth-session",
  "phone-auth-verifier",
@@ -696,6 +697,7 @@ name = "phone-auth-cli"
 version = "0.1.4"
 dependencies = [
  "phone-auth-agent",
+ "phone-auth-locker",
  "serde_json",
 ]
 
@@ -705,6 +707,18 @@ version = "0.1.4"
 dependencies = [
  "phone-auth-protocol",
  "phone-auth-verifier",
+]
+
+[[package]]
+name = "phone-auth-locker"
+version = "0.1.4"
+dependencies = [
+ "chacha20poly1305",
+ "getrandom 0.2.17",
+ "hkdf",
+ "phone-auth-protocol",
+ "sha2",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,0 +1,19 @@
+[package]
+name = "phone-auth-locker"
+description = "File Locker container: chunked authenticated encryption, key wrappers and loss-free writes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# The container format is shared with nothing else, so this crate owns its own
+# bytes the way `phone-auth-protocol` owns the wire format. It reuses that
+# crate's canonical CBOR primitives rather than pulling in a second encoder
+# with different rules.
+[dependencies]
+phone-auth-protocol.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+zeroize = "1"

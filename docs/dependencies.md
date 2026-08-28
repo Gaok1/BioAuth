@@ -64,6 +64,27 @@ runs formatting, Clippy, and the full workspace test suite. Network/TLS crates
 will be selected only when `QrNetworkTransport` is implemented; TLS will not
 be reimplemented by PhoneAuth.
 
+### File Locker
+
+`phone-auth-locker` adds no crate the workspace was not already building. It
+reuses `chacha20poly1305`, `hkdf`, `sha2` and `getrandom` — the same primitives
+the secure channel uses — and declares `zeroize`, which was already in
+`Cargo.lock` as a transitive dependency of the AEAD stack. The container's CBOR
+comes from `phone-auth-protocol` rather than a second encoder, so both formats
+obey one set of canonicality rules.
+
+Three things were deliberately **not** added:
+
+- an Argon2/scrypt crate: the recovery secret is 256 random bits rendered as a
+  code, so there is no low-entropy passphrase for a KDF to defend;
+- `libc`/`windows-sys` for `mlock`/`VirtualLock`: keys are wiped on drop, but
+  pages are not pinned. The realistic path from a key in RAM to an attacker is
+  a process that can already read that RAM, and swap is what full-disk
+  encryption is for;
+- a streaming-AEAD helper: the chunk construction is a counter, a final-block
+  flag and one AAD value, and writing those out keeps the format readable next
+  to its specification.
+
 ## Review rule
 
 Before adding or upgrading a package, record maintenance activity, current

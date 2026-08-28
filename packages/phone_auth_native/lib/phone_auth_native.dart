@@ -183,6 +183,72 @@ class SecurityCapabilities {
   final BiometricCapabilities biometrics;
 }
 
+class LockerKeyStatus {
+  const LockerKeyStatus({
+    required this.keyExists,
+    required this.hardwareBacked,
+    required this.strongBoxBacked,
+    required this.strongBiometrics,
+  });
+
+  final bool keyExists;
+  final bool hardwareBacked;
+  final bool strongBoxBacked;
+  final bool strongBiometrics;
+
+  /// Se o telefone pode servir de guardião de chaves de locker.
+  ///
+  /// Uma chave que não é de hardware não protege nada contra alguém com o
+  /// aparelho, e sem biometria forte não existe o gesto por uso que a `DEC-04`
+  /// exige.
+  bool get usable => keyExists && hardwareBacked && strongBiometrics;
+}
+
+/// A metade da chave do File Locker que o app usa.
+///
+/// A chave é exclusiva do locker: nunca a de assinatura, nunca a do cofre. É
+/// AES-GCM no Keystore, exige biometria forte a cada uso e é invalidada quando
+/// a biometria é recadastrada.
+class PhoneAuthLockerKey {
+  const PhoneAuthLockerKey();
+
+  Future<LockerKeyStatus> generate() =>
+      PhoneAuthNativePlatform.instance.generateLockerKey();
+
+  Future<LockerKeyStatus> status() =>
+      PhoneAuthNativePlatform.instance.getLockerKeyStatus();
+
+  Future<Uint8List> wrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List dataKey,
+    required String fileName,
+    required String verifierName,
+  }) => PhoneAuthNativePlatform.instance.wrapLockerKey(
+    binding: Uint8List.fromList(binding),
+    credentialId: credentialId,
+    dataKey: Uint8List.fromList(dataKey),
+    fileName: fileName,
+    verifierName: verifierName,
+  );
+
+  Future<Uint8List> unwrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String fileName,
+    required String verifierName,
+    bool rekeying = false,
+  }) => PhoneAuthNativePlatform.instance.unwrapLockerKey(
+    binding: Uint8List.fromList(binding),
+    credentialId: credentialId,
+    wrapper: Uint8List.fromList(wrapper),
+    fileName: fileName,
+    verifierName: verifierName,
+    rekeying: rekeying,
+  );
+}
+
 class PhoneAuthBlePermissions {
   const PhoneAuthBlePermissions();
 

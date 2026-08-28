@@ -4,6 +4,7 @@ members = [
     "crates/phone-auth-protocol",
     "crates/phone-auth-session",
     "crates/phone-auth-verifier",
+    "crates/phone-auth-locker",
     "crates/phone-auth-agent",
     "crates/phone-auth-cli",
     "crates/phone-auth-initrd",
@@ -19,6 +20,7 @@ license = "MIT"
 phone-auth-protocol = { path = "crates/phone-auth-protocol" }
 phone-auth-session = { path = "crates/phone-auth-session" }
 phone-auth-verifier = { path = "crates/phone-auth-verifier" }
+phone-auth-locker = { path = "crates/phone-auth-locker" }
 phone-auth-agent = { path = "crates/phone-auth-agent" }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 sha2 = { version = "0.10", default-features = false }

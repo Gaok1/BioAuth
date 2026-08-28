@@ -41,9 +41,27 @@ COMMANDS:
                                Ask for an authorization and exit 0 only if it
                                was granted
 
+    locker lock <FILE> --recovery-out <FILE>
+                               Encrypt a file. The phone wraps the key; the
+                               recovery code is written to --recovery-out and
+                               shown nowhere else. The plaintext is removed
+                               once the container is written and verified.
+    locker unlock <FILE>       Decrypt a container with the phone
+    locker unlock <FILE> --recovery-file <FILE>
+                               Decrypt with the offline recovery code. Runs
+                               here, without the agent and without a phone.
+    locker status <FILE>       Describe a container. Needs no key and no agent.
+    locker rekey <FILE>        Bind a container to this phone's current key
+
 OPTIONS:
     --root <DIR>               Override the agent's config/data/runtime root
     --credential <ID>          Choose which paired credential to use
+    --recovery-out <FILE>      Where to write a new recovery code
+    --recovery-file <FILE>     Read a recovery code from this file
+    --into <DIR>               Where to restore an unlocked file
+    --keep-original            Leave the plaintext in place after locking
+    --keep-container           Leave the container in place after unlocking
+    --new-recovery-code        Issue a new recovery code, retiring the old one
     --json                     Emit raw JSON instead of formatted text
     -h, --help                 Show this message
 
@@ -56,6 +74,9 @@ EXIT CODES:
 
 struct Cli {
     command: String,
+    /// Positional arguments after the command, in order. Only the locker
+    /// subcommands use them: `locker unlock <FILE>` is two of these.
+    args: Vec<String>,
     root: Option<std::path::PathBuf>,
     service: Option<String>,
     action: Option<String>,
@@ -64,6 +85,12 @@ struct Cli {
     credential: Option<String>,
     device: Option<String>,
     limit: Option<usize>,
+    recovery_out: Option<String>,
+    recovery_file: Option<String>,
+    into: Option<String>,
+    keep_original: bool,
+    keep_container: bool,
+    new_recovery_code: bool,
     json: bool,
     help: bool,
 }
@@ -73,6 +100,7 @@ fn parse() -> Result<Cli, String> {
     let command = args.next().unwrap_or_else(|| "help".to_owned());
     let mut cli = Cli {
         command,
+        args: Vec::new(),
         root: None,
         service: None,
         action: None,
@@ -81,6 +109,12 @@ fn parse() -> Result<Cli, String> {
         credential: None,
         device: None,
         limit: None,
+        recovery_out: None,
+        recovery_file: None,
+        into: None,
+        keep_original: false,
+        keep_container: false,
+        new_recovery_code: false,
         json: false,
         help: false,
     };
@@ -102,9 +136,16 @@ fn parse() -> Result<Cli, String> {
                         .map_err(|_| "--limit must be a number".to_owned())?,
                 )
             }
+            "--recovery-out" => cli.recovery_out = Some(value()?),
+            "--recovery-file" => cli.recovery_file = Some(value()?),
+            "--into" => cli.into = Some(value()?),
+            "--keep-original" => cli.keep_original = true,
+            "--keep-container" => cli.keep_container = true,
+            "--new-recovery-code" => cli.new_recovery_code = true,
             "--json" => cli.json = true,
             "-h" | "--help" => cli.help = true,
-            other => return Err(format!("unknown option `{other}`")),
+            other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
+            positional => cli.args.push(positional.to_owned()),
         }
     }
     Ok(cli)
@@ -127,6 +168,16 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> u8 {
+    // Two locker commands deliberately never touch the agent. Reading a
+    // container's header needs no key, and unlocking with a recovery code must
+    // work on a machine where the agent is not running and the phone is gone —
+    // that is the entire reason the recovery code exists.
+    if cli.command == "locker" {
+        if let Some(exit) = locker_without_the_agent(&cli) {
+            return exit;
+        }
+    }
+
     let paths = Paths::resolve(cli.root.clone());
     let mut client = match AgentClient::connect(&paths) {
         Ok(client) => client,
@@ -171,6 +222,7 @@ fn run(cli: Cli) -> u8 {
             }
         },
         "authorize" => authorize(&mut client, &cli),
+        "locker" => locker(&mut client, &cli),
         other => {
             eprintln!("phone-auth: unknown command `{other}`\n\n{USAGE}");
             EXIT_USAGE
@@ -261,6 +313,266 @@ fn authorize(client: &mut AgentClient, cli: &Cli) -> u8 {
             }
         }
     }
+}
+
+/// Handles the locker subcommands that must work with no agent at all.
+///
+/// Returns `None` when the command needs the phone after all, so the caller
+/// goes on to connect.
+fn locker_without_the_agent(cli: &Cli) -> Option<u8> {
+    let action = cli.args.first().map(String::as_str)?;
+    let target = cli.args.get(1).map(std::path::PathBuf::from);
+
+    match (action, target) {
+        ("status", Some(path)) => Some(locker_status(&path, cli.json)),
+        ("unlock", Some(path)) if cli.recovery_file.is_some() => Some(locker_recover(&path, cli)),
+        _ => None,
+    }
+}
+
+fn locker_status(path: &std::path::Path, as_json: bool) -> u8 {
+    let info = match phone_auth_locker::inspect(path) {
+        Ok(info) => info,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let wrappers: Vec<Value> = info
+        .wrappers
+        .iter()
+        .map(|wrapper| json!({ "kind": wrapper.kind.label(), "id": wrapper.id }))
+        .collect();
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "containerVersion": info.container_version,
+                "plaintextLen": info.plaintext_len,
+                "chunkSize": info.chunk_size,
+                "chunkCount": info.chunk_count,
+                "wrappers": wrappers,
+            }))
+            .unwrap_or_default()
+        );
+        return EXIT_GRANTED;
+    }
+
+    println!("container  version {}", info.container_version);
+    println!(
+        "contents   {} bytes in {} chunks",
+        info.plaintext_len, info.chunk_count
+    );
+    println!("\nways in");
+    for wrapper in &info.wrappers {
+        match wrapper.kind {
+            phone_auth_locker::WrapperKind::Phone => {
+                println!("  phone      credential {}", wrapper.id)
+            }
+            phone_auth_locker::WrapperKind::Recovery => println!("  recovery   offline code"),
+        }
+    }
+    if !info
+        .wrappers
+        .iter()
+        .any(|wrapper| wrapper.kind == phone_auth_locker::WrapperKind::Recovery)
+    {
+        println!("\nWARNING — this container has no recovery wrapper. Losing the phone loses it.");
+    }
+    EXIT_GRANTED
+}
+
+/// Unlocks with the offline recovery code, in this process.
+fn locker_recover(path: &std::path::Path, cli: &Cli) -> u8 {
+    let code_file = cli.recovery_file.as_ref().expect("checked by the caller");
+    let code = match std::fs::read_to_string(code_file) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("phone-auth: cannot read {code_file}: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let key = match phone_auth_locker::parse_recovery_code(&code) {
+        Ok(key) => key,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_DENIED;
+        }
+    };
+
+    let into = cli.into.as_ref().map(std::path::PathBuf::from);
+    match phone_auth_locker::unlock_file(
+        path,
+        into.as_deref(),
+        !cli.keep_container,
+        phone_auth_locker::UnlockKey::Recovery(&key),
+    ) {
+        Ok(outcome) => {
+            println!(
+                "restored {} ({} bytes)",
+                outcome.restored.display(),
+                outcome.plaintext_len
+            );
+            EXIT_GRANTED
+        }
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            EXIT_UNAVAILABLE
+        }
+    }
+}
+
+/// The locker subcommands that need the phone.
+fn locker(client: &mut AgentClient, cli: &Cli) -> u8 {
+    let (Some(action), Some(target)) = (cli.args.first(), cli.args.get(1)) else {
+        eprintln!("phone-auth: locker needs an action and a file, e.g. `locker lock notes.txt`");
+        return EXIT_USAGE;
+    };
+    let path = match absolute(target) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_USAGE;
+        }
+    };
+
+    let (method, params) = match action.as_str() {
+        "lock" => {
+            let Some(recovery_out) = &cli.recovery_out else {
+                eprintln!(
+                    "phone-auth: locker lock needs --recovery-out <FILE>.\n\
+                     phone-auth: the recovery code is the only way back in without the phone, \
+                     and it is shown nowhere else."
+                );
+                return EXIT_USAGE;
+            };
+            let recovery_out = match absolute(recovery_out) {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("phone-auth: {error}");
+                    return EXIT_USAGE;
+                }
+            };
+            (
+                "locker.lock",
+                json!({
+                    "path": path,
+                    "recoveryCodePath": recovery_out,
+                    "keepOriginal": cli.keep_original,
+                    "credentialId": cli.credential,
+                }),
+            )
+        }
+        "unlock" => (
+            "locker.unlock",
+            json!({
+                "path": path,
+                "keepContainer": cli.keep_container,
+                "credentialId": cli.credential,
+                "destinationDir": cli.into.as_deref().map(absolute).transpose().ok().flatten(),
+            }),
+        ),
+        "rekey" => {
+            let recovery_out = match cli.recovery_out.as_deref().map(absolute).transpose() {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("phone-auth: {error}");
+                    return EXIT_USAGE;
+                }
+            };
+            if cli.new_recovery_code && recovery_out.is_none() {
+                eprintln!("phone-auth: --new-recovery-code needs --recovery-out <FILE>");
+                return EXIT_USAGE;
+            }
+            (
+                "locker.rekey",
+                json!({
+                    "path": path,
+                    "credentialId": cli.credential,
+                    "newRecoveryCode": cli.new_recovery_code,
+                    "recoveryCodePath": recovery_out,
+                }),
+            )
+        }
+        other => {
+            eprintln!("phone-auth: unknown locker action `{other}`\n\n{USAGE}");
+            return EXIT_USAGE;
+        }
+    };
+
+    match client.call(method, params) {
+        Ok(value) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).unwrap_or_default()
+                );
+            } else {
+                print_locker(action, &value);
+            }
+            EXIT_GRANTED
+        }
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            match error.code() {
+                "declined" | "policy-denied" | "not-paired" | "bad-recovery-code" => EXIT_DENIED,
+                _ => EXIT_UNAVAILABLE,
+            }
+        }
+    }
+}
+
+fn print_locker(action: &str, value: &Value) {
+    match action {
+        "lock" => {
+            println!("locked   {}", value["container"].as_str().unwrap_or("?"));
+            println!(
+                "original {}",
+                if value["originalRemoved"].as_bool().unwrap_or(false) {
+                    "removed"
+                } else {
+                    "kept in place — the plaintext is still on this disk"
+                }
+            );
+            println!(
+                "\nrecovery code written to {}",
+                value["recoveryCodePath"].as_str().unwrap_or("?")
+            );
+            println!(
+                "MOVE IT OFF THIS COMPUTER. It is the only way into this file without the phone,\n\
+                 and next to the container it protects nothing."
+            );
+        }
+        "unlock" => {
+            println!("restored {}", value["restored"].as_str().unwrap_or("?"));
+            if !value["containerRemoved"].as_bool().unwrap_or(false) {
+                println!("container kept in place");
+            }
+        }
+        "rekey" => {
+            println!("rekeyed  {}", value["container"].as_str().unwrap_or("?"));
+            if let Some(path) = value["recoveryCodePath"].as_str() {
+                println!("\nnew recovery code written to {path}");
+                println!("The previous recovery code no longer opens this container.");
+            }
+        }
+        _ => {}
+    }
+    if value["development"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "phone-auth: WARNING — this was authorized by the development simulator, \
+             not by a phone"
+        );
+    }
+}
+
+/// Makes a path absolute without touching the filesystem, so the agent — which
+/// has its own working directory — resolves the same file the user meant.
+fn absolute(path: &str) -> Result<String, String> {
+    std::path::absolute(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("cannot resolve `{path}`: {error}"))
 }
 
 fn print_status(value: &Value) {

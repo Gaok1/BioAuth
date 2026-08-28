@@ -51,6 +51,10 @@ pub enum CredentialPurpose {
     DiskUnlock = 1,
     /// WebAuthn assertions. Never shared with desktop authorization keys.
     WebAuthn = 2,
+    /// Password-vault encryption and release operations.
+    Vault = 3,
+    /// File-locker key wrapping and release operations.
+    FileLocker = 4,
 }
 
 impl CredentialPurpose {
@@ -59,6 +63,8 @@ impl CredentialPurpose {
             0 => Ok(Self::Authorization),
             1 => Ok(Self::DiskUnlock),
             2 => Ok(Self::WebAuthn),
+            3 => Ok(Self::Vault),
+            4 => Ok(Self::FileLocker),
             other => Err(ProtocolError::InvalidPurpose(other)),
         }
     }
@@ -187,6 +193,8 @@ mod tests {
         assert_eq!(CredentialPurpose::Authorization as u64, 0);
         assert_eq!(CredentialPurpose::DiskUnlock as u64, 1);
         assert_eq!(CredentialPurpose::WebAuthn as u64, 2);
+        assert_eq!(CredentialPurpose::Vault as u64, 3);
+        assert_eq!(CredentialPurpose::FileLocker as u64, 4);
     }
 
     #[test]
@@ -196,6 +204,8 @@ mod tests {
                 CredentialPurpose::Authorization,
                 CredentialPurpose::DiskUnlock,
                 CredentialPurpose::WebAuthn,
+                CredentialPurpose::Vault,
+                CredentialPurpose::FileLocker,
             ] {
                 let original = Enrolment {
                     key_kind: kind,
