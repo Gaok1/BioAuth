@@ -21,6 +21,10 @@ on:
 
 permissions:
   contents: write
+  # Build provenance is signed with a short-lived certificate issued to this
+  # workflow run, so there is no key for anybody to hold or lose.
+  id-token: write
+  attestations: write
 
 env:
   FLUTTER_VERSION: 3.47.1
@@ -219,6 +223,11 @@ jobs:
     if: needs.gate.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
+    # Lifted to the job for the same reason the Android secrets are: the
+    # `secrets` context cannot be read inside a step `if`.
+    env:
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -258,6 +267,49 @@ jobs:
         run: |
           npm ci
           npx electron-builder --win --publish never
+
+      # Authenticode. Without it Windows shows "Unknown publisher" on every
+      # install and SmartScreen warns for as long as the download is rare —
+      # which teaches users to click through exactly the warning that would
+      # tell them about a substituted installer.
+      #
+      # Same shape as the Android rule: a dispatch may build unsigned to prove
+      # the workflow works, a publish may not.
+      - name: Sign the installer
+        id: authenticode
+        shell: bash
+        env:
+          PUBLISH: ${{ needs.gate.outputs.publish }}
+        run: |
+          configured=0
+          [ -n "$WINDOWS_CERT_BASE64" ] && configured=$((configured + 1))
+          [ -n "$WINDOWS_CERT_PASSWORD" ] && configured=$((configured + 1))
+
+          if [ "$configured" -eq 1 ]; then
+            echo "::error::Windows signing is only half configured"
+            exit 1
+          fi
+          if [ "$PUBLISH" = true ] && [ "$configured" -ne 2 ]; then
+            echo "::error::Published releases require both Windows signing secrets"
+            exit 1
+          fi
+          if [ "$configured" -eq 0 ]; then
+            echo "::warning::Building an unsigned installer; this run cannot publish"
+            exit 0
+          fi
+
+          printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/cert.pfx"
+          signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin"             -name signtool.exe -path '*x64*' | sort | tail -1)
+          [ -n "$signtool" ] || { echo "::error::signtool not found"; exit 1; }
+
+          for installer in desktop/dist/*.exe; do
+            "$signtool" sign //fd SHA256 //td SHA256               //tr http://timestamp.digicert.com               //f "$RUNNER_TEMP/cert.pfx" //p "$WINDOWS_CERT_PASSWORD"               "$installer"
+            # A signature that verifies now and expires with the certificate
+            # is not a signature anybody can check in two years. `//tr` is
+            # what makes it outlive the cert, and this proves it took.
+            "$signtool" verify //pa //v "$installer"
+          done
+          rm -f "$RUNNER_TEMP/cert.pfx"
 
       - name: Collect artifacts
         shell: bash
@@ -455,6 +507,20 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
+      # A checksum file served from the same place as the artifacts proves
+      # they were not corrupted in transit. It proves nothing about
+      # substitution: whoever could replace the download could replace the
+      # list of hashes beside it.
+      #
+      # Provenance closes that. Each artifact is signed with a certificate
+      # issued to this workflow run and logged publicly, so `gh attestation
+      # verify` can say which commit and which workflow produced a file. No
+      # key exists for the project to hold, lose, or have taken.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+
       # `tag_name` is explicit because on a push to main the ref is a branch.
       # The action creates the tag at this commit as part of creating the
       # release, so the tag only ever exists for a build that got this far.
@@ -477,10 +543,23 @@ jobs:
             | NixOS | `nix build github:${{ github.repository }}#default` |
             | Browser extension | `phoneauth-passkeys-*-*.zip` |
 
-            Verify what you downloaded against `SHA256SUMS.txt`.
+            ### Verifying a download
 
-            The Android artifact is signed with the project release key. The
-            workflow refuses to publish when any signing secret is absent.
+            `SHA256SUMS.txt` catches a corrupted download. It cannot catch a
+            substituted one — whoever could replace a file could replace the
+            list beside it. For that, every artifact here carries signed build
+            provenance:
+
+            ```
+            gh attestation verify <file> --repo ${{ github.repository }}
+            ```
+
+            That says which commit and which workflow run produced the file.
+
+            The Android APK is signed with the project release key and the
+            Windows installer with the project Authenticode certificate. The
+            workflow refuses to publish when any signing secret is absent, so
+            an unsigned artifact cannot reach a release.
 
             The extension zips are **store uploads, not installable files**.
             Chrome, Edge and Firefox each sign on their side. To install one
