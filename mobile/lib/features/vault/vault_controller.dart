@@ -160,6 +160,21 @@ class VaultController extends ChangeNotifier {
     return outcome;
   }
 
+  /// Writes an already-previewed import into the vault.
+  ///
+  /// Takes the items rather than the file: parsing and reporting happen on the
+  /// screen, and the user has seen what would be added and what was refused
+  /// before this is called. Goes through the same additive [VaultStore.restore]
+  /// a backup does, so an import cannot delete anything either.
+  Future<VaultRestoreOutcome?> importItems(List<VaultItemInput> items) async {
+    VaultRestoreOutcome? outcome;
+    await _run(() async {
+      outcome = await _store.restore(items);
+      _items = await _store.listAll();
+    });
+    return outcome;
+  }
+
   Future<void> _mutate(Future<Object?> Function() action) => _run(() async {
     await action();
     _items = await _store.listAll();

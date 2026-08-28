@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/vault/vault_export.dart';
+import '../../core/vault/vault_import.dart';
 import 'vault_controller.dart';
 import 'vault_store.dart';
 
@@ -76,6 +77,33 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
               onPressed: _busy ? null : _restore,
               icon: const Icon(Icons.restore),
               label: const Text('Escolher arquivo…'),
+            ),
+
+            const Divider(height: 40),
+
+            Text(
+              'Importar de outro gerenciador',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Lê uma exportação do Bitwarden (JSON) ou um CSV com cabeçalho. '
+              'Você vê o que será adicionado e o que foi recusado antes de '
+              'qualquer coisa ser guardada.',
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'O arquivo de outro gerenciador está em texto claro. Apague-o do '
+              'telefone assim que terminar.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _import,
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Escolher exportação…'),
             ),
 
             if (_message case final message?) ...[
@@ -167,6 +195,50 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
     });
   }
 
+  Future<void> _import() async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'Exportação de gerenciador',
+          extensions: ['json', 'csv', 'txt'],
+        ),
+      ],
+    );
+    if (file == null || !mounted) return;
+
+    final VaultImportPreview preview;
+    try {
+      preview = await parseVaultImport(await file.readAsBytes());
+    } on VaultImportException catch (failure) {
+      setState(() => _message = failure.message);
+      return;
+    } on Object {
+      setState(() => _message = 'Não foi possível ler o arquivo.');
+      return;
+    }
+    if (!mounted) return;
+
+    // Nothing is written until this returns true. An importer that reported
+    // "412 imported" after the fact would be an importer whose mistakes the
+    // user finds out about from the vault.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _ImportPreviewDialog(preview: preview),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final outcome = await widget.controller.importItems(preview.items);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _message = outcome == null ? null : _describeRestore(outcome);
+    });
+  }
+
   String _describeRestore(VaultRestoreOutcome outcome) {
     if (outcome.added == 0 && outcome.skipped == 0) {
       return 'O backup estava vazio.';
@@ -251,6 +323,92 @@ class _CodeCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// What an import would do, before it does any of it.
+///
+/// The rejection list is the half that matters. An importer that only reports
+/// its successes leaves the user to discover the missing entries the next time
+/// they need one, which is the worst possible moment.
+class _ImportPreviewDialog extends StatelessWidget {
+  const _ImportPreviewDialog({required this.preview});
+
+  final VaultImportPreview preview;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Conferir a importação'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              preview.items.length == 1
+                  ? '1 item será adicionado.'
+                  : '${preview.items.length} itens serão adicionados.',
+              style: theme.textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Nada é apagado. Itens que este cofre já tem são ignorados.',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (preview.rejections.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                preview.rejections.length == 1
+                    ? '1 linha não será importada:'
+                    : '${preview.rejections.length} linhas não serão importadas:',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final rejection in preview.rejections.take(50))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          'linha ${rejection.row}'
+                          '${rejection.name.isEmpty ? '' : ' (${rejection.name})'}'
+                          ' — ${rejection.reason}',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    if (preview.rejections.length > 50)
+                      Text(
+                        '…e mais ${preview.rejections.length - 50}.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: preview.isEmpty
+              ? null
+              : () => Navigator.of(context).pop(true),
+          child: const Text('Importar'),
+        ),
+      ],
     );
   }
 }
