@@ -261,6 +261,60 @@ pub struct LockerRekeyResult {
     pub development: bool,
 }
 
+/// Ask the paired phone for the vault's metadata.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultListParams {
+    /// Which vault credential to use. Omitted when exactly one is enrolled.
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+/// One row of the desktop's vault list. Carries no secret.
+///
+/// This is the metadata the phone already agreed to hand over without a
+/// prompt. The secret for any of these rows costs a separate `vault.copy`,
+/// which the user approves on the device.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultItem {
+    /// Opaque and stable. The tray echoes it back and derives nothing from it.
+    pub id: String,
+    pub revision: u64,
+    /// `login` or `note`.
+    pub kind: String,
+    pub name: String,
+    pub username: String,
+    pub uri: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultListResult {
+    pub items: Vec<VaultItem>,
+    pub device_name: String,
+    pub development: bool,
+}
+
+/// Copy one stored secret to the clipboard, without it crossing IPC.
+///
+/// `expected_revision` is the revision of the row the user clicked. If the
+/// phone answers with a different one the copy is refused: the value would
+/// belong to a version edited elsewhere, and the user would be pasting
+/// something they never saw.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultCopyParams {
+    pub item_id: String,
+    pub expected_revision: u64,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// How long the clipboard entry lives before it is removed.
+    #[serde(default)]
+    pub clear_after_ms: Option<u64>,
+}
+
 /// Generate a password and put it straight on the clipboard.
 ///
 /// Every field is optional and falls back to the generator's own default, so a
@@ -294,7 +348,7 @@ pub struct VaultGenerateCopyParams {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultCopyResult {
-    /// How many characters were generated. Not which ones.
+    /// How many bytes were copied. Not which ones.
     pub length: usize,
     pub clears_at_ms: i64,
     /// The entry was marked to stay out of clipboard history.

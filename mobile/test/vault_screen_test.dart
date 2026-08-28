@@ -56,7 +56,7 @@ void main() {
   });
 }
 
-class _ScreenStore implements VaultStore {
+class _ScreenStore extends VaultStore {
   int fetches = 0;
   final item = VaultItemSummary(
     id: 'one',
@@ -69,7 +69,8 @@ class _ScreenStore implements VaultStore {
   );
 
   @override
-  Future<List<VaultItemSummary>> listAll() async => [item];
+  Future<VaultPage> listPage([String? cursor]) async =>
+      VaultPage(items: [item]);
 
   @override
   Future<VaultSecret> fetch(String id) async {
@@ -78,9 +79,13 @@ class _ScreenStore implements VaultStore {
   }
 
   @override
-  Future<void> create(VaultItemInput item) async {}
+  Future<VaultWrite> create(VaultItemInput item) async =>
+      const VaultWrite(id: 'created', revision: 1);
   @override
-  Future<void> update(VaultItemSummary current, VaultItemInput item) async {}
+  Future<VaultWrite> update(
+    VaultItemSummary current,
+    VaultItemInput item,
+  ) async => VaultWrite(id: current.id, revision: current.revision + 1);
   @override
   Future<void> delete(VaultItemSummary item) async {}
 }

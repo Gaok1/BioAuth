@@ -25,7 +25,8 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
-    SetPermissionsParams, VaultCopyResult, VaultGenerateCopyParams, WebAuthnParams,
+    SetPermissionsParams, VaultCopyParams, VaultCopyResult, VaultGenerateCopyParams,
+    VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
 use crate::password::{self, Policy};
@@ -368,10 +369,34 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
             Err(reply) => reply(id),
         },
 
-        // No vault store exists on this side yet, so the secret this copies is
-        // one the agent just generated. The clipboard path is identical for a
-        // fetched secret, which is what makes it worth wiring now rather than
-        // waiting for the store.
+        "vault.list" => match parse::<VaultListParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").vault_list(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // The secret goes from the phone into locked pages and then onto the
+        // clipboard. It never becomes part of this reply: `VaultCopyResult`
+        // has no field it could travel in.
+        "vault.copy" => match parse::<VaultCopyParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").vault_copy(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // Copies a password the agent just generated, for the case where there
+        // is nothing stored yet. The clipboard path below is the same one
+        // `vault.copy` uses for a fetched secret.
         "vault.generate-copy" => match parse::<VaultGenerateCopyParams>(call) {
             Ok(params) => vault_generate_copy(id, &params),
             Err(reply) => reply(id),
@@ -431,7 +456,14 @@ fn vault_generate_copy(id: u64, params: &VaultGenerateCopyParams) -> Reply {
                 memory_locked: secret.is_locked(),
             },
         ),
-        Err(error) => Reply::err(id, "clipboard-unavailable", error.to_string()),
+        // Mapped exactly as `vault.copy` maps it. A timeout outside the
+        // accepted range is the caller's mistake, and calling it
+        // `clipboard-unavailable` here and `bad-params` there would leave two
+        // adjacent methods disagreeing about the same failure.
+        Err(error) => {
+            let error = crate::service::clipboard_error(error);
+            Reply::err(id, error.code, error.message)
+        }
     }
 }
 
@@ -739,5 +771,44 @@ mod concurrent_client_tests {
         );
 
         assert!(refused.is_err(), "an empty alphabet must be refused");
+    }
+
+    /// With no phone paired there is no vault, and both methods have to say so.
+    ///
+    /// This is thin on purpose — the exchange itself is covered in
+    /// `vault::tests` against a scripted session. What it does prove is that
+    /// the two methods are reachable over the real socket and answer with a
+    /// refusal, rather than being unknown methods or an empty success.
+    #[test]
+    fn the_vault_methods_refuse_when_no_phone_is_paired() {
+        let (_service, paths) = start_agent("vault-unpaired");
+        let mut client = AgentClient::connect(&paths).expect("client");
+
+        for (method, params) in [
+            ("vault.list", json!({})),
+            (
+                "vault.copy",
+                json!({ "itemId": "item-1", "expectedRevision": 1 }),
+            ),
+        ] {
+            let refused = client.call(method, params).expect_err("must refuse");
+            assert_eq!(refused.code(), "not-paired", "{method}");
+        }
+    }
+
+    /// `vault.copy` names the revision it believes it is copying, so leaving it
+    /// out is a bad request rather than a copy of whatever the phone has.
+    #[test]
+    fn a_copy_without_an_expected_revision_is_refused() {
+        let (_service, paths) = start_agent("vault-copy-revision");
+        let mut client = AgentClient::connect(&paths).expect("client");
+
+        // `bad-params`, not `not-paired`: the field is missing, so this is
+        // refused while parsing, before any credential is looked up. Asserting
+        // only `is_err()` would pass even if the field became optional.
+        let refused = client
+            .call("vault.copy", json!({ "itemId": "item-1" }))
+            .expect_err("a copy with no revision must be refused");
+        assert_eq!(refused.code(), "bad-params");
     }
 }

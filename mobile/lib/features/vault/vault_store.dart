@@ -80,45 +80,69 @@ class VaultSecret {
   final String secret;
 }
 
-abstract interface class VaultStore {
-  Future<List<VaultItemSummary>> listAll();
-  Future<VaultSecret> fetch(String id);
-  Future<void> create(VaultItemInput item);
-  Future<void> update(VaultItemSummary current, VaultItemInput item);
-  Future<void> delete(VaultItemSummary item);
+class VaultWrite {
+  const VaultWrite({required this.id, required this.revision});
+
+  final String id;
+  final int revision;
 }
 
-class NativeVaultStore implements VaultStore {
-  const NativeVaultStore();
+class VaultPage {
+  const VaultPage({required this.items, this.nextCursor});
 
-  @override
+  final List<VaultItemSummary> items;
+  final String? nextCursor;
+}
+
+abstract class VaultStore {
+  const VaultStore();
+
+  Future<VaultPage> listPage([String? cursor]);
+
   Future<List<VaultItemSummary>> listAll() async {
     final result = <VaultItemSummary>[];
     String? cursor;
     final seen = <String>{};
     do {
-      final raw = await _channel.invokeMapMethod<Object?, Object?>('list', {
-        'cursor': ?cursor,
-      });
-      if (raw == null || raw['items'] is! List) {
-        throw const FormatException('Resposta inválida do cofre');
-      }
-      for (final value in raw['items']! as List) {
-        if (value is! Map) {
-          throw const FormatException('Item inválido no cofre');
-        }
-        result.add(VaultItemSummary.fromMap(value.cast<Object?, Object?>()));
-      }
-      final next = raw['nextCursor'];
-      if (next != null && next is! String) {
-        throw const FormatException('Cursor inválido do cofre');
-      }
-      cursor = next as String?;
+      final page = await listPage(cursor);
+      result.addAll(page.items);
+      cursor = page.nextCursor;
       if (cursor != null && (!seen.add(cursor) || seen.length > 32)) {
         throw const FormatException('Paginação inválida do cofre');
       }
     } while (cursor != null);
     return result;
+  }
+
+  Future<VaultSecret> fetch(String id);
+  Future<VaultWrite> create(VaultItemInput item);
+  Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item);
+  Future<void> delete(VaultItemSummary item);
+}
+
+class NativeVaultStore extends VaultStore {
+  const NativeVaultStore();
+
+  @override
+  Future<VaultPage> listPage([String? cursor]) async {
+    final raw = await _channel.invokeMapMethod<Object?, Object?>('list', {
+      'cursor': ?cursor,
+    });
+    if (raw == null || raw['items'] is! List) {
+      throw const FormatException('Resposta inválida do cofre');
+    }
+    final items = <VaultItemSummary>[];
+    for (final value in raw['items']! as List) {
+      if (value is! Map) {
+        throw const FormatException('Item inválido no cofre');
+      }
+      items.add(VaultItemSummary.fromMap(value.cast<Object?, Object?>()));
+    }
+    final next = raw['nextCursor'];
+    if (next != null && (next is! String || next.isEmpty)) {
+      throw const FormatException('Cursor inválido do cofre');
+    }
+    return VaultPage(items: items, nextCursor: next as String?);
   }
 
   @override
@@ -135,18 +159,27 @@ class NativeVaultStore implements VaultStore {
   }
 
   @override
-  Future<void> create(VaultItemInput item) async {
+  Future<VaultWrite> create(VaultItemInput item) async {
     _validate(item);
-    await _channel.invokeMethod<Object?>('create', {'item': item.toMap()});
+    return _write(
+      await _channel.invokeMapMethod<Object?, Object?>('create', {
+        'item': item.toMap(),
+      }),
+    );
   }
 
   @override
-  Future<void> update(VaultItemSummary current, VaultItemInput item) async {
+  Future<VaultWrite> update(
+    VaultItemSummary current,
+    VaultItemInput item,
+  ) async {
     _validate(item);
-    await _channel.invokeMethod<Object?>('update', {
-      'item': item.toMap(current.id),
-      'expectedRevision': current.revision,
-    });
+    return _write(
+      await _channel.invokeMapMethod<Object?, Object?>('update', {
+        'item': item.toMap(current.id),
+        'expectedRevision': current.revision,
+      }),
+    );
   }
 
   @override
@@ -169,6 +202,14 @@ class NativeVaultStore implements VaultStore {
         'use de 1 a 4096 caracteres',
       );
     }
+  }
+
+  static VaultWrite _write(Map<Object?, Object?>? raw) {
+    if (raw == null) throw const FormatException('Resposta inválida do cofre');
+    return VaultWrite(
+      id: _text(raw, 'id'),
+      revision: _positive(raw, 'revision'),
+    );
   }
 }
 

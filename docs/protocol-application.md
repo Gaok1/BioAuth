@@ -35,6 +35,32 @@ binding, and operation equal the still-pending request and the frame has not
 expired. The caller owns that pending-request check; successfully decoding an
 envelope is not authorization.
 
+## Error payloads
+
+A frame of kind `3` carries a two-element canonical CBOR array: the protocol
+version, then one of three codes.
+
+| Code | Meaning |
+|---:|---|
+| `0` | Rejected — the peer said no, and will not say why |
+| `1` | Invalid request — the frame or its payload is malformed |
+| `2` | Unavailable — cannot be served right now; retrying later is meaningful |
+
+The taxonomy is coarse on purpose, and widening it is a security change rather
+than an improvement. A missing item, a revision that has moved on, and a
+biometric prompt the user dismissed all answer `0`. If they answered
+differently, a desktop that is not entitled to a secret could ask for item IDs
+one at a time and learn which ones exist — the vault would leak its index to
+exactly the caller it is refusing.
+
+An error payload that will not decode is treated as `0` by both sides. A
+malformed refusal is still a refusal, and falling back to anything softer would
+turn a corrupt frame into a grant.
+
+The same three encodings are pinned in
+`desktop/crates/phone-auth-protocol/src/application.rs` and
+`mobile/test/application_frame_test.dart`.
+
 Payload schemas are versioned by their operation and are defined with the vault
 or locker feature. They may contain secrets only while held inside the secure
 channel processing path. Implementations must not derive `Debug`/`toString`

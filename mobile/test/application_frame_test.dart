@@ -90,6 +90,23 @@ void main() {
     expect(wrongSession.isReplyTo(request, request.issuedAt), isFalse);
     expect(reply.isReplyTo(request, request.expiresAt), isFalse);
   });
+
+  test('generic application errors round-trip without detail', () {
+    for (final code in ApplicationErrorCode.values) {
+      expect(ApplicationErrorCode.decode(code.encode()), code);
+    }
+    // The same bytes are pinned in the Rust test
+    // `application_errors_are_coarse_and_canonical`. Written against the hex,
+    // not against the other encoder, so a matching mistake on one side does
+    // not make the pair agree.
+    expect(_hex(ApplicationErrorCode.rejected.encode()), '820100');
+    expect(_hex(ApplicationErrorCode.invalidRequest.encode()), '820101');
+    expect(_hex(ApplicationErrorCode.unavailable.encode()), '820102');
+    expect(
+      () => ApplicationErrorCode.decode(Uint8List.fromList([0x82, 0x01, 0x03])),
+      throwsFormatException,
+    );
+  });
 }
 
 String _hex(List<int> bytes) =>

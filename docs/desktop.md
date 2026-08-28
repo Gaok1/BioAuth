@@ -365,9 +365,42 @@ show what is true rather than a lock that is not there.
 fires only if the clipboard sequence number is still the one we set — otherwise
 the timer would erase whatever the user copied in the meantime.
 
-Fetching an existing vault item over `vault.copy` is not implemented yet: the
-handler that retrieves a secret from the phone is `VLT-04`. It will reuse this
-same clipboard path.
+## Reading the phone's vault
+
+Two methods reach the vault the phone holds. Both need a credential enrolled
+with the `vault` purpose — the same credential that authorizes `sudo` will not
+do, and naming one by `credentialId` does not let a caller borrow it.
+
+```text
+vault.list
+  params: { credentialId? }
+  result: { items: [{ id, revision, kind, name, username, uri, updatedAtMs }],
+            deviceName, development }
+
+vault.copy
+  params: { itemId, expectedRevision, credentialId?, clearAfterMs? }
+  result: { length, clearsAtMs, historyExcluded, cloudExcluded, memoryLocked }
+```
+
+`vault.list` costs no biometric prompt, because it releases no secret. It walks
+the phone's pages itself and returns the whole list; a phone that repeats a
+cursor or never ends is refused rather than followed.
+
+`vault.copy` is one approval on the phone for one item. The secret arrives, is
+moved into page-locked memory, and goes to the clipboard along the path
+described above — it reaches no reply, no event and no audit entry, and
+`VaultCopyResult` is the same type `vault.generate-copy` returns precisely
+because it has no field that could carry it.
+
+`expectedRevision` is the revision of the row the user clicked, and a phone that
+answers with a different one gets a `revision-conflict` rather than a copy: the
+item was edited elsewhere, and pasting it would hand over a value the user never
+looked at.
+
+A refusal comes back as `declined` whether the item is missing, the revision is
+stale, or the user dismissed the prompt. That is `protocol-application.md`'s
+coarse taxonomy surfacing at the IPC edge, and it is why `vault.copy` cannot be
+used to discover which item IDs exist.
 
 ## Files the agent owns
 

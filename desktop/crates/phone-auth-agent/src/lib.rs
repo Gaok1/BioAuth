@@ -24,6 +24,7 @@ pub mod service;
 #[cfg(feature = "dev-simulator")]
 pub mod simulator;
 pub mod transport;
+pub mod vault;
 
 pub use client::{AgentClient, ClientError};
 pub use paths::Paths;

@@ -18,7 +18,9 @@ mod request;
 mod response;
 pub mod vault;
 
-pub use application::{ApplicationFrame, ApplicationFrameKind, MAX_APPLICATION_PAYLOAD_BYTES};
+pub use application::{
+    ApplicationErrorCode, ApplicationFrame, ApplicationFrameKind, MAX_APPLICATION_PAYLOAD_BYTES,
+};
 pub use enrolment::{CredentialPurpose, Enrolment, KeyKind};
 pub use request::{AuthRequest, RequestContext};
 pub use response::{AuthResponse, Decision};
@@ -89,6 +91,7 @@ pub enum ProtocolError {
     InvalidKeyKind(i64),
     InvalidPurpose(i64),
     InvalidApplicationKind(u64),
+    InvalidApplicationError(u64),
     InvalidOperation,
     PayloadSize(usize),
     /// A vault item declared a kind this build does not know.
@@ -132,6 +135,9 @@ impl fmt::Display for ProtocolError {
             Self::InvalidPurpose(value) => write!(f, "invalid credential purpose: {value}"),
             Self::InvalidApplicationKind(value) => {
                 write!(f, "invalid application frame kind: {value}")
+            }
+            Self::InvalidApplicationError(value) => {
+                write!(f, "invalid application error code: {value}")
             }
             Self::InvalidOperation => f.write_str("invalid application operation"),
             Self::PayloadSize(size) => write!(f, "invalid application payload size: {size}"),

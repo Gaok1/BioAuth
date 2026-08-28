@@ -54,7 +54,7 @@ void main() {
   });
 }
 
-class _MemoryVaultStore implements VaultStore {
+class _MemoryVaultStore extends VaultStore {
   final _values = <String, ({VaultItemSummary summary, String secret})>{
     'one': (
       summary: VaultItemSummary(
@@ -72,8 +72,8 @@ class _MemoryVaultStore implements VaultStore {
   int fetches = 0;
 
   @override
-  Future<List<VaultItemSummary>> listAll() async =>
-      _values.values.map((value) => value.summary).toList();
+  Future<VaultPage> listPage([String? cursor]) async =>
+      VaultPage(items: _values.values.map((value) => value.summary).toList());
 
   @override
   Future<VaultSecret> fetch(String id) async {
@@ -87,17 +87,22 @@ class _MemoryVaultStore implements VaultStore {
   }
 
   @override
-  Future<void> create(VaultItemInput item) async {
+  Future<VaultWrite> create(VaultItemInput item) async {
     final id = 'item-${_values.length}';
     _values[id] = (summary: _summary(id, 1, item), secret: item.secret);
+    return VaultWrite(id: id, revision: 1);
   }
 
   @override
-  Future<void> update(VaultItemSummary current, VaultItemInput item) async {
+  Future<VaultWrite> update(
+    VaultItemSummary current,
+    VaultItemInput item,
+  ) async {
     _values[current.id] = (
       summary: _summary(current.id, current.revision + 1, item),
       secret: item.secret,
     );
+    return VaultWrite(id: current.id, revision: current.revision + 1);
   }
 
   @override

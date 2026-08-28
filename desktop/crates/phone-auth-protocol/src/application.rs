@@ -11,6 +11,7 @@ use crate::{
 };
 
 const APPLICATION_FRAME_LEN: u64 = 9;
+const APPLICATION_ERROR_LEN: u64 = 2;
 
 /// Leaves room for the envelope inside the transport's 8 KiB frame limit.
 pub const MAX_APPLICATION_PAYLOAD_BYTES: usize = 6 * 1024;
@@ -21,6 +22,57 @@ pub enum ApplicationFrameKind {
     Response,
     Cancel,
     Error,
+}
+
+/// Stable, deliberately coarse application errors.
+///
+/// In particular, missing items and stale revisions are both [`Rejected`]. A
+/// peer that is not entitled to a secret must not learn whether it exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplicationErrorCode {
+    Rejected,
+    InvalidRequest,
+    Unavailable,
+}
+
+impl ApplicationErrorCode {
+    pub fn encode(self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.array(APPLICATION_ERROR_LEN);
+        writer.uint(PROTOCOL_VERSION);
+        writer.uint(match self {
+            Self::Rejected => 0,
+            Self::InvalidRequest => 1,
+            Self::Unavailable => 2,
+        });
+        writer.into_bytes()
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        let mut reader = Reader::new(payload);
+        let len = reader.array()?;
+        if len != APPLICATION_ERROR_LEN {
+            return Err(ProtocolError::FrameShape {
+                expected: APPLICATION_ERROR_LEN,
+                actual: len,
+            });
+        }
+        let version = reader.uint()?;
+        if version != PROTOCOL_VERSION {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        let code = match reader.uint()? {
+            0 => Self::Rejected,
+            1 => Self::InvalidRequest,
+            2 => Self::Unavailable,
+            value => return Err(ProtocolError::InvalidApplicationError(value)),
+        };
+        reader.finish()?;
+        if !bytes_equal(payload, &code.encode()) {
+            return Err(ProtocolError::NotCanonical);
+        }
+        Ok(code)
+    }
 }
 
 impl ApplicationFrameKind {
@@ -254,5 +306,30 @@ mod tests {
         assert!(!reply.is_reply_to(&request, request.expires_at_ms - 1));
         reply.session_binding = request.session_binding;
         assert!(!reply.is_reply_to(&request, request.expires_at_ms));
+    }
+
+    #[test]
+    fn application_errors_are_coarse_and_canonical() {
+        for code in [
+            ApplicationErrorCode::Rejected,
+            ApplicationErrorCode::InvalidRequest,
+            ApplicationErrorCode::Unavailable,
+        ] {
+            assert_eq!(ApplicationErrorCode::decode(&code.encode()), Ok(code));
+        }
+        // Pinned, and pinned to the same bytes in
+        // `mobile/test/application_frame_test.dart`. A round trip alone would
+        // still pass if both the writer and the reader on this side changed
+        // together, which is exactly how the two ends drift apart.
+        assert_eq!(ApplicationErrorCode::Rejected.encode(), [0x82, 0x01, 0x00]);
+        assert_eq!(
+            ApplicationErrorCode::InvalidRequest.encode(),
+            [0x82, 0x01, 0x01]
+        );
+        assert_eq!(
+            ApplicationErrorCode::Unavailable.encode(),
+            [0x82, 0x01, 0x02]
+        );
+        assert!(ApplicationErrorCode::decode(&[0x82, 0x01, 0x03]).is_err());
     }
 }

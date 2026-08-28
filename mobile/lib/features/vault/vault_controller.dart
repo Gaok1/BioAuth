@@ -90,7 +90,7 @@ class VaultController extends ChangeNotifier {
   Future<void> delete(VaultItemSummary item) =>
       _mutate(() => _store.delete(item));
 
-  Future<void> _mutate(Future<void> Function() action) => _run(() async {
+  Future<void> _mutate(Future<Object?> Function() action) => _run(() async {
     await action();
     _items = await _store.listAll();
     _revealedId = null;

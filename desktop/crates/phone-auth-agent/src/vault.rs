@@ -1,0 +1,511 @@
+//! The agent's half of the personal vault: asking a phone for a page of
+//! metadata, or for exactly one secret.
+//!
+//! The storage lives on the phone, in the Android Keystore, and nothing here
+//! caches it. Every `fetch` costs the user a biometric prompt on the device,
+//! which is the point: the desktop cannot decide on its own that a secret may
+//! be released.
+//!
+//! Two rules hold in this file. A secret travels only inside an authenticated,
+//! confidential session, and it never reaches an IPC reply, an event, the audit
+//! log, or an error message — the buffers it passed through are wiped on the
+//! way out. What the caller gets back is a description of what happened.
+
+use std::collections::HashSet;
+use std::time::Duration;
+
+use phone_auth_protocol::vault::{
+    FetchRequest, FetchResponse, ItemSummary, ListRequest, ListResponse, OPERATION_FETCH,
+    OPERATION_LIST,
+};
+use phone_auth_protocol::{
+    ApplicationErrorCode, ApplicationFrame, ApplicationFrameKind, PROTOCOL_VERSION,
+};
+use phone_auth_verifier::verifier::now_ms;
+use phone_auth_verifier::{random, SecureSession};
+use zeroize::Zeroize;
+
+/// How long to wait for the user to answer a vault prompt.
+const RECEIVE_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How long a vault request stays valid, matching the envelope's ceiling.
+const VALIDITY_MS: i64 = 120_000;
+
+/// How many pages one listing may walk before the agent gives up.
+///
+/// The cursor is chosen by the phone, so without a ceiling a buggy or hostile
+/// peer could keep the desktop paging forever. Thirty-two pages of
+/// `MAX_PAGE_ITEMS` is over a thousand items, which is a larger vault than the
+/// schema was designed for.
+const MAX_PAGES: usize = 32;
+
+/// Why a vault exchange did not produce an answer.
+///
+/// [`Declined`](VaultError::Declined) is deliberately coarse and stays that
+/// way as it travels outward. The phone answers a missing item, a stale
+/// revision and a refused biometric with the same code on purpose, so that a
+/// desktop that is not entitled to a secret cannot learn whether it exists.
+/// Widening this enum to explain the difference would undo that on this side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VaultError {
+    /// The phone said no, and did not say why.
+    Declined,
+    /// The vault could not be served right now — locked, storage error, no
+    /// biometric enrolled. Retrying later is meaningful; retrying immediately
+    /// is not.
+    Unavailable,
+    /// The phone rejected the frame, or answered with something that is not a
+    /// valid reply. Either way it is a bug on one side, not a decision.
+    Protocol(String),
+}
+
+impl VaultError {
+    fn protocol(reason: impl Into<String>) -> Self {
+        Self::Protocol(reason.into())
+    }
+}
+
+impl std::fmt::Display for VaultError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Declined => f.write_str("the phone declined the vault request"),
+            Self::Unavailable => f.write_str("the vault is not available on the phone"),
+            Self::Protocol(reason) => write!(f, "vault protocol error: {reason}"),
+        }
+    }
+}
+
+/// A phone's vault, reached over one already established session.
+pub struct PhoneVault<'a> {
+    session: &'a mut Box<dyn SecureSession + Send>,
+    verifier_name: String,
+}
+
+impl<'a> PhoneVault<'a> {
+    pub fn new(
+        session: &'a mut Box<dyn SecureSession + Send>,
+        verifier_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            session,
+            verifier_name: verifier_name.into(),
+        }
+    }
+
+    /// Every item's metadata, walked page by page.
+    ///
+    /// Carries no secrets: a listing is what the desktop is allowed to know
+    /// without a prompt.
+    pub fn list(&mut self) -> Result<Vec<ItemSummary>, VaultError> {
+        let mut items = Vec::new();
+        let mut cursor = String::new();
+        // The phone picks the cursors, so a repeat is how an endless walk
+        // starts. Refusing on the second sighting stops it a page early
+        // instead of after `MAX_PAGES` round trips.
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for _ in 0..MAX_PAGES {
+            let request = ListRequest {
+                verifier_name: self.verifier_name.clone(),
+                cursor,
+            };
+            request
+                .validate()
+                .map_err(|error| VaultError::protocol(error.to_string()))?;
+
+            let answer = self.exchange(OPERATION_LIST, request.encode())?;
+            let page = ListResponse::decode(&answer)
+                .map_err(|error| VaultError::protocol(error.to_string()))?;
+
+            items.extend(page.items);
+            if page.next_cursor.is_empty() {
+                return Ok(items);
+            }
+            if !seen.insert(page.next_cursor.clone()) {
+                return Err(VaultError::protocol("the phone repeated a page cursor"));
+            }
+            cursor = page.next_cursor;
+        }
+
+        Err(VaultError::protocol("the vault listing did not end"))
+    }
+
+    /// One item's secret, after the user approves it on the phone.
+    ///
+    /// The returned [`FetchResponse`] wipes its secret when dropped, so hold it
+    /// for as short a time as the copy takes.
+    pub fn fetch(&mut self, item_id: &str) -> Result<FetchResponse, VaultError> {
+        let request = FetchRequest {
+            verifier_name: self.verifier_name.clone(),
+            item_id: item_id.to_owned(),
+        };
+        request
+            .validate()
+            .map_err(|error| VaultError::protocol(error.to_string()))?;
+
+        // This payload is the one place a secret exists as loose bytes on this
+        // side, so it is wiped whether or not it decoded.
+        let mut answer = self.exchange(OPERATION_FETCH, request.encode())?;
+        let decoded = FetchResponse::decode(&answer);
+        answer.zeroize();
+
+        decoded.map_err(|error| VaultError::protocol(error.to_string()))
+    }
+
+    /// Sends one application frame and returns the payload of the matching
+    /// reply, or an error nobody can mistake for a grant.
+    fn exchange(&mut self, operation: &str, payload: Vec<u8>) -> Result<Vec<u8>, VaultError> {
+        if !self.session.security().suitable_for_authorization() {
+            return Err(VaultError::protocol(
+                "the vault needs an authenticated confidential session",
+            ));
+        }
+        let issued_at_ms = now_ms();
+        let request = ApplicationFrame {
+            protocol_version: PROTOCOL_VERSION,
+            kind: ApplicationFrameKind::Request,
+            request_id: random::request_id(),
+            session_binding: self.session.session_binding(),
+            operation: operation.to_owned(),
+            issued_at_ms,
+            expires_at_ms: issued_at_ms + VALIDITY_MS,
+            payload,
+        };
+        request
+            .validate()
+            .map_err(|error| VaultError::protocol(error.to_string()))?;
+
+        self.session
+            .send(&request.encode())
+            .map_err(|_| VaultError::Unavailable)?;
+        let mut raw = self
+            .session
+            .receive(RECEIVE_TIMEOUT)
+            .map_err(|_| VaultError::Unavailable)?;
+
+        let reply = ApplicationFrame::decode(&raw);
+        raw.zeroize();
+        let reply = reply.map_err(|error| VaultError::protocol(error.to_string()))?;
+
+        // Decoding an envelope is not authorization: the reply has to be the
+        // answer to the request still pending, in this session, unexpired.
+        if !reply.is_reply_to(&request, now_ms()) {
+            return Err(VaultError::protocol(
+                "the phone answered a different request",
+            ));
+        }
+        if reply.kind == ApplicationFrameKind::Error {
+            // An error payload that will not decode is still an error. Falling
+            // back to `Declined` keeps a malformed refusal from being read as
+            // anything softer.
+            return Err(match ApplicationErrorCode::decode(&reply.payload) {
+                Ok(ApplicationErrorCode::Rejected) | Err(_) => VaultError::Declined,
+                Ok(ApplicationErrorCode::Unavailable) => VaultError::Unavailable,
+                Ok(ApplicationErrorCode::InvalidRequest) => {
+                    VaultError::protocol("the phone rejected the request as malformed")
+                }
+            });
+        }
+        Ok(reply.payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use phone_auth_protocol::vault::{ItemKind, MAX_PAGE_ITEMS};
+    use phone_auth_verifier::session::TransportSecurity;
+    use std::io;
+
+    /// Builds the phone's answer to one request frame.
+    type Answer = Box<dyn FnMut(&ApplicationFrame) -> Vec<u8> + Send>;
+
+    struct ScriptedSession {
+        security: TransportSecurity,
+        sent: Vec<Vec<u8>>,
+        answer: Answer,
+    }
+
+    impl SecureSession for ScriptedSession {
+        fn origin_label(&self) -> &str {
+            "scripted"
+        }
+
+        fn session_binding(&self) -> [u8; 32] {
+            [3; 32]
+        }
+
+        fn security(&self) -> &TransportSecurity {
+            &self.security
+        }
+
+        fn send(&mut self, frame: &[u8]) -> io::Result<()> {
+            self.sent.push(frame.to_vec());
+            Ok(())
+        }
+
+        fn receive(&mut self, _timeout: Duration) -> io::Result<Vec<u8>> {
+            let request = ApplicationFrame::decode(self.sent.last().expect("a sent frame"))
+                .expect("the agent sends a valid frame");
+            Ok((self.answer)(&request))
+        }
+
+        fn close(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn security(confidential: bool) -> TransportSecurity {
+        TransportSecurity {
+            transport_name: "scripted".into(),
+            confidential,
+            peer_authenticated: confidential,
+            requires_network: false,
+            proximity_signal: false,
+            is_development: true,
+        }
+    }
+
+    fn session(
+        confidential: bool,
+        answer: impl FnMut(&ApplicationFrame) -> Vec<u8> + Send + 'static,
+    ) -> Box<dyn SecureSession + Send> {
+        Box::new(ScriptedSession {
+            security: security(confidential),
+            sent: Vec::new(),
+            answer: Box::new(answer),
+        })
+    }
+
+    fn reply(request: &ApplicationFrame, payload: Vec<u8>) -> Vec<u8> {
+        ApplicationFrame {
+            kind: ApplicationFrameKind::Response,
+            payload,
+            ..request.clone()
+        }
+        .encode()
+    }
+
+    fn refusal(request: &ApplicationFrame, code: ApplicationErrorCode) -> Vec<u8> {
+        ApplicationFrame {
+            kind: ApplicationFrameKind::Error,
+            payload: code.encode(),
+            ..request.clone()
+        }
+        .encode()
+    }
+
+    /// `FetchResponse` has no `Debug` on purpose — it holds a secret — so
+    /// `expect_err` cannot be used on a fetch. Unwrapping the error by hand is
+    /// the price of that, and a cheaper one than deriving `Debug` on a secret.
+    fn refused(result: Result<FetchResponse, VaultError>) -> VaultError {
+        match result {
+            Ok(_) => panic!("the fetch should not have succeeded"),
+            Err(error) => error,
+        }
+    }
+
+    fn summary(id: &str) -> ItemSummary {
+        ItemSummary {
+            id: id.to_owned(),
+            revision: 1,
+            kind: ItemKind::Login,
+            name: format!("Item {id}"),
+            username: "someone@example.com".into(),
+            uri: "https://example.com".into(),
+            updated_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[test]
+    fn a_listing_walks_every_page_and_stops_on_the_empty_cursor() {
+        let mut transport = session(true, |request| {
+            assert_eq!(request.operation, OPERATION_LIST);
+            let asked = ListRequest::decode(&request.payload).expect("payload decodes");
+            let (items, next_cursor) = match asked.cursor.as_str() {
+                "" => (vec![summary("a"), summary("b")], "page-2"),
+                "page-2" => (vec![summary("c")], ""),
+                other => panic!("unexpected cursor {other}"),
+            };
+            reply(
+                request,
+                ListResponse {
+                    items,
+                    next_cursor: next_cursor.into(),
+                }
+                .encode(),
+            )
+        });
+
+        let items = PhoneVault::new(&mut transport, "Workstation")
+            .list()
+            .expect("the listing completes");
+
+        let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_phone_that_repeats_a_cursor_does_not_page_forever() {
+        let mut transport = session(true, |request| {
+            reply(
+                request,
+                ListResponse {
+                    items: vec![summary("a")],
+                    next_cursor: "same".into(),
+                }
+                .encode(),
+            )
+        });
+
+        let error = PhoneVault::new(&mut transport, "Workstation")
+            .list()
+            .expect_err("an endless listing is refused");
+        assert!(matches!(error, VaultError::Protocol(_)));
+    }
+
+    #[test]
+    fn a_listing_that_never_ends_stops_at_the_page_ceiling() {
+        let mut page = 0usize;
+        let mut transport = session(true, move |request| {
+            page += 1;
+            reply(
+                request,
+                ListResponse {
+                    items: vec![summary("a")],
+                    next_cursor: format!("page-{page}"),
+                }
+                .encode(),
+            )
+        });
+
+        let error = PhoneVault::new(&mut transport, "Workstation")
+            .list()
+            .expect_err("an endless listing is refused");
+        assert_eq!(
+            error,
+            VaultError::Protocol("the vault listing did not end".into())
+        );
+    }
+
+    #[test]
+    fn a_fetch_returns_the_secret_for_the_item_that_was_asked_for() {
+        let mut transport = session(true, |request| {
+            assert_eq!(request.operation, OPERATION_FETCH);
+            let asked = FetchRequest::decode(&request.payload).expect("payload decodes");
+            assert_eq!(asked.item_id, "item-7");
+            assert_eq!(asked.verifier_name, "Workstation");
+            reply(
+                request,
+                FetchResponse {
+                    item_id: "item-7".into(),
+                    revision: 4,
+                    secret: "correct horse battery staple".into(),
+                }
+                .encode(),
+            )
+        });
+
+        let fetched = PhoneVault::new(&mut transport, "Workstation")
+            .fetch("item-7")
+            .expect("the fetch succeeds");
+        assert_eq!(fetched.item_id, "item-7");
+        assert_eq!(fetched.revision, 4);
+        assert_eq!(fetched.secret, "correct horse battery staple");
+    }
+
+    /// The whole point of the coarse taxonomy: a desktop that is refused
+    /// learns nothing about why, so it cannot use `fetch` to probe which item
+    /// IDs exist.
+    #[test]
+    fn a_missing_item_and_a_refused_prompt_are_the_same_error() {
+        for item in ["item-that-exists", "item-that-does-not"] {
+            let mut transport = session(true, |request| {
+                refusal(request, ApplicationErrorCode::Rejected)
+            });
+            let error = refused(PhoneVault::new(&mut transport, "Workstation").fetch(item));
+            assert_eq!(error, VaultError::Declined);
+        }
+    }
+
+    #[test]
+    fn the_error_codes_survive_the_round_trip_without_becoming_a_grant() {
+        for (code, expected) in [
+            (ApplicationErrorCode::Rejected, VaultError::Declined),
+            (ApplicationErrorCode::Unavailable, VaultError::Unavailable),
+        ] {
+            let mut transport = session(true, move |request| refusal(request, code));
+            let error = refused(PhoneVault::new(&mut transport, "Workstation").fetch("item-1"));
+            assert_eq!(error, expected);
+        }
+    }
+
+    /// A refusal whose payload is nonsense is still a refusal.
+    #[test]
+    fn an_undecodable_error_payload_is_treated_as_a_refusal() {
+        let mut transport = session(true, |request| {
+            ApplicationFrame {
+                kind: ApplicationFrameKind::Error,
+                payload: vec![0xff, 0xff, 0xff],
+                ..request.clone()
+            }
+            .encode()
+        });
+
+        let error = refused(PhoneVault::new(&mut transport, "Workstation").fetch("item-1"));
+        assert_eq!(error, VaultError::Declined);
+    }
+
+    #[test]
+    fn a_reply_to_another_request_is_not_an_answer() {
+        let mut transport = session(true, |request| {
+            let mut forged = request.clone();
+            forged.kind = ApplicationFrameKind::Response;
+            forged.request_id = random::request_id();
+            forged.payload = FetchResponse {
+                item_id: "item-1".into(),
+                revision: 1,
+                secret: "attacker supplied".into(),
+            }
+            .encode();
+            forged.encode()
+        });
+
+        let error = refused(PhoneVault::new(&mut transport, "Workstation").fetch("item-1"));
+        assert_eq!(
+            error,
+            VaultError::Protocol("the phone answered a different request".into())
+        );
+    }
+
+    #[test]
+    fn a_session_that_is_not_confidential_never_asks_for_a_secret() {
+        let mut transport = session(false, |_| panic!("nothing may be sent"));
+        let error = refused(PhoneVault::new(&mut transport, "Workstation").fetch("item-1"));
+        assert!(matches!(error, VaultError::Protocol(_)));
+    }
+
+    /// The phone cannot make the desktop allocate on its say-so: an oversized
+    /// page is refused by the decoder before the items are read.
+    #[test]
+    fn an_oversized_page_is_refused() {
+        let mut transport = session(true, |request| {
+            let items: Vec<ItemSummary> = (0..MAX_PAGE_ITEMS + 1)
+                .map(|index| summary(&format!("item-{index}")))
+                .collect();
+            reply(
+                request,
+                ListResponse {
+                    items,
+                    next_cursor: String::new(),
+                }
+                .encode(),
+            )
+        });
+
+        let error = PhoneVault::new(&mut transport, "Workstation")
+            .list()
+            .expect_err("an oversized page is refused");
+        assert!(matches!(error, VaultError::Protocol(_)));
+    }
+}

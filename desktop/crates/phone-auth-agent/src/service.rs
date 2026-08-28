@@ -26,13 +26,17 @@ use phone_auth_verifier::{
 use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
-    PairingBootstrap, PermissionSummary, StatusPayload, WebAuthnParams, WebAuthnResult,
+    PairingBootstrap, PermissionSummary, StatusPayload, VaultCopyParams, VaultCopyResult,
+    VaultItem, VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
+use crate::clipboard;
 use crate::config::AgentConfig;
 use crate::locker::PhoneCustodian;
 use crate::paths::Paths;
+use crate::secret_memory::SecretBuffer;
 use crate::transport::{Transport, TransportAvailability, TransportRegistry};
+use crate::vault::{PhoneVault, VaultError};
 
 /// How long a pairing bootstrap stays scannable.
 const PAIRING_WINDOW_MS: i64 = 120_000;
@@ -969,6 +973,151 @@ impl Service {
         })
     }
 
+    /// Reads the vault's metadata from the phone.
+    ///
+    /// Costs no biometric prompt, because it releases no secret. The rows it
+    /// returns are what the tray needs to draw a list; the value behind any of
+    /// them costs a separate [`vault_copy`](Self::vault_copy).
+    pub fn vault_list(
+        &mut self,
+        params: &VaultListParams,
+    ) -> Result<VaultListResult, ServiceError> {
+        let (device_id, _credential_id) =
+            self.select_vault_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let listed = PhoneVault::new(&mut session, self.config.verifier_name.clone()).list();
+        let _ = session.close();
+
+        match listed {
+            Ok(items) => {
+                self.record_vault("", "list", &device_name, development, Ok(()));
+                Ok(VaultListResult {
+                    items: items.into_iter().map(vault_item).collect(),
+                    device_name,
+                    development,
+                })
+            }
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_vault("", "list", &device_name, development, Err(&error));
+                Err(error)
+            }
+        }
+    }
+
+    /// Puts one stored secret on the clipboard, after the user approves it on
+    /// the phone.
+    ///
+    /// The secret's whole life on this side is inside this function: it arrives
+    /// in a [`FetchResponse`](phone_auth_protocol::vault::FetchResponse) that
+    /// wipes itself on drop, moves into locked pages, and goes to the
+    /// clipboard. It reaches no return value, no event and no audit entry —
+    /// [`VaultCopyResult`] has no field that could carry it.
+    pub fn vault_copy(
+        &mut self,
+        params: &VaultCopyParams,
+    ) -> Result<VaultCopyResult, ServiceError> {
+        // Checked before the phone is asked. A timeout this refuses would
+        // otherwise be discovered after the user had already approved the
+        // prompt, with the secret in hand and nowhere to put it.
+        let ttl = params
+            .clear_after_ms
+            .map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
+        if ttl < clipboard::MIN_TTL || ttl > clipboard::MAX_TTL {
+            return Err(ServiceError::new(
+                "bad-params",
+                format!(
+                    "clearAfterMs must be between {}ms and {}ms",
+                    clipboard::MIN_TTL.as_millis(),
+                    clipboard::MAX_TTL.as_millis()
+                ),
+            ));
+        }
+
+        let (device_id, _credential_id) =
+            self.select_vault_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let fetched =
+            PhoneVault::new(&mut session, self.config.verifier_name.clone()).fetch(&params.item_id);
+        let _ = session.close();
+
+        let fetched = match fetched {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_vault(
+                    &params.item_id,
+                    "copy",
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
+                return Err(error);
+            }
+        };
+
+        // The caller named the revision of the row the user clicked. A
+        // different one means the item was edited somewhere else in between,
+        // and pasting it would hand over a value the user never looked at.
+        if fetched.revision != params.expected_revision {
+            let error = ServiceError::new(
+                "revision-conflict",
+                "the item changed on the phone; refresh the list and copy again",
+            );
+            self.record_vault(
+                &params.item_id,
+                "copy",
+                &device_name,
+                development,
+                Err(&error),
+            );
+            return Err(error);
+        }
+
+        let secret = SecretBuffer::from_slice(fetched.secret.as_bytes());
+        // Held no longer than the move above needs. Dropping it here wipes the
+        // plaintext `String` while the clipboard call is still ahead of us.
+        drop(fetched);
+
+        let outcome = clipboard::copy_secret(&secret, ttl);
+        let result = match outcome {
+            Ok(outcome) => {
+                self.record_vault(&params.item_id, "copy", &device_name, development, Ok(()));
+                VaultCopyResult {
+                    length: secret.len(),
+                    clears_at_ms: outcome.clears_at_ms,
+                    history_excluded: outcome.history_excluded,
+                    cloud_excluded: outcome.cloud_excluded,
+                    memory_locked: secret.is_locked(),
+                }
+            }
+            Err(error) => {
+                let error = clipboard_error(error);
+                self.record_vault(
+                    &params.item_id,
+                    "copy",
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
+                return Err(error);
+            }
+        };
+        Ok(result)
+    }
+
     /// Picks the credential that may wrap locker keys.
     ///
     /// A named credential still has to hold the `FileLocker` purpose: an IPC
@@ -978,8 +1127,33 @@ impl Service {
         &self,
         credential_id: Option<&str>,
     ) -> Result<(String, String), ServiceError> {
+        self.select_service_credential("locker", "file locker", credential_id)
+    }
+
+    /// Picks the credential that may release vault secrets.
+    ///
+    /// Same rule as the locker: the vault purpose is separate from the one that
+    /// authorizes `sudo`, and naming a credential does not let a caller borrow
+    /// authority from another service.
+    fn select_vault_credential(
+        &self,
+        credential_id: Option<&str>,
+    ) -> Result<(String, String), ServiceError> {
+        self.select_service_credential("vault", "personal vault", credential_id)
+    }
+
+    /// Resolves one enrolled credential for `service`, by name or by being the
+    /// only candidate.
+    ///
+    /// `label` names the service in the messages a person reads.
+    fn select_service_credential(
+        &self,
+        service: &str,
+        label: &str,
+        credential_id: Option<&str>,
+    ) -> Result<(String, String), ServiceError> {
         let store = self.verifier.store();
-        let purpose = CredentialPurpose::for_service("locker");
+        let purpose = CredentialPurpose::for_service(service);
 
         if let Some(requested) = credential_id {
             let (device, credential) = store.find_credential(requested).ok_or_else(|| {
@@ -988,7 +1162,7 @@ impl Service {
             if credential.purpose != purpose {
                 return Err(ServiceError::new(
                     "policy-denied",
-                    format!("credential `{requested}` is not a file-locker credential"),
+                    format!("credential `{requested}` is not a {label} credential"),
                 ));
             }
             return Ok((device.device_id.clone(), requested.to_owned()));
@@ -1009,7 +1183,7 @@ impl Service {
             )),
             0 => Err(ServiceError::new(
                 "policy-denied",
-                "no paired credential is enrolled for the file locker",
+                format!("no paired credential is enrolled for the {label}"),
             )),
             1 => Ok(candidates.remove(0)),
             _ => Err(ServiceError::new(
@@ -1042,6 +1216,46 @@ impl Service {
         development: bool,
         result: Result<(), &ServiceError>,
     ) {
+        let resource = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.record_application("locker", action, resource, device_name, development, result);
+    }
+
+    /// Records that a vault operation happened.
+    ///
+    /// The item's ID is opaque by design (`DEC-06`), so it is safe to write
+    /// down and is the only thing worth writing down: the secret, the item's
+    /// name and the user it belongs to never reach this log. A listing has no
+    /// single item, and passes an empty resource.
+    fn record_vault(
+        &mut self,
+        item_id: &str,
+        action: &str,
+        device_name: &str,
+        development: bool,
+        result: Result<(), &ServiceError>,
+    ) {
+        self.record_application(
+            "vault",
+            action,
+            item_id.to_owned(),
+            device_name,
+            development,
+            result,
+        );
+    }
+
+    fn record_application(
+        &mut self,
+        service: &str,
+        action: &str,
+        resource: String,
+        device_name: &str,
+        development: bool,
+        result: Result<(), &ServiceError>,
+    ) {
         let entry = AuditEntry {
             at_ms: now_ms(),
             outcome: match result {
@@ -1050,12 +1264,9 @@ impl Service {
                 Err(_) => Outcome::Failed,
             },
             request_id: random::request_id(),
-            service: "locker".into(),
+            service: service.into(),
             action: action.into(),
-            resource: path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            resource,
             user: String::new(),
             device_name: device_name.to_owned(),
             origin: String::new(),
@@ -1170,6 +1381,55 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
         Error::Io(_) => "io-failed",
     };
     ServiceError::new(code, error.to_string())
+}
+
+/// Maps a vault refusal to the code the tray sees.
+///
+/// The coarseness is the feature. A missing item, a stale revision and a
+/// biometric the user dismissed all arrive here as
+/// [`Declined`](VaultError::Declined) and all leave as `declined`, so a caller
+/// that is not entitled to a secret cannot use the error to learn which item
+/// IDs exist.
+fn vault_error(error: VaultError) -> ServiceError {
+    let code = match &error {
+        VaultError::Declined => "declined",
+        VaultError::Unavailable => "vault-unavailable",
+        VaultError::Protocol(_) => "protocol-error",
+    };
+    ServiceError::new(code, error.to_string())
+}
+
+/// Maps a clipboard failure to the code the tray sees.
+///
+/// A timeout outside the accepted range is the caller's mistake, not a broken
+/// clipboard, and gets a code that says so — reporting it as unavailable would
+/// send the user looking for a problem on their machine.
+pub(crate) fn clipboard_error(error: clipboard::ClipboardError) -> ServiceError {
+    let code = match &error {
+        clipboard::ClipboardError::TtlOutOfRange { .. } => "bad-params",
+        clipboard::ClipboardError::NotText => "protocol-error",
+        clipboard::ClipboardError::Unavailable(_) | clipboard::ClipboardError::Unsupported => {
+            "clipboard-unavailable"
+        }
+    };
+    ServiceError::new(code, error.to_string())
+}
+
+/// Widens one protocol summary into the row the IPC surface serialises.
+fn vault_item(summary: phone_auth_protocol::vault::ItemSummary) -> VaultItem {
+    use phone_auth_protocol::vault::ItemKind;
+    VaultItem {
+        id: summary.id,
+        revision: summary.revision,
+        kind: match summary.kind {
+            ItemKind::Login => "login".into(),
+            ItemKind::Note => "note".into(),
+        },
+        name: summary.name,
+        username: summary.username,
+        uri: summary.uri,
+        updated_at_ms: summary.updated_at_ms,
+    }
 }
 
 const WEBAUTHN_MAGIC: &[u8] = b"BAWA1\n";

@@ -6,6 +6,50 @@ const int maxApplicationPayloadBytes = 6 * 1024;
 
 enum ApplicationFrameKind { request, response, cancel, error }
 
+/// Missing items and stale revisions are deliberately the same [rejected]
+/// value, so an unauthorized peer cannot probe whether an item exists.
+enum ApplicationErrorCode {
+  rejected,
+  invalidRequest,
+  unavailable;
+
+  Uint8List encode() =>
+      (CborWriter()
+            ..array(2)
+            ..uint(1)
+            ..uint(index))
+          .takeBytes();
+
+  static ApplicationErrorCode decode(Uint8List payload) {
+    try {
+      final reader = CborReader(payload);
+      if (reader.array() != 2 || reader.uint() != 1) {
+        throw const FormatException('Erro de aplicação inválido');
+      }
+      final value = reader.uint();
+      if (value >= values.length) {
+        throw const FormatException('Erro de aplicação inválido');
+      }
+      reader.finish();
+      final decoded = values[value];
+      if (!_sameBytes(payload, decoded.encode())) {
+        throw const FormatException('Erro de aplicação não canônico');
+      }
+      return decoded;
+    } on CborException catch (error) {
+      throw FormatException(error.message);
+    }
+  }
+
+  static bool _sameBytes(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
+  }
+}
+
 /// Versioned `vault.*`/`locker.*` envelope inside the secure channel.
 ///
 /// It is deliberately separate from the biometric-signed authorization frame.
@@ -36,6 +80,9 @@ class ApplicationFrame {
   final DateTime issuedAt;
   final DateTime expiresAt;
   final Uint8List payload;
+
+  static bool recognizes(Uint8List frame) =>
+      frame.length >= 2 && frame[0] == 0x89 && frame[1] == _messageType;
 
   void validate() {
     if (protocolVersion != 1) {
