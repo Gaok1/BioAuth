@@ -1,6 +1,7 @@
 # BioAuth — tracking para produto completo
 
-Auditoria do repositório em **2026-08-28**, no commit `4026d92`, consolidada com
+Auditoria do repositório em **2026-08-28**, no commit `4026d92` e atualizada
+depois da integração da onda 1 de tracks paralelos, consolidada com
 o inventário que antes vivia em `docs/goals.md`. Este arquivo é a única fonte de
 verdade para requisitos concluídos, pendências verificadas e o que falta até o
 BioAuth ser utilizável por uma pessoa comum em três cenários:
@@ -35,22 +36,30 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | BLE Android ↔ Linux | 🧪 | Cliente GATT e servidor BlueZ existem; falta teste físico e de OEM |
 | Sessões Android em background | 🧪 | Foreground service existe; falta matriz de fabricantes/task removal |
 | Passkeys Android | 🧪 | Credential Provider + Keystore implementados; instrumentação API 35 cobre registro e fronteiras, mas falta cerimônia completa e matriz real |
-| Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; instalação ainda é manual e sem teste de navegador real |
+| Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; a instalação virou script com teste próprio, mas nenhum navegador real leu os manifests |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
 | File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
-| Cofre de senhas | 🧪 | Schema de item e as cinco operações `vault.*` existem em Rust e Dart com vetor compartilhado; faltam store no Keystore, CRUD, agent, clipboard e autofill |
+| Cofre de senhas | 🧪 | Schema, as cinco operações `vault.*`, store no Keystore Android, memória travada, clipboard com prazo e geradores de senha e passphrase existem e passam em teste; faltam o CRUD mobile, o handler que liga os dois lados, export/restore e autofill |
 | Recuperação do cofre/locker | 🧪 | O locker já tem wrapper offline e drill executado pelo binário; o cofre ainda não tem export/wrapper |
-| Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android; faltam secrets reais, instalação de extensão/native host e smoke test |
+| Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android e o native host já tem instalador; faltam secrets reais, empacotamento da extensão e smoke test |
 
 **Conclusão:** a fundação de autenticação é substancial. WebAuthn é um protótipo
 integrado, ainda não um recurso instalável. O File Locker deixou de ser um
 projeto novo: o formato, a engine, os dois caminhos de recuperação e a CLI
 existem e são testados de ponta a ponta com um telefone simulado. O que falta
 nele é aparelho real, escala e revisão externa. O cofre de senhas deixou de ser
-uma pasta vazia: o schema de item e as cinco operações `vault.*` existem nos
-dois lados e concordam byte a byte. Ainda não é um produto — não há onde guardar
-os itens, nem quem responda às operações — mas o contrato que todo o resto vai
-depender já está fixado e testado.
+uma pasta vazia: o schema e as cinco operações `vault.*` concordam byte a byte
+nos dois lados, o Android já tem onde guardar os itens sob biometria forte, e o
+desktop já sabe gerar um segredo, mantê-lo fora do pagefile e entregá-lo pelo
+clipboard sem passar pelo Electron. Ainda não é um produto: **falta o meio** —
+o CRUD na tela do telefone e o handler que responde às operações. As duas
+pontas existem e não se falam.
+
+A onda 1 também deixou claro o limite do que este repositório consegue provar
+sozinho. Quase tudo que ela entregou está em 🧪 pelo mesmo motivo, não por
+qualidade: o Keystore nunca rodou em aparelho, o caminho Linux de `mlock` e
+clipboard nunca executou, e nenhum navegador leu os manifests do native host.
+Sair de 🧪 daqui em diante depende de hardware, não de mais código.
 
 ## Baseline já implementada
 
@@ -298,14 +307,20 @@ e `T2` (`VLT-12`) foram mergeados nesta ordem, sem conflito textual nem
 semântico, e os três toolchains passaram depois do merge. `T4` (`WEB-02`) entrou
 logo em seguida, também sem conflito. Com isso a **onda 1 está fechada**. Os
 handoffs foram dobrados neste arquivo e em `docs/dependencies.md`, e
-`docs/handoff/` foi removido; a onda 2 recria o diretório.
+`docs/handoff/` foi removido; a onda 2 recria o diretório. Os quatro worktrees e
+suas branches foram apagados depois de `git branch --no-merged main` voltar
+vazio — a onda 2 começa de worktrees novos, a partir da `main` já integrada.
 
 `T4` não é coberto por nenhum dos três toolchains — são scripts de shell, com
 suíte própria em `install.test.ps1` e `install.test.sh`, que precisam ser
 rodadas à mão. Se a instalação do native host regredir, nada no gate atual
 avisa.
 
-Duas coisas que a onda 1 deixou para quem pegar a onda 2:
+**Onda 2**, ainda não iniciada: `T5` (`VLT-03`, CRUD mobile em Dart), `T6`
+(`VLT-04`, o handler dos dois lados) e `T7` (`REL-05`, fuzz). `T5` e `T6` são o
+"meio" que falta entre as duas pontas já prontas.
+
+Três coisas que a onda 1 deixou para quem pegar a onda 2:
 
 - **`T1` desviou do contrato do plano.** `vault.copy` com `item_id`/`revision`
   **não existe**: não há store do cofre deste lado, então o comando só saberia
@@ -316,6 +331,12 @@ Duas coisas que a onda 1 deixou para quem pegar a onda 2:
 - **`T3` fixou o canal `bioauth/vault_store`** com `list`/`fetch`/`create`/
   `update`/`delete`; revisão começa em 1 e revisão 0 é sempre recusada. `T5`
   (`VLT-03`) consome esse contrato do lado Dart.
+- **`T2` deixou um vazamento pequeno em aberto**: `generate_passphrase` monta a
+  saída num `String` que cresce, e cada realocação abandona um fragmento da
+  passphrase no heap sem wipe. `generate` ao lado já evita isso com
+  `String::with_capacity`. É inconsistência dentro do mesmo arquivo, não
+  limitação inerente, e contradiz a `VLT-06` que entrou no mesmo merge.
+  Contabilizado em `VLT-14`.
 
 A suíte Rust ficou ~11s mais lenta: `MIN_TTL` do clipboard é 5s e dois testes
 esperam a expiração real, em série. Encurtar `MIN_TTL` só para o teste deixaria
