@@ -125,7 +125,7 @@ dados. Reabrir somente com evidência de assimetria que o reparing não resolva.
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
 | WEB-01 | P0 | 🧪 | Completar a matriz documentada em `docs/webauthn.md`: criação e login cruzados entre Android Credential Manager e Chrome/Edge/Firefox desktop, inclusive app em background. |
-| WEB-02 | P0 | ⬜ | Automatizar instalação/desinstalação do native host. Windows deve registrar/remover as chaves HKCU; Linux deve instalar manifests nos caminhos suportados com o caminho absoluto correto. |
+| WEB-02 | P0 | 🧪 | `install.ps1` registra e remove o host por usuário em HKCU para Chrome, Edge e Firefox; `install.sh` faz o mesmo nos três caminhos Linux. Cada navegador recebe manifest próprio, com caminho absoluto do executável e allowlist da chave certa — `allowed_origins` no Chromium, `allowed_extensions` no Firefox. ID Chromium é exigido no formato real de 32 caracteres `a`–`p`, então um placeholder é recusado em vez de virar allowlist frouxa. Recusa executável com nome diferente de `phone-auth-webauthn-host(.exe)`. Testes próprios instalam em `HOME`, diretório de manifests e raiz HKCU temporários, conferem caminho e allowlists, desinstalam e provam remoção; o do Windows foi verificado como não-vazio. **Não é ✅ porque nenhum navegador leu esses manifests** — os testes provam o contrato de filesystem e registro, não que a conexão nativa sobe. Entregue por `T4`. |
 | WEB-03 | P0 | ⬜ | Empacotar e assinar a extensão para Chrome Web Store/Edge Add-ons/Firefox AMO, ou documentar explicitamente um canal corporativo. "Load unpacked" e extensão temporária não servem para usuário final. |
 | WEB-04 | P0 | ✅ | `browser-extension.test.js` executa a extensão real em contextos isolados e cobre serialização de BufferSource, reconstrução dos objetos WebAuthn, abort/timeout, iframe/Permissions Policy, erro do native host e fallback nativo. A suíte Node do CI soma 11 testes. |
 | WEB-05 | P0 | ✅ | O parser Android valida `authenticatorSelection`, `residentKey`, `userVerification` e `attestation`; rejeita attachment/attestation/valores incompatíveis antes da cerimônia. Criação suporta somente `credProps` e responde `rk: true`; demais extensions e extensions de assertion falham explicitamente. Coberto por teste Kotlin. |
@@ -295,9 +295,15 @@ fim. Regra que vale aqui: **nenhum track edita este arquivo**. Cada um deixa
 
 **Onda 1, integrada em 2026-08-28.** `T3` (`VLT-02`), `T1` (`VLT-06`, `VLT-07`)
 e `T2` (`VLT-12`) foram mergeados nesta ordem, sem conflito textual nem
-semântico, e os três toolchains passaram depois do merge. `T4` (`WEB-02`) não
-produziu commit e continua aberto. Os handoffs foram dobrados neste arquivo e em
-`docs/dependencies.md`, e `docs/handoff/` foi removido.
+semântico, e os três toolchains passaram depois do merge. `T4` (`WEB-02`) entrou
+logo em seguida, também sem conflito. Com isso a **onda 1 está fechada**. Os
+handoffs foram dobrados neste arquivo e em `docs/dependencies.md`, e
+`docs/handoff/` foi removido; a onda 2 recria o diretório.
+
+`T4` não é coberto por nenhum dos três toolchains — são scripts de shell, com
+suíte própria em `install.test.ps1` e `install.test.sh`, que precisam ser
+rodadas à mão. Se a instalação do native host regredir, nada no gate atual
+avisa.
 
 Duas coisas que a onda 1 deixou para quem pegar a onda 2:
 
@@ -342,7 +348,8 @@ real, e ele é um só por sessão.
   separadamente contra o mesmo hex, então um bug comum ao writer e ao reader de
   um dos lados não faz o par passar sozinho.
 - Limitações confirmadas em código: plugin iOS é scaffold, native host depende
-  de instalação manual, conditional mediation usa o autenticador nativo,
+  de instalação por script sem smoke test de navegador, conditional mediation
+  usa o autenticador nativo,
   passkeys são device-bound sem backup/sync e o locker não trava páginas.
 - Pendências preservadas: LUKS/initrd, Windows Credential
   Provider, SSH, smoke test dos artefatos, testes destrutivos do locker e

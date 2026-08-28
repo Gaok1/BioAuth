@@ -152,11 +152,36 @@ and closes the channel, so replies go through `sendResponse` with `return true`.
 Sending to the native host is the mirror image — `browser.*` returns a promise
 and rejects a callback, `chrome.*` wants a callback and only returns a promise
 from Chrome 116 — so the code branches on the namespace rather than guessing.
-Firefox needs 128 or newer for `world: "MAIN"` content scripts. Copy the matching example from
-`desktop/browser-extension/native-host/` to `com.bioauth.webauthn.json`, replace
-the executable path, and for Chromium replace the unpacked extension ID.
+Firefox needs 128 or newer for `world: "MAIN"` content scripts.
 
-Per-user native-host locations:
+Register the native host with the installer rather than by hand:
+
+```powershell
+desktop\browser-extension\native-host\install.ps1 `
+  -HostPath desktop\target\release\phone-auth-webauthn-host.exe `
+  -ChromeExtensionId <id> -EdgeExtensionId <id>
+desktop\browser-extension\native-host\install.ps1 -Action Uninstall
+```
+
+```bash
+desktop/browser-extension/native-host/install.sh install \
+  --host desktop/target/release/phone-auth-webauthn-host \
+  --chrome-extension-id <id> --edge-extension-id <id>
+desktop/browser-extension/native-host/install.sh uninstall
+```
+
+Both install all three browsers by default and refuse to run without every ID
+they need; pass `-Browsers Firefox` / `--browsers firefox` to skip the Chromium
+ones. The Firefox ID defaults to the extension manifest's fixed
+`webauthn@bioauth.local`. A Chromium ID must be the real 32-character `a`–`p`
+extension ID — a placeholder is rejected rather than written into an allowlist,
+because that allowlist is what stops any other extension from reaching the host.
+
+Both resolve the executable to an absolute path and refuse a file not named
+`phone-auth-webauthn-host(.exe)`. Uninstall removes the manifests and, on
+Windows, the registry keys.
+
+Per-user native-host locations, which the installers write for you:
 
 | Browser | Linux | Windows registry key |
 |---|---|---|
