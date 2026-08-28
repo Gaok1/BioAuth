@@ -203,12 +203,12 @@ modelo de confiança e ficam fora do MVP.
 |---|---:|---:|---|
 | VLT-01 | P0 | ✅ | Schema v1 de login e nota segura em `phone-auth-protocol::vault` e `mobile/lib/core/protocol/vault_payloads.dart`: ID opaco, revisão, kind, nome, usuário, URI e data. `DEC-06` decide o que fica cifrado em repouso; `docs/protocol-application.md` registra que metadado viaja claro apenas dentro do canal já cifrado. Campos extras e múltiplas URLs ficaram fora, em `VLT-15`. |
 | VLT-02 | P0 | 🧪 | Store Android no canal `bioauth/vault_store`: AES-256-GCM no Keystore, auth-per-use com `BIOMETRIC_STRONG` apenas, invalidação em novo enrollment, tentativa de StrongBox com fallback só para outra implementação do Keystore, blob cifrado em storage privado e CRUD paginado com revisão otimista. Nada sensível passa por `shared_preferences`. Testes JVM passam; a suíte instrumentada API 35 compila mas **nunca rodou** — não havia device nem emulador. Teto é 🧪 até rodar em hardware. Entregue por `T3`. |
-| VLT-03 | P0 | ⬜ | Criar CRUD mobile com busca, confirmação biométrica para revelar/copiar, auto-lock ao background e proteção contra screenshots/recents nas telas sensíveis. |
-| VLT-04 | P0 | 🧪 | Formato de fio das cinco operações existe nos dois lados, com revisão otimista, paginação por cursor, limites e recusa do prefixo de tamanho antes de alocar; o binding vem do `ApplicationFrame` de `FND-05`. Vetor compartilhado prova que os encoders Rust e Dart concordam byte a byte. Falta o handler dos dois lados e a taxonomia de erro genérica, então o protocolo ainda não foi exercido de ponta a ponta. |
-| VLT-05 | P0 | ⬜ | Implementar exportação criptografada e restauração conforme `DEC-03`, com teste de aparelho novo. Export nunca pode gerar JSON/CSV claro sem aviso e gesto explícito. |
+| VLT-03 | P0 | 🧪 | CRUD mobile na aba Cofre: busca local, biometria por uso para revelar e copiar, auto-lock ao sair do foreground e `SensitiveContent` nas telas com segredo. Entregue por `T5`. Teto é 🧪 pelo mesmo motivo de `VLT-02`: o store nunca rodou em Keystore de verdade. |
+| VLT-04 | P0 | 🧪 | As cinco operações têm handler dos dois lados. No telefone `VaultService` confere kind/binding/expiração, exige credencial de propósito `vault` e serve pelo store do Keystore; no desktop `phone-auth-agent::vault` pagina `vault.list` e busca por `vault.fetch`, com teto de páginas e recusa de cursor repetido. `ApplicationErrorCode` fixa três códigos byte a byte em Rust e Dart, e item ausente, revisão vencida e biometria recusada respondem o mesmo. Entregue por `T6`; `T6b` deu chamador ao caminho de leitura com `phone-auth vault list/copy/generate`. Teto é 🧪: os dois handlers só foram exercidos contra duplos — nenhum frame Rust chegou a um telefone real. |
+| VLT-05 | P0 | 🧪 | Backup criptografado em `docs/vault-export-format.md`: 32 bytes do CSPRNG renderizados como código `BAV1`, HKDF-SHA256 e ChaCha20-Poly1305 sobre os itens com o cabeçalho como AAD — a mesma construção do locker. Contagem e data ficam fora do ciphertext para a tela dizer o que vai fazer antes de pedir o código, e são cobertas pelo AEAD. Export e restore são uma biometria cada, via `export`/`restore` nativos sobre o único blob. Restore **acrescenta e nunca substitui**; item já presente é contado, não duplicado. Nunca há caminho para JSON/CSV claro. 19 testes Dart + 5 JVM. Teto é 🧪: o drill de aparelho novo rodou contra store em memória, não contra dois telefones. |
 | VLT-06 | P0 | 🧪 | `phone-auth-agent::secret_memory` aloca alinhado a página, trava com `VirtualLock` (Windows) ou `mlock` (Unix), exclui de dump com `WerRegisterExcludedMemoryBlock` / `MADV_DONTDUMP`, e faz wipe volátil **antes** de destravar — entre unlock e free as páginas voltariam a ser elegíveis para o pagefile. `is_locked()` reporta recusa do SO em vez de fingir sucesso. 7 testes. Hibernação continua fora de alcance; `docs/dependencies.md` registra por quê. **Não é ✅ porque o caminho Linux nunca foi executado**, só compilado e verificado com clippy para `x86_64-unknown-linux-gnu`. Entregue por `T1`. |
 | VLT-07 | P0 | 🧪 | `phone-auth-agent::clipboard` copia com prazo e marca `CanIncludeInClipboardHistory`, `CanUploadToCloudClipboard` e `ExcludeClipboardContentFromMonitorProcessing`. A limpeza só dispara se o número de sequência ainda for o nosso — sem isso o timer apagaria o que o usuário copiou depois, que é perda de dado vestida de segurança. No Unix o segredo vai por **stdin**, nunca por argv, porque linha de comando é visível a qualquer usuário via `/proc`. O IPC expõe `vault.generate-copy` e o resultado não carrega a senha: um teste vai pelo socket real, lê o clipboard e procura esse texto nos bytes crus da resposta. 5 testes de módulo + 2 de IPC. **Mesma razão para 🧪**: o caminho X11/Wayland é compilado, não exercido. Entregue por `T1`. |
-| VLT-08 | P1 | ⬜ | Criar UI desktop para busca e pedido de cópia; mostrar no telefone computador, operação, item e domínio antes de cada liberação. |
+| VLT-08 | P1 | 🧪 | Aba Cofre na bandeja: lista ao abrir o painel (nunca no poll de status), filtra local, copia mandando a revisão da linha exibida e mostra o que o clipboard não protegeu. No telefone, toda operação que não seja `list` passa por uma folha que nomeia computador, operação, item, usuário e domínio antes do Keystore ser tocado; recusar ali significa que o store nunca é chamado. O nome do item vem do store do telefone, não do frame, e um id inexistente também recebe folha — responder mais rápido para item ausente é como se enumera um cofre. Serviço sem folha anexada recusa tudo além de `list`. 5 testes Dart + 5 na bandeja. Teto é 🧪: a folha nunca apareceu num aparelho. |
 | VLT-09 | P1 | ⬜ | Criar extensão de autofill separada do relay de passkeys: correspondência exata de origem, seleção com gesto do usuário, bloqueio de iframe inesperado e nenhuma injeção automática. Documentar que o navegador recebe o plaintext. |
 | VLT-10 | P1 | ⬜ | Integrar Android Autofill/Credential Manager para senhas; iOS Password AutoFill depende de `FND-09` e não bloqueia o primeiro corte Android. |
 | VLT-11 | P1 | ⬜ | Importar Bitwarden JSON e CSV genérico com preview, relatório de rejeições e limpeza segura do arquivo temporário. Importadores de outros formatos entram só com fixtures reais. |
@@ -258,7 +258,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 | REL-02 | P0 | 🧪 | A publicação falha se qualquer um dos quatro secrets Android estiver ausente; APK debug-signed só pode sair de dispatch não publicável e tem nome explícito. Falta configurar a chave real e validar um release production-signed. |
 | REL-03 | P0 | ✅ | `SECURITY.md` define disclosure privado, escopo, prazos e resposta a incidentes; `PRIVACY.md` documenta armazenamento local, tráfego LAN/BLE/asset links, logs, retenção e contato. Ambos estão ligados no README. |
 | REL-04 | P0 | ⬜ | Revisão externa do protocolo novo de vault/locker, container, recovery e fronteiras de autofill antes de declarar produção. A revisão existente do código pelo próprio projeto não substitui isso. O container do locker (`docs/locker-format.md`) é o primeiro item da fila. |
-| REL-05 | P0 | ⬜ | Fuzz/property tests para CBOR, handshake, native messaging, frames vault/locker, importadores e container de arquivos, com limites de CPU/memória. |
+| REL-05 | P0 | 🧪 | Três suítes de propriedade: `decoder_properties.rs` sobre todo `decode` do protocolo, `framing_properties.rs` sobre o enquadramento de socket e a remontagem BLE, e `container_properties.rs` sobre o container do locker. Provam que nenhum par pode causar pânico nem alocação escolhida por ele, e que nenhuma sequência de bytes decodifica para valor cuja forma canônica difira — sem isso uma assinatura cobre dois frames. O CI eleva `PROPTEST_CASES` a 4096 sob timeout que também é o limite de memória. 25 testes novos. Continua 🧪: faltam os importadores (`VLT-11`, ainda ⬜) e o handshake, que não tem decoder isolável hoje. |
 | REL-06 | P1 | 🧪 | CI ganhou instrumentação Android em emulador Google APIs/API 35. Ainda falta CI Windows; job iOS entra apenas quando iOS voltar ao escopo. |
 | REL-07 | P1 | ⬜ | Code signing do instalador Windows, assinatura/verificação de updates e checksums dos artefatos Linux. |
 | REL-08 | P1 | ⬜ | SBOM, auditoria automática de dependências/licenças e processo de atualização de Flutter/Rust/Electron sem quebrar stores. |
@@ -316,9 +316,12 @@ suíte própria em `install.test.ps1` e `install.test.sh`, que precisam ser
 rodadas à mão. Se a instalação do native host regredir, nada no gate atual
 avisa.
 
-**Onda 2**, ainda não iniciada: `T5` (`VLT-03`, CRUD mobile em Dart), `T6`
-(`VLT-04`, o handler dos dois lados) e `T7` (`REL-05`, fuzz). `T5` e `T6` são o
-"meio" que falta entre as duas pontas já prontas.
+**Onda 2, integrada em 2026-08-28.** `T5` (`VLT-03`) e `T6` (`VLT-04`) foram
+mergeados; `T6b` deu chamador ao caminho de leitura do cofre no CLI. `T7`
+(`REL-05`) foi feito em sequência, na mesma branch, junto com `VLT-08` e
+`VLT-05` — a partir daqui o trabalho deixou de ser paralelizável em worktrees,
+porque `VLT-08` toca telefone, bandeja e docs ao mesmo tempo. Os handoffs foram
+dobrados aqui e `docs/handoff/` foi removido de novo.
 
 Três coisas que a onda 1 deixou para quem pegar a onda 2:
 
@@ -347,7 +350,7 @@ real, e ele é um só por sessão.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **318 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **362 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -356,7 +359,7 @@ real, e ele é um só por sessão.
 - Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
   Ubuntu; a verificação Windows apenas prova compilação cruzada.
 - `desktop/ui/npm test`: **11 testes aprovados**.
-- `flutter analyze`: limpo. A suíte mobile soma **153 testes Flutter**, o
+- `flutter analyze`: limpo. A suíte mobile soma **183 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
   **36 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
