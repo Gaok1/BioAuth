@@ -112,7 +112,7 @@ implementações de segurança divergentes.
 | FND-13 | P0 | ✅ | `PairingController.reset` invalida a tentativa e rejeita/fecha qualquer sessão pendente antes de permitir novo scan; coberto por teste. |
 | FND-14 | P0 | ✅ | O controller mobile usa `attemptId` monotônico: resultado cancelado é fechado e nunca sobrescreve a tentativa atual; coberto por teste de duas futures fora de ordem. |
 | FND-15 | P1 | ✅ | A revogação no telefone agora exige confirmação que explica que o PC retém a chave pública até o usuário remover o pareamento também nele e que reconexão exige novo QR/códigos; coberto por widget test. |
-| FND-16 | P1 | ⬜ | Testar dois clientes IPC concorrentes (tray + CLI), incluindo subscribe, pairing, autorização, desconexão e respostas fora de ordem. |
+| FND-16 | P1 | 🧪 | `ipc::concurrent_client_tests` sobe um listener real em loopback e liga dois `AgentClient`: cada um recebe a própria resposta, evento chega aos dois inscritos, evento no meio de um request não vira resposta, saída de um cliente não derruba o outro nem deixa o subscriber pendurado, e token errado desconecta só o impostor. Rodado 12x seguidas sem flake. Falta cobrir pareamento e autorização concorrentes, que precisam de telefone ou simulador nos dois clientes. |
 
 O commit retomável de pareamento (`prepare/commit/commit-ack`) continua
 deliberadamente fora do escopo: QR novo repara um commit incompleto sem perder
@@ -289,7 +289,7 @@ próprios.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **296 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **301 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -313,7 +313,7 @@ próprios.
 - Limitações confirmadas em código: plugin iOS é scaffold, native host depende
   de instalação manual, conditional mediation usa o autenticador nativo,
   passkeys são device-bound sem backup/sync e o locker não trava páginas.
-- Pendências preservadas: concorrência IPC, LUKS/initrd, Windows Credential
+- Pendências preservadas: LUKS/initrd, Windows Credential
   Provider, SSH, smoke test dos artefatos, testes destrutivos do locker e
   matrizes com hardware físico.
 

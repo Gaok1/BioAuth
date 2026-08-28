@@ -447,3 +447,190 @@ mod tests {
         assert!(!take_webauthn_cancellation(&request_id));
     }
 }
+
+/// Two clients on one agent, which is the normal case: the tray sits
+/// subscribed for the whole session while the CLI connects, asks one thing and
+/// leaves.
+///
+/// These drive a real listener over loopback rather than calling `dispatch`
+/// directly. The bugs this is looking for — a reply going to the wrong socket,
+/// an event line being mistaken for a reply, one client's disconnect taking the
+/// other down — all live in the socket and threading layer that a direct
+/// `dispatch` call skips entirely.
+#[cfg(test)]
+mod concurrent_client_tests {
+    use super::*;
+    use crate::client::AgentClient;
+    use crate::config::AgentConfig;
+
+    /// Serves `service` on an ephemeral port and returns once the endpoint file
+    /// is readable, so a client can connect without racing the listener.
+    ///
+    /// The serving thread is deliberately left running: `serve` only returns on
+    /// listener failure, and the test process exiting is what stops it.
+    fn start_agent(name: &str) -> (Arc<Mutex<Service>>, Paths) {
+        let root = std::env::temp_dir().join(format!(
+            "phone-auth-ipc-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let paths = Paths::resolve(Some(root));
+        std::fs::create_dir_all(&paths.config_dir).expect("config dir");
+        std::fs::create_dir_all(&paths.data_dir).expect("data dir");
+        clear_endpoint(&paths);
+
+        let config = AgentConfig::load_or_create(&paths.config_file()).expect("config");
+        let service = Arc::new(Mutex::new(
+            Service::new(config, paths.clone(), None, Vec::new(), false).expect("service"),
+        ));
+
+        let served = Arc::clone(&service);
+        thread::spawn(move || {
+            let _ = serve(served, 0);
+        });
+
+        wait_until("the agent to publish its endpoint", || {
+            Endpoint::read(&paths).is_ok()
+        });
+        (service, paths)
+    }
+
+    /// Polls rather than sleeping a fixed amount: the listener usually comes up
+    /// in microseconds, and a fixed sleep would be either flaky or slow.
+    fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if ready() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    fn subscriber_count(service: &Arc<Mutex<Service>>) -> usize {
+        service
+            .lock()
+            .expect("service mutex")
+            .subscriber_count_for_test()
+    }
+
+    fn broadcast(service: &Arc<Mutex<Service>>) {
+        service
+            .lock()
+            .expect("service mutex")
+            .broadcast_for_test(Event::DevicesChanged);
+    }
+
+    #[test]
+    fn two_clients_each_get_their_own_reply() {
+        let (service, paths) = start_agent("two-clients");
+        let mut tray = AgentClient::connect(&paths).expect("tray connects");
+        let mut cli = AgentClient::connect(&paths).expect("cli connects");
+
+        let from_tray = tray.call("status", json!({})).expect("tray status");
+        let from_cli = cli.call("devices.list", json!({})).expect("cli devices");
+
+        // Interleaved on one service, so the answers must still be the ones
+        // each client asked for and not each other's.
+        assert!(from_tray.get("verifierId").is_some());
+        assert!(from_tray.get("devices").is_none());
+        assert!(from_cli.get("devices").is_some());
+
+        let expected = service.lock().expect("service mutex").status().verifier_id;
+        assert_eq!(from_tray["verifierId"], serde_json::json!(expected));
+    }
+
+    #[test]
+    fn an_event_reaches_every_subscribed_client() {
+        let (service, paths) = start_agent("fanout");
+        let mut tray = AgentClient::connect(&paths).expect("tray connects");
+        let mut second = AgentClient::connect(&paths).expect("second connects");
+
+        tray.call("subscribe", json!({})).expect("tray subscribes");
+        second
+            .call("subscribe", json!({}))
+            .expect("second subscribes");
+        wait_until("both subscriptions to register", || {
+            subscriber_count(&service) == 2
+        });
+
+        broadcast(&service);
+
+        // A call issued after the event forces each client to read past the
+        // event line to find its reply. If the pushes had gone to one socket
+        // only, or been miscounted as replies, this is where it shows.
+        assert!(tray.call("status", json!({})).is_ok());
+        assert!(second.call("status", json!({})).is_ok());
+        assert_eq!(subscriber_count(&service), 2);
+    }
+
+    /// The reason `read_reply` skips lines without a matching id. A subscribed
+    /// client has events arriving whenever the agent feels like it, including
+    /// in the middle of a request it is waiting on.
+    #[test]
+    fn events_arriving_mid_request_do_not_become_the_reply() {
+        let (service, paths) = start_agent("interleaved");
+        let mut client = AgentClient::connect(&paths).expect("connects");
+        client.call("subscribe", json!({})).expect("subscribes");
+        wait_until("the subscription to register", || {
+            subscriber_count(&service) == 1
+        });
+
+        for _ in 0..16 {
+            broadcast(&service);
+        }
+
+        // Each reply must be the one for the call just made, in order, with a
+        // backlog of event lines sitting in the socket ahead of it.
+        for _ in 0..4 {
+            let status = client.call("status", json!({})).expect("status");
+            assert!(status.get("verifierId").is_some());
+            broadcast(&service);
+        }
+    }
+
+    #[test]
+    fn one_client_leaving_does_not_disturb_the_other() {
+        let (service, paths) = start_agent("disconnect");
+        let mut staying = AgentClient::connect(&paths).expect("staying connects");
+        let mut leaving = AgentClient::connect(&paths).expect("leaving connects");
+
+        staying.call("subscribe", json!({})).expect("subscribe");
+        leaving.call("subscribe", json!({})).expect("subscribe");
+        wait_until("both subscriptions to register", || {
+            subscriber_count(&service) == 2
+        });
+
+        drop(leaving);
+
+        // The pump only notices the closed socket when it tries to write, so
+        // the drop alone proves nothing: it takes a broadcast to prune.
+        wait_until("the departed client to be pruned", || {
+            broadcast(&service);
+            subscriber_count(&service) == 1
+        });
+
+        assert!(staying.call("status", json!({})).is_ok());
+    }
+
+    /// A wrong token must not merely fail the call: the connection is with
+    /// someone who could not read the endpoint file, so it ends.
+    #[test]
+    fn a_client_with_the_wrong_token_is_disconnected_without_disturbing_the_others() {
+        let (_service, paths) = start_agent("bad-token");
+        let mut honest = AgentClient::connect(&paths).expect("honest connects");
+        let endpoint = Endpoint::read(&paths).expect("endpoint");
+
+        let mut impostor =
+            AgentClient::connect_to(endpoint.port, "not-the-token").expect("impostor connects");
+        let refused = impostor.call("status", json!({})).expect_err("must refuse");
+        assert_eq!(refused.code(), "unauthorized");
+
+        // Second call on the same connection: the agent hung up after the
+        // first, so this fails as a dead socket rather than as another reply.
+        assert!(impostor.call("status", json!({})).is_err());
+
+        assert!(honest.call("status", json!({})).is_ok());
+    }
+}
