@@ -16,8 +16,9 @@ mod secret;
 mod stream;
 
 pub use engine::{
-    inspect, lock_file, rekey_file, unlock_file, KeyCustodian, LockOutcome, LockPlan, LockerInfo,
-    UnlockKey, UnlockOutcome, UnwrapRequest, WrapRequest, WrapperInfo,
+    ensure_sole_regular_file, inspect, lock_file, rekey_file, unlock_file, KeyCustodian,
+    LockOutcome, LockPlan, LockerInfo, UnlockKey, UnlockOutcome, UnwrapRequest, WrapRequest,
+    WrapperInfo,
 };
 pub use format::{
     binding_of, wrapper_aad, CoreHeader, Metadata, Wrapper, WrapperKind, CHUNK_SIZE,
@@ -55,6 +56,11 @@ pub enum LockerError {
     BadRecoveryCode,
     /// The name inside the container could not be used as a file name.
     UnsafeName,
+    /// The path is a symlink, a directory or a device, not a file to encrypt.
+    NotARegularFile(&'static str),
+    /// The file about to be removed has a second name, so removing this one
+    /// would leave the contents readable under the other.
+    SharedOriginal,
     /// The destination already exists. The locker never writes over a file.
     DestinationExists(std::path::PathBuf),
     /// The input changed size while it was being read.
@@ -83,6 +89,16 @@ impl fmt::Display for LockerError {
             },
             Self::BadRecoveryCode => f.write_str("invalid recovery code"),
             Self::UnsafeName => f.write_str("container holds an unusable file name"),
+            Self::NotARegularFile(what) => {
+                write!(
+                    f,
+                    "the locker only works on regular files, and this is {what}"
+                )
+            }
+            Self::SharedOriginal => f.write_str(
+                "this file has another name pointing at the same contents; \
+                 removing this one would leave it readable under the other",
+            ),
             Self::DestinationExists(path) => write!(f, "{} already exists", path.display()),
             Self::InputChanged => f.write_str("the file changed while it was being read"),
             Self::Denied(message) => f.write_str(message),

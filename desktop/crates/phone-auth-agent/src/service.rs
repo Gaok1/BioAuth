@@ -732,6 +732,11 @@ impl Service {
         params: &LockerLockParams,
     ) -> Result<LockerLockResult, ServiceError> {
         let source = absolute_path(&params.path)?;
+        // Asked before the phone is: this agent deletes the plaintext itself,
+        // so it owes the same refusal the engine would have made if it were
+        // the one doing the deleting.
+        phone_auth_locker::ensure_sole_regular_file(&source, !params.keep_original)
+            .map_err(locker_error)?;
         let recovery_path = absolute_path(&params.recovery_code_path)?;
         // Claimed up front: finding out the code has nowhere to go after the
         // container exists would be finding out too late.
@@ -1106,6 +1111,11 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
         Error::NoWrapper(_) => "no-wrapper",
         Error::BadRecoveryCode => "bad-recovery-code",
         Error::UnsafeName => "unsafe-name",
+        // Distinct codes because the two have different fixes: one path is not
+        // a file the locker will touch, the other is a file whose contents
+        // would survive under a name this operation is not removing.
+        Error::NotARegularFile(_) => "not-a-regular-file",
+        Error::SharedOriginal => "shared-original",
         Error::DestinationExists(_) => "destination-exists",
         Error::InputChanged => "input-changed",
         Error::Io(_) => "io-failed",

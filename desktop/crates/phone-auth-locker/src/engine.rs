@@ -119,13 +119,9 @@ pub fn lock_file(
         .and_then(|name| name.to_str())
         .ok_or(LockerError::UnsafeName)?
         .to_owned();
-    let metadata = std::fs::metadata(source)?;
-    if !metadata.is_file() {
-        // Directories, sockets and symlinked oddities are refused rather than
-        // followed: `FLK-08` decides what they should mean, and guessing here
-        // would be the insecure kind of convenient.
-        return Err(LockerError::Malformed("not a regular file"));
-    }
+    // Checked against the name the caller gave, not against whatever it points
+    // at, and checked as strictly as the plan is destructive.
+    let metadata = sole_regular_file(source, plan.remove_original)?;
     let plaintext_len = metadata.len();
 
     let destination = plan.destination.clone().unwrap_or_else(|| {
@@ -202,6 +198,9 @@ pub fn unlock_file(
     remove_container: bool,
     key: UnlockKey<'_>,
 ) -> Result<UnlockOutcome> {
+    // Reading through a link harms nothing, but deleting one does: it would
+    // remove the name and leave the container itself where it was.
+    sole_regular_file(container, remove_container)?;
     let mut reader = BufReader::new(File::open(container)?);
     let head = ContainerHead::read(&mut reader)?;
     let container_name = container
@@ -270,6 +269,11 @@ pub fn rekey_file(
     current_recovery: Option<&RecoveryKey>,
     new_recovery: bool,
 ) -> Result<Option<String>> {
+    // A rekey exists to stop the old wrapper from opening the file, and it
+    // works by renaming the container away. Through a link, or with a second
+    // link on the container, the old wrappers would survive under the other
+    // name and the revocation would be imaginary.
+    sole_regular_file(container, true)?;
     let mut reader = BufReader::new(File::open(container)?);
     let head = ContainerHead::read(&mut reader)?;
     let container_name = container
@@ -536,6 +540,69 @@ fn decrypt_chunks(
     }
 }
 
+/// The same check `lock_file` makes, for a caller that removes the original
+/// itself.
+///
+/// The agent cannot let the engine delete the plaintext — it has to store the
+/// recovery code first — so it takes that responsibility and therefore has to
+/// take this check with it. Running it up front also means a file that will be
+/// refused is refused before the phone is asked for a fingerprint.
+pub fn ensure_sole_regular_file(path: &Path, will_be_removed: bool) -> Result<()> {
+    sole_regular_file(path, will_be_removed).map(|_| ())
+}
+
+/// Checks that a path is a plain file, and optionally that it is the only name
+/// for its contents.
+///
+/// `sole_name` is set by every caller that is about to delete or rename the
+/// path away. A symbolic link and a second hard link are the same problem in
+/// two shapes: the name being removed is not the only way to reach the bytes,
+/// so the operation would report a file as locked, revoked or consumed while
+/// leaving it exactly where it was under the other name. Refusing is the only
+/// answer that cannot be silently wrong; following the link and deleting the
+/// target would be a locker that deletes files nobody named.
+fn sole_regular_file(path: &Path, sole_name: bool) -> Result<std::fs::Metadata> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(LockerError::NotARegularFile("a symbolic link"));
+    }
+    if file_type.is_dir() {
+        return Err(LockerError::NotARegularFile("a directory"));
+    }
+    if !file_type.is_file() {
+        return Err(LockerError::NotARegularFile("not a regular file"));
+    }
+    if sole_name && hard_links(&metadata) > 1 {
+        return Err(LockerError::SharedOriginal);
+    }
+    Ok(metadata)
+}
+
+#[cfg(unix)]
+fn hard_links(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink()
+}
+
+/// Windows keeps its link count behind an unstable standard library API, so a
+/// second hard link is not detected there. The gap is recorded in
+/// `docs/locker-format.md` rather than closed with a new dependency; symlinks
+/// and junctions are reparse points and are caught above on every platform.
+#[cfg(not(unix))]
+fn hard_links(_metadata: &std::fs::Metadata) -> u64 {
+    1
+}
+
+/// Whether anything at all occupies a path.
+///
+/// Deliberately not `Path::exists`, which follows links and so answers `false`
+/// for a dangling symlink — the one case where a rename would quietly consume
+/// something that was already there.
+fn occupied(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
 /// A file that appears at its destination complete or not at all.
 struct AtomicFile {
     temporary: PathBuf,
@@ -546,7 +613,7 @@ struct AtomicFile {
 
 impl AtomicFile {
     fn create(destination: &Path) -> Result<Self> {
-        if destination.exists() {
+        if occupied(destination) {
             return Err(LockerError::DestinationExists(destination.to_path_buf()));
         }
         let temporary = temporary_sibling(destination)?;
@@ -574,7 +641,7 @@ impl AtomicFile {
         // check is what stops one from being replaced between the check in
         // `create` and here. Either way the loser of that race gets an error,
         // not a lost file.
-        if self.destination.exists() {
+        if occupied(&self.destination) {
             return Err(LockerError::DestinationExists(self.destination.clone()));
         }
         std::fs::rename(&self.temporary, &self.destination)?;

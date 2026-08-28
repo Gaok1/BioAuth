@@ -207,6 +207,42 @@ an SSD the plaintext may remain recoverable from unreferenced blocks; the
 locker does not claim to erase it, and full-disk encryption is the answer to
 that threat rather than an overwrite pass this format cannot make reliable.
 
+## Names, links and the attributes that are not carried
+
+Every operation that reports something as gone works by removing or renaming a
+*name*. A symbolic link and a second hard link both break the assumption behind
+that report: the name is no longer the only way to reach the bytes, so deleting
+it would say "locked, original removed" while the plaintext stayed exactly
+where it was under the other name. Following the link instead would be worse —
+a locker that deletes a file the user never named.
+
+So a path is refused, before the phone is asked for anything, when:
+
+- it is a symbolic link, a directory, a device or a socket — on both the file
+  being locked and the container being unlocked or re-keyed;
+- it has a second hard link **and** the operation would remove or rename it.
+  Locking with the plaintext kept is still allowed, because nothing is then
+  claimed to have disappeared.
+
+A re-key is held to the strict rule unconditionally: it revokes the old
+wrappers by renaming the container away, and through a link the old wrappers
+would survive under the other name, which makes the revocation imaginary.
+
+Two consequences worth stating plainly:
+
+- **Windows cannot count hard links** through the stable standard library, so a
+  second hard link is not detected there. Symlinks and junctions are reparse
+  points and *are* caught on every platform. Closing the remaining gap means a
+  `windows-sys` dependency and is not done.
+- **Destination checks do not use `Path::exists`**, which follows links and
+  answers "nothing there" for a dangling symlink — the one case where a rename
+  would quietly consume something already on disk.
+
+Of the attributes a file carries, the container stores only the name, the Unix
+mode and the modification time. Windows ACLs, alternate data streams, extended
+attributes, ownership and creation time are **not** captured and are lost when
+a file is locked with its original removed. Nothing warns about this yet.
+
 ## What this format does not do
 
 - It does not hide the size of a file, the number of files, or when they were

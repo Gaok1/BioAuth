@@ -164,7 +164,7 @@ O formato está especificado em `docs/locker-format.md`, a engine vive em
 | FLK-05 | P0 | ✅ | Toda escrita vai para um temporário no mesmo diretório, com `fsync`, rename e `fsync` do diretório onde a plataforma suporta; o container é reaberto e verificado inteiro antes de o original ser removido, e o destino nunca é sobrescrito. Coberto por testes de recusa, falha e arquivo que cresce durante a leitura. |
 | FLK-06 | P0 | ✅ | Wrapper offline com código de recuperação de 256 bits em base32 agrupado. O drill roda pelo binário publicado em `locker_recovery_drill.rs`: sem agent, sem sessão, sem telefone. O código é escrito no arquivo que o usuário escolher e nunca atravessa o IPC. |
 | FLK-07 | P1 | ✅ | `phone-auth locker lock/unlock/status/rekey`, com `status` e recuperação rodando no próprio processo da CLI. `lock` exige `--recovery-out` e o agent devolve apenas o caminho, nunca o código: nenhuma UI recebe chave, código ou plaintext. Ainda não existe UI gráfica de locker — quando existir, ela chama os mesmos métodos IPC. |
-| FLK-08 | P1 | 🧪 | Diretórios e não-arquivos são recusados em vez de seguidos; nomes com separador, `..`, controle ou nome reservado do Windows são recusados na leitura da metadata; modo Unix e mtime são restaurados quando a plataforma permite. Symlinks, hardlinks, ACLs e ADS do Windows ainda não têm comportamento decidido. |
+| FLK-08 | P1 | 🧪 | Diretórios e não-arquivos são recusados em vez de seguidos; nomes com separador, `..`, controle ou nome reservado do Windows são recusados na leitura da metadata; modo Unix e mtime são restaurados quando a plataforma permite. Symlink e hardlink agora têm comportamento decidido e implementado em `docs/locker-format.md`: um caminho é recusado antes de qualquer biometria quando é link simbólico/diretório/dispositivo, ou quando tem um segundo hardlink **e** a operação apagaria ou renomearia o nome; rekey é sempre estrito; destino usa `symlink_metadata` para não consumir um symlink pendurado. O agent também faz a checagem porque ele mesmo apaga o plaintext. Faltam: contagem de hardlink no Windows (exige `windows-sys`), aviso de que ACL/ADS/xattr não são carregados, e os quatro testes novos são `cfg(unix)` — compilam cruzado mas só executam no CI Ubuntu. |
 | FLK-09 | P1 | ⬜ | Não há operação em lote, e cada unlock exige biometria por uso, então não existe caminho automático hoje. Falta o trabalho real: limites, confirmação por lote e o detalhe de quantidade/tamanho/origem quando o lote existir. |
 | FLK-10 | P1 | 🧪 | Cobertos: round-trip byte a byte, arquivo vazio, chunk exato, cauda parcial, corrupção amostrada em todo o container, truncamento, bytes sobrando, troca de chunks, splice entre containers, chave errada, recusa em cada fase, destino ocupado e arquivo que cresce durante a leitura. Faltam multi-GB, disco cheio e kill do processo por sinal. |
 | FLK-11 | P2 | ⬜ | Integração com Explorer/Nautilus e drag-and-drop depois da CLI estar estável. Montagem de drive virtual/FUSE fica fora do MVP. |
@@ -283,9 +283,14 @@ próprios.
 
 ## Evidência desta auditoria
 
-- `cargo test --workspace`: **270 testes aprovados** localmente, incluindo 36 do
-  `phone-auth-locker`, 6 do custodiante do agent, 8 dos payloads de protocolo e
-  2 do drill de recuperação pela CLI.
+- `cargo test --workspace`: **270 testes aprovados** localmente no Windows,
+  incluindo 36 do `phone-auth-locker`, 6 do custodiante do agent, 8 dos payloads
+  de protocolo e 2 do drill de recuperação pela CLI.
+- Os 4 testes de link do `FLK-08` são `cfg(unix)` e **não rodaram** aqui: esta
+  máquina não tem privilégio para criar symlink. Eles foram verificados com
+  `cargo check --tests --target x86_64-unknown-linux-gnu`, o que prova que
+  compilam, não que passam. O CI Ubuntu é quem os executa, e no Linux o total
+  esperado é 274.
 - `cargo clippy --workspace --all-targets` e `cargo fmt --all --check`: limpos.
 - `desktop/ui/npm test`: **7 testes aprovados** localmente.
 - `flutter test` e a suíte Kotlin **não puderam ser executados nesta máquina**

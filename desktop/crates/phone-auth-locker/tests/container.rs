@@ -102,6 +102,11 @@ impl Sandbox {
         self.0.join(name)
     }
 
+    #[cfg(unix)]
+    fn root(&self) -> &Path {
+        &self.0
+    }
+
     fn entries(&self) -> usize {
         std::fs::read_dir(&self.0).expect("list").count()
     }
@@ -485,7 +490,139 @@ fn a_directory_is_not_a_file_the_locker_will_pretend_to_encrypt() {
     let mut phone = FakePhone::new();
     let directory = sandbox.path("folder");
     std::fs::create_dir(&directory).expect("mkdir");
-    assert!(lock_file(&directory, &LockPlan::default(), &mut phone).is_err());
+    assert!(matches!(
+        lock_file(&directory, &LockPlan::default(), &mut phone),
+        Err(LockerError::NotARegularFile(_))
+    ));
+}
+
+/// Links, where a name and the bytes behind it stop being the same thing.
+///
+/// Every locker operation that reports something as gone works by removing or
+/// renaming a *name*. Through a link that name is not the only way back to the
+/// contents, so the report would be false and the file would still be sitting
+/// there in plaintext. These are Unix-only because creating a symlink on
+/// Windows needs a privilege a test runner does not have; the checks
+/// themselves run on every platform, except that Windows cannot count hard
+/// links (see `docs/locker-format.md`).
+#[cfg(unix)]
+mod links {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_symlink_is_never_the_thing_that_gets_locked() {
+        let sandbox = Sandbox::new("symlink-source");
+        let secret = sandbox.file("secret.txt", b"the actual contents");
+        let link = sandbox.path("shortcut.txt");
+        symlink(&secret, &link).expect("symlink");
+        let mut phone = FakePhone::new();
+
+        // Following it would encrypt the target and then delete the link:
+        // "locked and original removed", with the plaintext still on disk.
+        assert!(matches!(
+            lock_file(&link, &LockPlan::default(), &mut phone),
+            Err(LockerError::NotARegularFile(_))
+        ));
+        assert_eq!(
+            std::fs::read(&secret).expect("target survives"),
+            b"the actual contents"
+        );
+        assert!(!container_of(&link).exists());
+        assert!(!container_of(&secret).exists());
+    }
+
+    #[test]
+    fn a_file_with_a_second_name_is_locked_only_when_nothing_is_deleted() {
+        let sandbox = Sandbox::new("hard-link");
+        let source = sandbox.file("notes.txt", b"one file, two names");
+        let second = sandbox.path("also-notes.txt");
+        std::fs::hard_link(&source, &second).expect("hard link");
+        let mut phone = FakePhone::new();
+
+        // Removing one name leaves the contents readable under the other, so
+        // the destructive plan is refused outright.
+        assert!(matches!(
+            lock_file(&source, &LockPlan::default(), &mut phone),
+            Err(LockerError::SharedOriginal)
+        ));
+        assert!(!container_of(&source).exists());
+
+        // Keeping the plaintext is the honest version of the same request, and
+        // it is allowed: nothing is claimed to have disappeared.
+        let outcome = lock_file(
+            &source,
+            &LockPlan {
+                destination: None,
+                remove_original: false,
+            },
+            &mut phone,
+        )
+        .expect("lock without removing");
+        assert!(!outcome.original_removed);
+        assert!(source.exists() && second.exists());
+    }
+
+    #[test]
+    fn a_container_reached_through_a_link_is_read_but_never_consumed() {
+        let sandbox = Sandbox::new("symlink-container");
+        let source = sandbox.file("report.pdf", &[7u8; 5000]);
+        let mut phone = FakePhone::new();
+        let outcome = lock_file(&source, &LockPlan::default(), &mut phone).expect("lock");
+        let link = sandbox.path("report.link");
+        symlink(&outcome.container, &link).expect("symlink");
+
+        // Deleting the link would leave the container; renaming it away during
+        // a rekey would leave the old wrappers able to open the file, which is
+        // the one thing a rekey exists to prevent.
+        assert!(matches!(
+            unlock_file(
+                &link,
+                Some(sandbox.root()),
+                true,
+                UnlockKey::Phone(&mut phone)
+            ),
+            Err(LockerError::NotARegularFile(_))
+        ));
+        assert!(matches!(
+            rekey_file(&link, &mut phone, None, false),
+            Err(LockerError::NotARegularFile(_))
+        ));
+        assert!(outcome.container.exists());
+
+        // Reading through it is harmless, so it stays allowed.
+        let restored = unlock_file(&link, None, false, UnlockKey::Phone(&mut phone))
+            .expect("unlock through the link");
+        assert_eq!(
+            std::fs::read(&restored.restored).expect("read"),
+            [7u8; 5000]
+        );
+    }
+
+    #[test]
+    fn a_dangling_symlink_at_the_destination_is_not_written_over() {
+        let sandbox = Sandbox::new("dangling-destination");
+        let source = sandbox.file("payslip.pdf", b"salary");
+        let destination = sandbox.path("payslip.balock");
+        symlink(sandbox.path("nowhere"), &destination).expect("symlink");
+        let mut phone = FakePhone::new();
+
+        // `Path::exists` follows the link and answers "nothing there", which is
+        // how a rename quietly eats something that was already on disk.
+        assert!(matches!(
+            lock_file(
+                &source,
+                &LockPlan {
+                    destination: Some(destination.clone()),
+                    remove_original: true,
+                },
+                &mut phone,
+            ),
+            Err(LockerError::DestinationExists(_))
+        ));
+        assert!(std::fs::symlink_metadata(&destination).is_ok());
+        assert!(source.exists());
+    }
 }
 
 #[test]
