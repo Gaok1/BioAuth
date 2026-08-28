@@ -16,6 +16,7 @@ mod enrolment;
 pub mod locker;
 mod request;
 mod response;
+pub mod vault;
 
 pub use application::{ApplicationFrame, ApplicationFrameKind, MAX_APPLICATION_PAYLOAD_BYTES};
 pub use enrolment::{CredentialPurpose, Enrolment, KeyKind};
@@ -90,6 +91,11 @@ pub enum ProtocolError {
     InvalidApplicationKind(u64),
     InvalidOperation,
     PayloadSize(usize),
+    /// A vault item declared a kind this build does not know.
+    InvalidItemKind(u64),
+    /// A vault message carried revision zero. Revisions start at one, so this
+    /// is a caller that never read the item it is trying to replace.
+    InvalidRevision,
     /// A field reserved for a future version was not zero. Fails closed rather
     /// than ignoring a value this build does not understand.
     InvalidReservedField(u64),
@@ -132,6 +138,8 @@ impl fmt::Display for ProtocolError {
             Self::InvalidReservedField(value) => {
                 write!(f, "reserved field must be zero, got {value}")
             }
+            Self::InvalidItemKind(kind) => write!(f, "unknown vault item kind: {kind}"),
+            Self::InvalidRevision => f.write_str("vault revision must start at one"),
         }
     }
 }
