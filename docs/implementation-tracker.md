@@ -263,7 +263,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 | REL-07 | P1 | 🧪 | O `SHA256SUMS.txt` já existia e pega download corrompido; não pega download **substituído**, porque quem trocasse o arquivo trocaria a lista ao lado. Todo artefato agora carrega proveniência assinada (`actions/attest-build-provenance`), verificável com `gh attestation verify <arquivo> --repo ...`, que diz qual commit e qual run produziram o arquivo — e não existe chave para o projeto guardar ou perder, porque o certificado é emitido para a execução. Assinatura Authenticode do instalador Windows entrou no mesmo formato dos secrets Android: dispatch pode construir sem assinar, publicação não pode; `//tr` carimba o tempo para a assinatura sobreviver ao certificado, e `signtool verify //pa` confere que pegou. **Depende do dono:** `WINDOWS_CERT_BASE64` e `WINDOWS_CERT_PASSWORD` não estão configurados, e sem eles a publicação falha por desenho. |
 | REL-08 | P1 | ⬜ | SBOM, auditoria automática de dependências/licenças e processo de atualização de Flutter/Rust/Electron sem quebrar stores. |
 | REL-09 | P1 | ⬜ | Testes de acessibilidade, leitor de tela, teclado, contraste e localização consistente. Operações críticas não podem depender só de cor/ícone. |
-| REL-10 | P1 | ⬜ | Backups e restore drill em toda release que mude schema/crypto; fixtures antigas ficam versionadas no repositório. |
+| REL-10 | P1 | 🧪 | Duas fixtures versionadas no repositório, uma por formato que perde dado se quebrar em silêncio: `test/fixtures/vault-export-v1.bakv` com seu código ao lado, e `crates/phone-auth-locker/tests/fixtures/container-v1.balock` com o código de recuperação. As drills abrem **bytes que o código de hoje não produziu** — os round-trips existentes provam que o encoder concorda consigo mesmo, que é justamente a propriedade que continua verdadeira enquanto o formato muda por baixo. Cada drill inclui um teste de que a fixture não é reproduzível selando de novo, para não virar circular. Os dois geradores **recusam sobrescrever** uma fixture existente: quem não consegue ler a v1 precisa de uma v2 e de um leitor da v1, não de uma fixture nova. A do cofre usa conteúdo não-ASCII de propósito. 8 testes. Teto é 🧪: o drill de aparelho novo de verdade (`DEC-03`) continua sem hardware. |
 | REL-11 | P1 | 🧪 | `private_files` narra o diretório em vez de cada arquivo, porque o store de pareamento e o audit log são escritos por `fs::write` em código que não tem motivo para saber de permissão: `0o700` no Unix nega travessia, e no Windows uma DACL explícita só do dono, marcada herdável e `PROTECTED` para que um pai permissivo não reintroduza entradas. A chave de identidade e o arquivo de endpoint ganham escrita própria — restrita **antes** do primeiro byte, `create_new` contra symlink plantado, e rename, que também torna o endpoint atômico para leitores. Antes disso a chave privada do agent não era protegida em plataforma nenhuma além do Unix, e o audit log em nenhuma. 5 testes + verificação real via `icacls`: endpoint sai com uma entrada só, e `devices.json` sai com a mesma, herdada. Teto é 🧪: a metade negativa — que outro usuário **não** lê — precisa de duas contas, que um teste unitário não tem. |
 | REL-12 | P2 | ⬜ | Auto-update seguro e rollback depois que assinatura e migrações estiverem resolvidos. |
 | REL-13 | P0 | ⬜ | Criar integração física PC ↔ celular com injeção de queda em cada fronteira de `pairing-reliability-plan.md`; os testes atuais usam duplos. |
@@ -350,7 +350,7 @@ real, e ele é um só por sessão.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **375 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **379 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -359,7 +359,7 @@ real, e ele é um só por sessão.
 - Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
   Ubuntu; a verificação Windows apenas prova compilação cruzada.
 - `desktop/ui/npm test`: **11 testes aprovados**.
-- `flutter analyze`: limpo. A suíte mobile soma **212 testes Flutter**, o
+- `flutter analyze`: limpo. A suíte mobile soma **216 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
   **36 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
