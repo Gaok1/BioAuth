@@ -77,7 +77,7 @@ continuar passando enquanto os produtos novos são construídos.
 |---|---:|---:|---|
 | HOT-01 | P0 | 🧪 | Versão **0.1.5** sincronizada em `desktop/Cargo.toml`, `mobile/pubspec.yaml`, `desktop/ui/package.json` e `desktop/nixos/package.nix`; locks Cargo/npm atualizados e gate local aprovado. Falta publicar a tag/release para concluir o corte. |
 | HOT-02 | P0 | 🧪 | O workflow agora exige os quatro secrets de assinatura Android em qualquer publicação, falha com configuração parcial e só permite APK debug-signed, com nome distinto, em `workflow_dispatch` não publicável. Ainda cabe ao dono configurar `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` e `ANDROID_KEY_PASSWORD`. |
-| HOT-03 | P0 | 🧪 | `flake.lock` foi gerado com Nix, fixa `nixpkgs`, `flake-utils` e `systems` e passa validação estrutural; precisa entrar no próximo commit para concluir o aceite. |
+| HOT-03 | P0 | ✅ | `flake.lock` foi gerado com Nix, fixa `nixpkgs`, `flake-utils` e `systems`, passa validação estrutural e **está versionado**. O texto anterior dizia que faltava commitar; estava desatualizado. |
 
 ## Decisões que precisam ser fechadas primeiro
 
@@ -197,13 +197,13 @@ modelo de confiança e ficam fora do MVP.
 | VLT-03 | P0 | ⬜ | Criar CRUD mobile com busca, confirmação biométrica para revelar/copiar, auto-lock ao background e proteção contra screenshots/recents nas telas sensíveis. |
 | VLT-04 | P0 | 🧪 | Formato de fio das cinco operações existe nos dois lados, com revisão otimista, paginação por cursor, limites e recusa do prefixo de tamanho antes de alocar; o binding vem do `ApplicationFrame` de `FND-05`. Vetor compartilhado prova que os encoders Rust e Dart concordam byte a byte. Falta o handler dos dois lados e a taxonomia de erro genérica, então o protocolo ainda não foi exercido de ponta a ponta. |
 | VLT-05 | P0 | ⬜ | Implementar exportação criptografada e restauração conforme `DEC-03`, com teste de aparelho novo. Export nunca pode gerar JSON/CSV claro sem aviso e gesto explícito. |
-| VLT-06 | P0 | ⛔ | Bloqueado por decisão em aberto, não por trabalho: `docs/dependencies.md` recusou explicitamente `libc`/`windows-sys` para `mlock`/`VirtualLock` no File Locker, argumentando que swap é o que a criptografia de disco cobre. O mesmo argumento se aplica aqui, mas uma senha buscada pode ficar no agent enquanto o usuário cola, e uma chave de dados não. Decidir antes de implementar. A parte não bloqueada — Electron nunca receber senha, chave ou TOTP seed — continua valendo. |
-| VLT-07 | P0 | ⬜ | Implementar clipboard seguro no agent: clear-on-timer e, no Windows, exclusão de histórico/monitor/cloud clipboard. Definir comportamento honesto para X11 e Wayland, onde garantias diferem. |
+| VLT-06 | P0 | ⬜ | **Desbloqueado em 2026-08-28**: o dono aprovou `windows-sys`/`libc`. Implementar buffer que não sai do processo — `VirtualLock` + `WerRegisterExcludedMemoryBlock` no Windows, `mlock` + `MADV_DONTDUMP` no Linux, wipe volátil no drop — reportando honestamente quando o SO recusa o lock. Hibernação continua fora de alcance, e `docs/dependencies.md` registra por quê. A parte já valendo — Electron nunca receber senha, chave ou TOTP seed — continua. Executado por `T1` em `docs/parallel-work-plan.md`. |
+| VLT-07 | P0 | ⬜ | **Aprovado em 2026-08-28.** Implementar clipboard seguro no agent: clear-on-timer e, no Windows, exclusão de histórico/monitor/cloud clipboard. Definir comportamento honesto para X11 e Wayland, onde garantias diferem — o resultado reporta o que conseguiu, sem exibir cadeado que não existe. Executado por `T1` em `docs/parallel-work-plan.md`. |
 | VLT-08 | P1 | ⬜ | Criar UI desktop para busca e pedido de cópia; mostrar no telefone computador, operação, item e domínio antes de cada liberação. |
 | VLT-09 | P1 | ⬜ | Criar extensão de autofill separada do relay de passkeys: correspondência exata de origem, seleção com gesto do usuário, bloqueio de iframe inesperado e nenhuma injeção automática. Documentar que o navegador recebe o plaintext. |
 | VLT-10 | P1 | ⬜ | Integrar Android Autofill/Credential Manager para senhas; iOS Password AutoFill depende de `FND-09` e não bloqueia o primeiro corte Android. |
 | VLT-11 | P1 | ⬜ | Importar Bitwarden JSON e CSV genérico com preview, relatório de rejeições e limpeza segura do arquivo temporário. Importadores de outros formatos entram só com fixtures reais. |
-| VLT-12 | P1 | 🧪 | Gerador de **senha** em `phone-auth-agent::password`: alfabeto de 89 caracteres, amostragem uniforme por rejeição (nunca `%`), classes exigidas garantidas por redraw e não por posicionamento, saída em `Zeroizing` e nenhum histórico. Um teste de controle roda o amostrador enviesado pela mesma métrica para provar que o teste de viés não é vazio. Falta o gerador de **passphrase**: depende de escolher uma wordlist, que é decisão de licença e de tamanho de binário. |
+| VLT-12 | P1 | 🧪 | Gerador de **senha** em `phone-auth-agent::password`: alfabeto de 89 caracteres, amostragem uniforme por rejeição (nunca `%`), classes exigidas garantidas por redraw e não por posicionamento, saída em `Zeroizing` e nenhum histórico. Um teste de controle roda o amostrador enviesado pela mesma métrica para provar que o teste de viés não é vazio. Falta o gerador de **passphrase**: a wordlist da EFF (7776 palavras, CC-BY) foi **aprovada em 2026-08-28** e está registrada em `docs/dependencies.md`. Executado por `T2` em `docs/parallel-work-plan.md`. |
 | VLT-13 | P1 | ⬜ | Resolver conflitos, migrações, corrupção parcial e operação concorrente entre mobile, desktop e browser. Toda escrita precisa de revisão e commit atômico. |
 | VLT-14 | P1 | ⬜ | Testes de vazamento: logs, stack traces, notificações, screenshots, recents, audit log, IPC, crash dumps, clipboard e arquivos temporários. |
 | VLT-15 | P2 | ⬜ | TOTP local, favoritos e múltiplas URLs. Compartilhamento, organizações, anexos, cartões e identidades permanecem fora até nova threat model. |
@@ -285,6 +285,13 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 File Locker e vault podem compartilhar transporte, autorização, versionamento
 e recovery, mas **não** a mesma chave. WebAuthn também permanece com aliases
 próprios.
+
+### Execução em paralelo
+
+`docs/parallel-work-plan.md` fatia o trabalho desbloqueado em tracks que rodam
+em worktrees separados sem colidir, e define o que o agente integrador faz no
+fim. Regra que vale aqui: **nenhum track edita este arquivo**. Cada um deixa
+`docs/handoff/<TRACK-ID>.md` e o integrador dobra tudo aqui num commit só.
 
 ## Evidência desta auditoria
 

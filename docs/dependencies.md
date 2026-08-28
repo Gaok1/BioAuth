@@ -100,14 +100,52 @@ workspace dependencies; `zeroize` was promoted from a `phone-auth-locker`
 declaration to a workspace one when the agent became its second consumer, so
 the version is pinned in one place.
 
-An open decision is carried forward here rather than settled quietly. `VLT-06`
-asks for vault plaintext to sit in a `VirtualLock`/`mlock` buffer in the agent,
-which is exactly the `libc`/`windows-sys` dependency the File Locker section
-above declined for the data key. The two are not obviously the same case — a
-data key lives for one operation, whereas a fetched password may sit in the
-agent while the user pastes it — but the argument that swap is what full-disk
-encryption defends applies to both. Resolve it explicitly before implementing
-`VLT-06`, and update whichever of the two sections turns out to be wrong.
+### Resolved: page locking and the clipboard
+
+The open question recorded here — whether vault plaintext may use the
+`libc`/`windows-sys` dependency the File Locker section above declined — was
+put to the owner on 2026-08-28 and **approved**. `VLT-06` and `VLT-07` may add
+`windows-sys` under `cfg(windows)` and `libc` under `cfg(unix)`.
+
+The File Locker section is not wrong and stays as written. The two cases differ
+in exposure window: a data key lives for one operation, whereas a fetched
+password sits in the agent while the user goes to paste it. The same dependency
+was declined for the shorter window and accepted for the longer one.
+
+What page locking buys, stated honestly so nobody over-claims it later:
+`VirtualLock`/`mlock` keeps a page out of the pagefile, and
+`WerRegisterExcludedMemoryBlock`/`MADV_DONTDUMP` keeps it out of crash and core
+dumps. It does **not** survive hibernation, which writes all of RAM to disk and
+ignores the lock, and it does not defend against a process that can already read
+this one's memory. Full-disk encryption remains the answer to both.
+
+Encrypting the buffer in place was considered and rejected: the decryption key
+would live in the same address space, so any dump that captures the ciphertext
+captures the key beside it. The goal is to stop the bytes leaving the process,
+not to re-encrypt them inside it.
+
+The clipboard is the leak this pair exists to close. The Windows clipboard is
+global to the session, `Win+V` records history, and cloud clipboard synchronises
+off-machine, so a copied password can outlive the paste and leave the device.
+`VLT-07` clears on a timer and sets `CanIncludeInClipboardHistory`,
+`CanUploadToCloudClipboard` and `ExcludeClipboardContentFromMonitorProcessing`.
+X11 and Wayland offer different guarantees; the result reports what was actually
+achieved rather than showing a lock that is not there.
+
+### Bundled data: passphrase wordlist
+
+`VLT-12` embeds the EFF long wordlist (7776 words) as a raw resource, approved
+on 2026-08-28 under the same rule as the two Android lists above: stored
+verbatim from its canonical source, licensed **CC-BY**, attribution recorded,
+refreshed by download and diff.
+
+| File | Source | License |
+|---|---|---|
+| `eff_large_wordlist.txt` | `https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt` | CC-BY 3.0 US |
+
+The list length is load-bearing: entropy per word is `log2(7776)` ≈ 12.9 bits,
+so a truncated or substituted list silently weakens every passphrase without
+failing to produce one. A test pins the count.
 
 ## Review rule
 
