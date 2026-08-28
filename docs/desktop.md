@@ -402,6 +402,38 @@ stale, or the user dismissed the prompt. That is `protocol-application.md`'s
 coarse taxonomy surfacing at the IPC edge, and it is why `vault.copy` cannot be
 used to discover which item IDs exist.
 
+### From the command line
+
+```sh
+phone-auth vault list
+phone-auth vault copy github
+phone-auth vault copy github --revision 4 --clear-after 15000
+phone-auth vault generate --length 32 --no-symbols
+```
+
+`vault copy` takes an id, a name, or a unique fragment of either a name or a
+URI. Resolving it is also where `expectedRevision` comes from: the agent refuses
+a copy that does not name a revision, and a person typing a command has no way
+to know one, so the CLI lists first and copies second — the same two steps the
+tray takes when the user clicks a row. Passing `--revision` pins a revision read
+earlier instead, which is the stronger check.
+
+An ambiguous fragment is refused and the refusal prints the candidates with
+their ids. Guessing would be worse here than anywhere else in the CLI: nothing
+downstream ever displays what was copied, so the wrong secret on the clipboard
+is silent until it is pasted somewhere.
+
+Exit codes follow `authorize`: `0` copied, `1` refused — declined on the phone,
+no vault credential enrolled, `revision-conflict` — `2` for a value the command
+line got wrong, and `3` for an agent that could not be reached or a clipboard
+that would not take the value. All three vault commands share one mapping, so a
+computer with no vault credential answers `1` to `list` and to `copy` alike.
+
+There is deliberately no `vault create`, `vault edit` or `vault delete`. The
+phone serves all three, but a write driven from the computer needs a screen on
+the phone that names what is being changed, and until that exists the phone's
+own UI is the only place a vault item is edited.
+
 ## Files the agent owns
 
 | Path (Linux) | Contents |

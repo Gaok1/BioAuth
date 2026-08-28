@@ -53,6 +53,15 @@ COMMANDS:
     locker status <FILE>       Describe a container. Needs no key and no agent.
     locker rekey <FILE>        Bind a container to this phone's current key
 
+    vault list                 List what the phone's vault holds. Metadata
+                               only: no secret leaves the phone and no prompt
+                               appears on it.
+    vault copy <ITEM>          Copy one stored secret to the clipboard. <ITEM>
+                               is an id, a name, or a unique part of one. The
+                               phone asks for biometrics; the secret never
+                               crosses IPC and is never printed here.
+    vault generate             Generate a password straight to the clipboard
+
 OPTIONS:
     --root <DIR>               Override the agent's config/data/runtime root
     --credential <ID>          Choose which paired credential to use
@@ -62,6 +71,11 @@ OPTIONS:
     --keep-original            Leave the plaintext in place after locking
     --keep-container           Leave the container in place after unlocking
     --new-recovery-code        Issue a new recovery code, retiring the old one
+    --revision <N>             Copy only while the item is still at this
+                               revision, from a listing you already read
+    --clear-after <MS>         How long the clipboard entry lives
+    --length <N>               Length of a generated password
+    --no-symbols               Leave symbols out of a generated password
     --json                     Emit raw JSON instead of formatted text
     -h, --help                 Show this message
 
@@ -85,6 +99,10 @@ struct Cli {
     credential: Option<String>,
     device: Option<String>,
     limit: Option<usize>,
+    revision: Option<u64>,
+    clear_after: Option<u64>,
+    length: Option<usize>,
+    no_symbols: bool,
     recovery_out: Option<String>,
     recovery_file: Option<String>,
     into: Option<String>,
@@ -109,6 +127,10 @@ fn parse() -> Result<Cli, String> {
         credential: None,
         device: None,
         limit: None,
+        revision: None,
+        clear_after: None,
+        length: None,
+        no_symbols: false,
         recovery_out: None,
         recovery_file: None,
         into: None,
@@ -136,6 +158,28 @@ fn parse() -> Result<Cli, String> {
                         .map_err(|_| "--limit must be a number".to_owned())?,
                 )
             }
+            "--revision" => {
+                cli.revision = Some(
+                    value()?
+                        .parse()
+                        .map_err(|_| "--revision must be a number".to_owned())?,
+                )
+            }
+            "--clear-after" => {
+                cli.clear_after = Some(
+                    value()?
+                        .parse()
+                        .map_err(|_| "--clear-after must be a number of milliseconds".to_owned())?,
+                )
+            }
+            "--length" => {
+                cli.length = Some(
+                    value()?
+                        .parse()
+                        .map_err(|_| "--length must be a number".to_owned())?,
+                )
+            }
+            "--no-symbols" => cli.no_symbols = true,
             "--recovery-out" => cli.recovery_out = Some(value()?),
             "--recovery-file" => cli.recovery_file = Some(value()?),
             "--into" => cli.into = Some(value()?),
@@ -223,6 +267,7 @@ fn run(cli: Cli) -> u8 {
         },
         "authorize" => authorize(&mut client, &cli),
         "locker" => locker(&mut client, &cli),
+        "vault" => vault(&mut client, &cli),
         other => {
             eprintln!("phone-auth: unknown command `{other}`\n\n{USAGE}");
             EXIT_USAGE
@@ -567,6 +612,284 @@ fn print_locker(action: &str, value: &Value) {
     }
 }
 
+/// The vault subcommands.
+///
+/// Reading only. `vault.create`, `vault.update` and `vault.delete` are served
+/// by the phone, but nothing here calls them: a write from the computer needs
+/// an approval screen that names the item, and until that screen exists the
+/// phone is the only place a vault item is edited. Listing costs no prompt,
+/// and copying costs one — which is the whole shape of what the desktop is
+/// allowed to do with somebody else's vault.
+fn vault(client: &mut AgentClient, cli: &Cli) -> u8 {
+    match cli.args.first().map(String::as_str) {
+        Some("list") => vault_call(
+            client,
+            "vault.list",
+            vault_params(cli),
+            cli,
+            print_vault_list,
+        ),
+        Some("copy") => vault_copy(client, cli),
+        Some("generate") => vault_generate(client, cli),
+        _ => {
+            eprintln!("phone-auth: vault needs `list`, `copy <ITEM>` or `generate`");
+            EXIT_USAGE
+        }
+    }
+}
+
+/// Runs one vault method, printing the reply and splitting the failure the way
+/// every vault command splits it.
+///
+/// `simple` cannot serve here: it reports every failure as an outage, which
+/// would leave `vault list` exiting 3 and `vault copy` exiting 1 on a computer
+/// with no vault credential enrolled — the same refusal, two answers.
+fn vault_call(
+    client: &mut AgentClient,
+    method: &str,
+    params: Value,
+    cli: &Cli,
+    print: impl Fn(&Value),
+) -> u8 {
+    match client.call(method, params) {
+        Ok(value) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).unwrap_or_default()
+                );
+            } else {
+                print(&value);
+            }
+            EXIT_GRANTED
+        }
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            vault_exit(error.code())
+        }
+    }
+}
+
+fn vault_params(cli: &Cli) -> Value {
+    let mut params = json!({});
+    if let Some(credential) = &cli.credential {
+        params["credentialId"] = json!(credential);
+    }
+    params
+}
+
+/// Copies one stored secret, naming the revision it believes it is copying.
+fn vault_copy(client: &mut AgentClient, cli: &Cli) -> u8 {
+    let Some(wanted) = cli.args.get(1) else {
+        eprintln!("phone-auth: vault copy needs an item, e.g. `vault copy github`");
+        return EXIT_USAGE;
+    };
+
+    // Listing first is not only how a name becomes an id: it is also where
+    // `expectedRevision` comes from. The agent refuses a copy that does not
+    // name one, and a person typing a command has no way to know it. This is
+    // the same thing the tray does when the user clicks a row.
+    let mut params = vault_params(cli);
+    let listed = match client.call("vault.list", params.clone()) {
+        Ok(listed) => listed,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return vault_exit(error.code());
+        }
+    };
+
+    let found = match resolve_item(&listed, wanted) {
+        Ok(found) => found,
+        Err(message) => {
+            eprintln!("{message}");
+            return EXIT_USAGE;
+        }
+    };
+
+    params["itemId"] = json!(found.id);
+    // `--revision` pins a revision the caller read earlier, which is the
+    // stronger check: without it the revision comes from the listing a moment
+    // ago, and only an edit between that listing and the fetch is caught.
+    params["expectedRevision"] = json!(cli.revision.unwrap_or(found.revision));
+    if let Some(ms) = cli.clear_after {
+        params["clearAfterMs"] = json!(ms);
+    }
+
+    vault_call(client, "vault.copy", params, cli, |value| {
+        print_copy(Some(&found.name), value)
+    })
+}
+
+/// Generates a password and copies it, for the case where nothing is stored
+/// yet. Needs no phone: the agent generates it locally.
+fn vault_generate(client: &mut AgentClient, cli: &Cli) -> u8 {
+    let mut params = json!({});
+    if let Some(length) = cli.length {
+        params["length"] = json!(length);
+    }
+    if cli.no_symbols {
+        params["symbols"] = json!(false);
+    }
+    if let Some(ms) = cli.clear_after {
+        params["clearAfterMs"] = json!(ms);
+    }
+
+    vault_call(client, "vault.generate-copy", params, cli, |value| {
+        print_copy(None, value)
+    })
+}
+
+#[derive(Debug)]
+struct VaultRow {
+    id: String,
+    name: String,
+    revision: u64,
+}
+
+/// Turns what the user typed into the row they meant.
+///
+/// Ambiguity is refused rather than guessed: copying the wrong secret is
+/// silent, because nothing that follows ever shows what was copied.
+fn resolve_item(listed: &Value, wanted: &str) -> Result<VaultRow, String> {
+    let items = listed["items"].as_array().cloned().unwrap_or_default();
+    let row = |item: &Value| VaultRow {
+        id: item["id"].as_str().unwrap_or_default().to_owned(),
+        name: item["name"].as_str().unwrap_or("?").to_owned(),
+        revision: item["revision"].as_u64().unwrap_or_default(),
+    };
+
+    // An id is unambiguous by construction, so it wins outright. A vault
+    // holding an item *named* after another item's id must not redirect the
+    // copy to the one that was merely named.
+    if let Some(item) = items
+        .iter()
+        .find(|item| item["id"].as_str() == Some(wanted))
+    {
+        return Ok(row(item));
+    }
+
+    let needle = wanted.to_lowercase();
+    let name_of = |item: &Value| item["name"].as_str().unwrap_or_default().to_lowercase();
+    let mut candidates: Vec<&Value> = items
+        .iter()
+        .filter(|item| name_of(item) == needle)
+        .collect();
+    if candidates.is_empty() {
+        candidates = items
+            .iter()
+            .filter(|item| {
+                name_of(item).contains(&needle)
+                    || item["uri"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&needle)
+            })
+            .collect();
+    }
+
+    match candidates.as_slice() {
+        [] => Err(format!(
+            "phone-auth: no vault item matches `{wanted}` — try `phone-auth vault list`"
+        )),
+        [only] => Ok(row(only)),
+        several => {
+            let mut message = format!("phone-auth: `{wanted}` matches {} items:", several.len());
+            for item in several {
+                message.push_str(&format!(
+                    "\n  {}  [{}]",
+                    item["name"].as_str().unwrap_or("?"),
+                    item["id"].as_str().unwrap_or("?")
+                ));
+            }
+            message.push_str("\nCopy one by its id.");
+            Err(message)
+        }
+    }
+}
+
+/// Splits vault failures the way `authorize` splits them: a refusal the user,
+/// the phone or the policy made is a "no"; everything else is an outage.
+fn vault_exit(code: &str) -> u8 {
+    match code {
+        "declined" | "policy-denied" | "not-paired" | "unknown-credential"
+        | "revision-conflict" | "vault-unavailable" => EXIT_DENIED,
+        // Every parameter these commands send comes from the command line, so
+        // the agent rejecting one is the user's typo — `--clear-after 1` — and
+        // not a vault that would not answer.
+        "bad-params" => EXIT_USAGE,
+        _ => EXIT_UNAVAILABLE,
+    }
+}
+
+fn print_vault_list(value: &Value) {
+    println!(
+        "vault on {}",
+        value["deviceName"].as_str().unwrap_or("phone")
+    );
+    let items = value["items"].as_array().cloned().unwrap_or_default();
+    if items.is_empty() {
+        println!("  (empty — add items on the phone)");
+    }
+    for item in &items {
+        println!(
+            "  {:<28} {:<6} rev {:<5} {}",
+            item["name"].as_str().unwrap_or("?"),
+            item["kind"].as_str().unwrap_or("?"),
+            item["revision"].as_u64().unwrap_or(0),
+            item["username"].as_str().unwrap_or("")
+        );
+        if let Some(uri) = item["uri"].as_str().filter(|uri| !uri.is_empty()) {
+            println!("  {:<28} {uri}", "");
+        }
+    }
+    print_development(value);
+}
+
+/// Reports a copy. There is nothing here that could print the secret: the
+/// reply it reads has no field carrying one.
+fn print_copy(name: Option<&str>, value: &Value) {
+    let length = value["length"].as_u64().unwrap_or(0);
+    let what = name.unwrap_or("a generated password");
+    match seconds_until(value["clearsAtMs"].as_i64().unwrap_or(0)) {
+        Some(seconds) => println!("copied {what} — {length} characters, clears in {seconds}s"),
+        None => println!("copied {what} — {length} characters"),
+    }
+
+    if !value["memoryLocked"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "phone-auth: WARNING — the secret was not held in locked pages; it may have \
+             reached the pagefile"
+        );
+    }
+    if !value["historyExcluded"].as_bool().unwrap_or(false) {
+        eprintln!("phone-auth: WARNING — this system's clipboard history may have kept a copy");
+    }
+    if !value["cloudExcluded"].as_bool().unwrap_or(false) {
+        eprintln!("phone-auth: WARNING — the clipboard entry may have been synced to the cloud");
+    }
+    print_development(value);
+}
+
+/// How long the clipboard entry has left, or `None` when the agent's clock and
+/// this one disagree enough that the answer would mislead.
+fn seconds_until(epoch_ms: i64) -> Option<i64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let remaining = (epoch_ms - now) / 1000;
+    (remaining > 0).then_some(remaining)
+}
+
+fn print_development(value: &Value) {
+    if value["development"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "phone-auth: WARNING — this came from the development simulator, not from a phone"
+        );
+    }
+}
+
 /// Makes a path absolute without touching the filesystem, so the agent — which
 /// has its own working directory — resolves the same file the user meant.
 fn absolute(path: &str) -> Result<String, String> {
@@ -696,5 +1019,108 @@ fn print_history(value: &Value) {
         if let Some(detail) = entry["detail"].as_str() {
             println!("         {detail}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listing(items: Value) -> Value {
+        json!({ "items": items, "deviceName": "phone", "development": false })
+    }
+
+    fn item(id: &str, name: &str, revision: u64, uri: &str) -> Value {
+        json!({
+            "id": id,
+            "name": name,
+            "revision": revision,
+            "kind": "login",
+            "username": "someone",
+            "uri": uri,
+            "updatedAtMs": 0,
+        })
+    }
+
+    /// The id the user typed wins over an item that merely carries it as a
+    /// name. Guessing the other way would copy a secret the user never named,
+    /// and nothing downstream ever shows which one it was.
+    #[test]
+    fn an_id_beats_an_item_named_after_it() {
+        let listed = listing(json!([
+            item("abc-123", "Bank", 4, ""),
+            item("def-456", "abc-123", 9, ""),
+        ]));
+
+        let found = resolve_item(&listed, "abc-123").expect("the id must resolve");
+
+        assert_eq!(found.id, "abc-123");
+        assert_eq!(found.revision, 4, "the revision travels with the row");
+    }
+
+    /// An exact name is not made ambiguous by a longer name containing it.
+    #[test]
+    fn an_exact_name_beats_a_longer_one_containing_it() {
+        let listed = listing(json!([
+            item("1", "Mail", 1, ""),
+            item("2", "Webmail", 1, ""),
+        ]));
+
+        let found = resolve_item(&listed, "mail").expect("the exact name must win");
+
+        assert_eq!(found.id, "1");
+    }
+
+    /// Two partial matches are refused, and the refusal carries the ids that
+    /// would resolve it — otherwise the user has no way forward.
+    #[test]
+    fn an_ambiguous_fragment_is_refused_with_its_candidates() {
+        let listed = listing(json!([
+            item("1", "Bank of A", 1, ""),
+            item("2", "Bank of B", 1, ""),
+        ]));
+
+        let message = resolve_item(&listed, "bank").expect_err("must not guess");
+
+        assert!(message.contains("[1]"), "{message}");
+        assert!(message.contains("[2]"), "{message}");
+    }
+
+    #[test]
+    fn a_fragment_of_the_uri_resolves() {
+        let listed = listing(json!([item("1", "Bank", 7, "https://example.com/login")]));
+
+        let found = resolve_item(&listed, "EXAMPLE.com").expect("uri match");
+
+        assert_eq!(found.revision, 7);
+    }
+
+    #[test]
+    fn nothing_matching_is_refused() {
+        let listed = listing(json!([item("1", "Bank", 1, "")]));
+
+        assert!(resolve_item(&listed, "github").is_err());
+    }
+
+    /// A refusal has to exit 1, not 3: a script that treats an outage and a
+    /// declined biometric alike cannot retry the one and stop on the other.
+    #[test]
+    fn refusals_and_outages_get_different_exit_codes() {
+        for code in [
+            "declined",
+            "revision-conflict",
+            "not-paired",
+            "policy-denied",
+        ] {
+            assert_eq!(vault_exit(code), EXIT_DENIED, "{code}");
+        }
+        for code in ["clipboard-unavailable", "no-transport", "protocol-error"] {
+            assert_eq!(vault_exit(code), EXIT_UNAVAILABLE, "{code}");
+        }
+        assert_eq!(
+            vault_exit("bad-params"),
+            EXIT_USAGE,
+            "a rejected --clear-after is a typo, not an outage"
+        );
     }
 }
