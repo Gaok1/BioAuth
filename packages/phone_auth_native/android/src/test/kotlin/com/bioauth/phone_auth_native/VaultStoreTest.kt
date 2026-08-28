@@ -117,4 +117,66 @@ class VaultStoreTest {
         "uri" to "https://example.com",
         "secret" to secret,
     )
+
+    @Test
+    fun `export carries the secrets a summary withholds`() {
+        val items = listOf(item(id = "a", secret = "hunter2"), item(id = "b", secret = "correct horse"))
+
+        val exported = VaultStoreData.export(items)
+
+        assertEquals(listOf("hunter2", "correct horse"), exported.map { it["secret"] })
+        // The id is deliberately absent: it belongs to the vault this came
+        // from, and a restore mints its own.
+        assertFalse(exported.first().containsKey("id"))
+        assertFalse(exported.first().containsKey("revision"))
+    }
+
+    @Test
+    fun `restore adds to a vault instead of replacing it`() {
+        val existing = listOf(item(id = "keep", secret = "already here"))
+        val incoming = listOf(input(secret = "from the backup").copy(name = "Outro"))
+
+        val (restored, added, skipped) = VaultStoreData.restore(existing, incoming, nowMs = 99)
+
+        assertEquals(1, added)
+        assertEquals(0, skipped)
+        assertEquals(2, restored.size)
+        assertEquals("already here", restored.first { it.id == "keep" }.secret)
+    }
+
+    @Test
+    fun `restoring the same backup twice does not duplicate it`() {
+        val incoming = listOf(input(secret = "s"))
+
+        val (once, firstAdded, _) = VaultStoreData.restore(emptyList(), incoming, nowMs = 1)
+        val (twice, secondAdded, skipped) = VaultStoreData.restore(once, incoming, nowMs = 2)
+
+        assertEquals(1, firstAdded)
+        assertEquals(0, secondAdded)
+        assertEquals(1, skipped)
+        assertEquals(1, twice.size)
+    }
+
+    /// A restored item gets a fresh id, because the one in the backup belonged
+    /// to another vault and could collide with an unrelated item here.
+    @Test
+    fun `restore mints new ids rather than reusing the backup's`() {
+        val incoming = listOf(input(id = "id-from-elsewhere", secret = "s").copy(name = "Novo"))
+
+        val (restored, _, _) = VaultStoreData.restore(emptyList(), incoming, nowMs = 7)
+
+        assertEquals(1, restored.size)
+        assertFalse(restored.single().id == "id-from-elsewhere")
+        assertEquals(1, restored.single().revision)
+        assertEquals(7, restored.single().updatedAtMs)
+    }
+
+    @Test
+    fun `a restore that would overflow the vault is refused whole`() {
+        val incoming = List(VaultStoreData.MAX_ITEMS + 1) { input(secret = "s").copy(name = "n$it") }
+
+        assertFailsWith<VaultStoreFailure> {
+            VaultStoreData.restore(emptyList(), incoming, nowMs = 1)
+        }
+    }
 }

@@ -57,6 +57,11 @@ internal class VaultStoreChannel(
             when (request) {
                 is Request.List -> succeed(VaultStoreData.page(emptyList(), request.cursor))
                 is Request.Create -> write(emptyList(), request)
+                // A vault with no file is an empty vault, not a broken one.
+                // Exporting it yields nothing and restoring into it is the
+                // new-phone case this exists for, so neither is an error.
+                is Request.Export -> succeed(mapOf("items" to emptyList<Any>()))
+                is Request.Restore -> restore(emptyList(), request)
                 else -> fail(VaultStoreFailure("not_found", "Vault item does not exist"))
             }
             return
@@ -76,6 +81,8 @@ internal class VaultStoreChannel(
                 val item = VaultStoreData.fetch(items, request.id)
                 succeed(mapOf("id" to item.id, "revision" to item.revision, "secret" to item.secret))
             }
+            is Request.Export -> succeed(mapOf("items" to VaultStoreData.export(items)))
+            is Request.Restore -> restore(items, request)
             is Request.Create -> write(items, request)
             is Request.Update -> write(items, request)
             is Request.Delete -> {
@@ -88,6 +95,17 @@ internal class VaultStoreChannel(
                 }
             }
         }
+    }
+
+    private fun restore(items: List<VaultItem>, request: Request.Restore) {
+        val (updated, added, skipped) = VaultStoreData.restore(items, request.items, nowMs())
+        // Nothing new means nothing to write. Re-sealing the same items would
+        // cost a second biometric prompt to change nothing.
+        if (added == 0) {
+            succeed(mapOf("added" to 0, "skipped" to skipped))
+            return
+        }
+        persist(updated, mapOf("added" to added, "skipped" to skipped))
     }
 
     private fun write(items: List<VaultItem>, request: Request.Create) {
@@ -192,6 +210,17 @@ internal class VaultStoreChannel(
                 arguments.requiredString("id"),
                 arguments.requiredRevision("expectedRevision"),
             )
+            "export" -> Request.Export
+            "restore" -> Request.Restore(
+                (arguments["items"] as? List<*> ?: throw VaultStoreFailure(
+                    "invalid_arguments",
+                    "items is required",
+                )).also {
+                    if (it.size > VaultStoreData.MAX_ITEMS) {
+                        throw VaultStoreFailure("invalid_arguments", "too many items to restore")
+                    }
+                }.map { VaultItemInput.from(it, requireId = false) },
+            )
             else -> throw VaultStoreFailure("not_implemented", "Unknown vault method")
         }
     }
@@ -243,6 +272,12 @@ internal class VaultStoreChannel(
         data class Create(val item: VaultItemInput) : Request
         data class Update(val item: VaultItemInput, val expectedRevision: Int) : Request
         data class Delete(val id: String, val expectedRevision: Int) : Request
+
+        /** Every item, secrets included, for one encrypted backup file. */
+        data object Export : Request
+
+        /** Items read back out of a backup file, to be added to this vault. */
+        data class Restore(val items: kotlin.collections.List<VaultItemInput>) : Request
     }
 
     companion object {

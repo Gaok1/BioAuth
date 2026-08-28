@@ -77,6 +77,16 @@ internal class VaultStoreFailure(
 internal object VaultStoreData {
     const val PAGE_SIZE = 32
 
+    /**
+     * The ceiling a restore may not cross.
+     *
+     * The vault is one blob decrypted into memory on every operation, so a
+     * vault that will not fit is not slow, it is a vault that stops opening.
+     * Matching the exporter's own cap keeps the failure at the point where it
+     * can still be explained.
+     */
+    const val MAX_ITEMS = 4096
+
     fun create(items: List<VaultItem>, input: VaultItemInput, nowMs: Long, id: String = UUID.randomUUID().toString()): Pair<List<VaultItem>, VaultItem> {
         validateText("id", id, 64, allowEmpty = false)
         if (items.any { it.id == id }) throw VaultStoreFailure("id_conflict", "Vault item id already exists")
@@ -104,6 +114,71 @@ internal object VaultStoreData {
         checkRevision(current, expectedRevision)
         return items.filterNot { it.id == id }
     }
+
+    /**
+     * Every item, secrets included, for one encrypted export.
+     *
+     * The whole vault is a single blob under a key that demands a biometric
+     * per use, so reading it item by item would be one prompt per item. This
+     * is the same single decryption `list` already performs; what is new is
+     * that the secrets come back with it, which is why nothing but the export
+     * flow may call it.
+     */
+    fun export(items: List<VaultItem>): List<Map<String, Any>> = items.map {
+        mapOf(
+            "kind" to it.kind,
+            "name" to it.name,
+            "username" to it.username,
+            "uri" to it.uri,
+            "secret" to it.secret,
+        )
+    }
+
+    /**
+     * Adds restored items to whatever is already here.
+     *
+     * Additive on purpose: a restore that replaced the vault would turn one
+     * mistaken tap — the wrong backup file, the right file from a year ago —
+     * into losing everything stored since. Nothing here deletes, and an item
+     * that already exists is counted rather than duplicated.
+     *
+     * Ids are generated fresh. The id in a backup belonged to the vault it
+     * came from, and reusing it would collide with an unrelated item on a
+     * phone that has been in use.
+     */
+    fun restore(
+        items: List<VaultItem>,
+        incoming: List<VaultItemInput>,
+        nowMs: Long,
+    ): Triple<List<VaultItem>, Int, Int> {
+        if (items.size + incoming.size > MAX_ITEMS) {
+            throw VaultStoreFailure("vault_full", "Restoring would exceed the vault's limit")
+        }
+        val existing = items.mapTo(mutableSetOf()) { it.identity() }
+        val restored = items.toMutableList()
+        var added = 0
+        var skipped = 0
+        for (input in incoming) {
+            if (!existing.add(input.identity())) {
+                skipped++
+                continue
+            }
+            restored += input.item(UUID.randomUUID().toString(), revision = 1, nowMs)
+            added++
+        }
+        return Triple(restored, added, skipped)
+    }
+
+    /**
+     * What makes two entries the same entry, for a restore.
+     *
+     * The secret is not part of it. Two rows for the same login on the same
+     * site with different passwords are one account whose password changed,
+     * and adding both would leave the user guessing which is current.
+     */
+    private fun VaultItem.identity() = listOf(kind.toString(), name, username, uri)
+
+    private fun VaultItemInput.identity() = listOf(kind.toString(), name, username, uri)
 
     fun fetch(items: List<VaultItem>, id: String): VaultItem {
         validateText("id", id, 64, allowEmpty = false)

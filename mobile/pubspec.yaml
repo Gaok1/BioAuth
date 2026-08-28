@@ -8,6 +8,7 @@ environment:
 
 dependencies:
   cryptography: ^2.9.0
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2

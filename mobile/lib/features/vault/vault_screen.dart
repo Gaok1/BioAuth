@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'vault_backup_screen.dart';
 import 'vault_controller.dart';
 import 'vault_store.dart';
 
@@ -56,12 +57,18 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
             appBar: AppBar(
               title: const Text('Cofre'),
               actions: [
-                if (!controller.locked)
+                if (!controller.locked) ...[
+                  IconButton(
+                    tooltip: 'Backup do cofre',
+                    onPressed: _backup,
+                    icon: const Icon(Icons.backup_outlined),
+                  ),
                   IconButton(
                     tooltip: 'Bloquear cofre',
                     onPressed: controller.lock,
                     icon: const Icon(Icons.lock_outline),
                   ),
+                ],
               ],
             ),
             floatingActionButton: controller.locked
@@ -177,6 +184,14 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
       ),
     );
   }
+
+  /// Only reachable while the vault is unlocked, which is what keeps the
+  /// export behind the same biometric everything else here is behind.
+  Future<void> _backup() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => VaultBackupScreen(controller: controller),
+    ),
+  );
 
   Future<void> _edit([VaultItemSummary? current]) async {
     final input = await showDialog<VaultItemInput>(
