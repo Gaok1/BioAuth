@@ -271,6 +271,37 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
+  # --------------------------------------------------------------- Extension --
+  # The store uploads. Every release carries them so that submitting is
+  # choosing a file rather than remembering how to build one — and so that what
+  # is submitted is the reviewed commit, not somebody's working tree.
+  #
+  # Nothing here signs anything: Chrome Web Store, Edge Add-ons and AMO all
+  # sign on their side, after a submission made with an account no workflow
+  # should hold.
+  extension:
+    name: Browser extension packages
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm ci`: the packager uses only Node built-ins on purpose, so this
+      # step cannot pull code from the network into a signed artefact.
+      - name: Package for each store
+        run: node tools/package-extension.js --out artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: artifacts/*.zip
+          if-no-files-found: error
+
   # ------------------------------------------------------------------ Linux --
   linux:
     name: Linux packages
@@ -405,7 +436,7 @@ jobs:
   # --------------------------------------------------------------- Release ---
   release:
     name: Publish release
-    needs: [gate, android, windows, linux, nix]
+    needs: [gate, android, windows, linux, nix, extension]
     if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -444,11 +475,16 @@ jobs:
             | Debian / Ubuntu x64 | `*.deb` |
             | Headless Linux x64 | `phone-auth-linux-x86_64.tar.gz` |
             | NixOS | `nix build github:${{ github.repository }}#default` |
+            | Browser extension | `phoneauth-passkeys-*-*.zip` |
 
             Verify what you downloaded against `SHA256SUMS.txt`.
 
             The Android artifact is signed with the project release key. The
             workflow refuses to publish when any signing secret is absent.
+
+            The extension zips are **store uploads, not installable files**.
+            Chrome, Edge and Firefox each sign on their side. To install one
+            without a store, see the enterprise channel in `docs/webauthn.md`.
 
             ## Pairing
 

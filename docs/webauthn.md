@@ -194,6 +194,55 @@ agent must be running and the phone paired. If several phones are paired, the
 IPC request must name a credential; the extension fails rather than selecting
 one by map order.
 
+## Distribution
+
+`node tools/package-extension.js` builds one zip per store from
+`desktop/browser-extension/`, and every release carries all three. Submitting
+is then choosing a file rather than remembering how to build one, and what is
+submitted is the reviewed commit instead of somebody's working tree.
+
+The zips are **uploads, not installable files.** Chrome Web Store, Edge Add-ons
+and AMO each sign on their side, after a submission made with an account no
+workflow holds. Signing is the one part of this that stays manual on purpose.
+
+Three manifest differences are applied at packaging time, because one source
+manifest has to keep loading unpacked in either engine:
+
+| Store | Removed |
+|---|---|
+| Chrome, Edge | `browser_specific_settings`, `background.scripts` |
+| Firefox | `background.service_worker` |
+
+`native-host/` is never included. Those are installer scripts and example host
+manifests that belong on the user's disk; a reviewer who finds shell scripts in
+an upload rejects it.
+
+The zips are byte-identical for a given commit — fixed timestamps, no clock
+input — so a published checksum means something.
+
+### Installing without a store
+
+A store listing is not the only channel, and for a managed fleet it is the
+wrong one: the Chromium native-messaging allowlist is keyed on the extension
+ID, and an ID assigned by a store is one you learn after the fact.
+
+**Chromium (Chrome, Edge), managed:** host the packed `.crx` and an update XML
+yourself and force-install by ID with the `ExtensionInstallForcelist` policy.
+The ID is then yours, fixed, and the same one the native-host installer is
+given. This is the recommended path for an organisation.
+
+**Firefox, managed:** AMO will sign an extension without listing it publicly
+(unlisted). The signed `.xpi` is then installable from anywhere, and
+`browser_specific_settings.gecko.id` already pins the ID the installers use.
+
+**One machine, unmanaged:** load unpacked. The Chromium ID changes on every
+reload of an unpacked extension, so the native-host manifest has to be
+rewritten each time — which is why this is documented as a development path
+and not a way to run the thing.
+
+Whichever channel, the native host still has to be registered per user with the
+installer above. An extension without it relays nothing.
+
 ## Foreground lifetime
 
 Paired sessions are a hard dependency on Android's `connectedDevice`
