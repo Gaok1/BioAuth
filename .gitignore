@@ -11,6 +11,8 @@ build/
 !desktop/ui/build/
 !desktop/ui/build/**
 coverage/
+__pycache__/
+*.py[cod]
 local.properties
 *.iml
 *.jks

@@ -13,6 +13,7 @@ mod application;
 pub mod cbor;
 pub mod encoding;
 mod enrolment;
+pub mod locker;
 mod request;
 mod response;
 

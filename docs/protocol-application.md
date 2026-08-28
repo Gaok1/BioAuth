@@ -45,3 +45,63 @@ The shared vector is pinned in
 `desktop/crates/phone-auth-protocol/src/application.rs` and
 `mobile/test/application_frame_test.dart`.
 
+## File Locker operations
+
+Three operations are defined. All three carry a container binding — the value
+described in `docs/locker-format.md` — so an approval given for one container
+cannot be replayed onto another, and none of them ever names a path: the phone
+is shown a file name and a computer name, which is what a person can actually
+check.
+
+| Operation | Direction | Purpose |
+|---|---|---|
+| `locker.create` | desktop → phone | Wrap a data key for a new container |
+| `locker.unlock` | desktop → phone | Unwrap an existing container's data key |
+| `locker.rekey` | desktop → phone | Unwrap in order to bind the container to a new key |
+
+`locker.rekey` is structurally identical to `locker.unlock` and deliberately
+separate: the phone tells the user that this container is about to change
+hands, and the audit trail says so too. A rekey is therefore two approvals when
+the same phone does both halves, and one when the current key comes from the
+offline recovery code — which is the case that actually matters, because a
+phone being replaced cannot open the wrapper it is replacing.
+
+### `locker.create`
+
+Request payload — a six-element CBOR array:
+
+| Index | Field | Rule |
+|---:|---|---|
+| 0 | schema | `1` |
+| 1 | verifier name | the computer, as the user named it; at most 255 units |
+| 2 | file name | shown on the phone; at most 255 units |
+| 3 | plaintext length | bytes |
+| 4 | container binding | exactly 32 bytes |
+| 5 | data key | exactly 32 bytes |
+
+Response payload — three elements: schema, the credential id that wrapped it,
+and the opaque wrapper (1 to 512 bytes). The credential id goes into the
+container so a later unlock asks the phone that can answer.
+
+### `locker.unlock` and `locker.rekey`
+
+Request payload — seven elements: schema, verifier name, the container's file
+name, plaintext length, container binding, credential id, and the wrapper.
+Response payload — two elements: schema and the 32-byte data key.
+
+The phone computes the wrapper's additional data from the binding it was sent
+and the credential id **it holds**, never the one in the frame. A container
+whose wrapper id was edited therefore fails its tag rather than being unwrapped
+under a different name.
+
+### What crosses the link
+
+A data key crosses in both directions: to the phone on `locker.create`, back to
+the desktop on `locker.unlock`. That is the design — the desktop holds the
+ciphertext and does the decryption, the phone holds the authority to release
+the key — and it is why these operations are refused outright on a session that
+is not both confidential and peer-authenticated.
+
+The shared vector is pinned in
+`desktop/crates/phone-auth-protocol/src/locker.rs` and
+`mobile/test/locker_payloads_test.dart`.

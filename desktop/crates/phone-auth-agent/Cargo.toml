@@ -23,6 +23,7 @@ dev-simulator = ["phone-auth-verifier/testing", "dep:p256"]
 phone-auth-protocol.workspace = true
 phone-auth-session.workspace = true
 phone-auth-verifier.workspace = true
+phone-auth-locker.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

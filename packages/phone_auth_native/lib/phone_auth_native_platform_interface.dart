@@ -56,4 +56,33 @@ abstract class PhoneAuthNativePlatform extends PlatformInterface {
   }) => throw UnimplementedError(
     'verifySessionIdentity() has not been implemented.',
   );
+
+  /// Cria a chave dedicada do File Locker, separada da chave de assinatura.
+  Future<LockerKeyStatus> generateLockerKey() =>
+      throw UnimplementedError('generateLockerKey() has not been implemented.');
+
+  Future<LockerKeyStatus> getLockerKeyStatus() => throw UnimplementedError(
+    'getLockerKeyStatus() has not been implemented.',
+  );
+
+  /// Embrulha a chave de dados de um container novo, atrás de biometria forte.
+  ///
+  /// O retorno é opaco para o computador: só este telefone o abre de volta.
+  Future<Uint8List> wrapLockerKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List dataKey,
+    required String fileName,
+    required String verifierName,
+  }) => throw UnimplementedError('wrapLockerKey() has not been implemented.');
+
+  /// Desembrulha a chave de dados de um container existente.
+  Future<Uint8List> unwrapLockerKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String fileName,
+    required String verifierName,
+    bool rekeying = false,
+  }) => throw UnimplementedError('unwrapLockerKey() has not been implemented.');
 }

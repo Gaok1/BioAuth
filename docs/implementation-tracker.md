@@ -37,15 +37,17 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | Passkeys Android | 🧪 | Credential Provider + Keystore implementados; falta instrumentação e matriz real |
 | Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; instalação ainda é manual e sem teste de navegador real |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
-| File Locker | ⬜ | Não há formato, chaves, protocolo, CLI ou UI de arquivos |
+| File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
 | Cofre de senhas | ⬜ | Não há modelo, criptografia de blobs, CRUD, import/export ou autofill |
-| Recuperação do cofre/locker | ⬜ | A decisão está fechada em `DEC-03`/`DEC-04`; export/wrapper e drills ainda não foram implementados |
+| Recuperação do cofre/locker | 🧪 | O locker já tem wrapper offline e drill executado pelo binário; o cofre ainda não tem export/wrapper |
 | Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android; faltam secrets reais, instalação de extensão/native host e smoke test |
 
 **Conclusão:** a fundação de autenticação é substancial. WebAuthn é um protótipo
-integrado, ainda não um recurso instalável. File Locker e cofre de senhas ainda
-são projetos novos sobre essa fundação, e não extensões pequenas do código
-atual.
+integrado, ainda não um recurso instalável. O File Locker deixou de ser um
+projeto novo: o formato, a engine, os dois caminhos de recuperação e a CLI
+existem e são testados de ponta a ponta com um telefone simulado. O que falta
+nele é aparelho real, escala e revisão externa. O cofre de senhas continua
+sendo um produto ainda não começado.
 
 ## Baseline já implementada
 
@@ -98,7 +100,7 @@ implementações de segurança divergentes.
 | FND-04 | P0 | ✅ | `security_screen.dart` consulta `SecurityCapabilities` real e o estado do foreground service, exibindo Keystore/hardware/StrongBox, `BIOMETRIC_STRONG` e sessões em background; coberto por widget test. |
 | FND-05 | P0 | ✅ | Frames CBOR v1 separados de `AuthRequest` para `vault.*`/`locker.*` existem em Rust e Dart, com kind request/response/cancel/error, request ID, binding de 32 bytes, operação, limite de 6144 bytes e expiração; `isReplyTo` falha fechado e o payload não implementa debug/toString. Golden vector compartilhado e especificação em `docs/protocol-application.md`. |
 | FND-06 | P0 | ✅ | `CredentialPurpose` ganhou valores wire estáveis e aliases distintos para `Vault` e `FileLocker`. O verifier deriva o propósito dos serviços reservados `vault`/`locker` (também `luks`/`webauthn`), sem aceitar override por IPC; teste cobre todos os propósitos estrangeiros mesmo quando a permissão de serviço foi concedida. |
-| FND-07 | P0 | 🧪 | Pareamentos e passkeys agora usam envelopes v2, migram o legado sem apagá-lo, preservam snapshot anterior antes de cada escrita, detectam corrupção, fazem rollback reportado e recusam versão futura sem modificar dados. Testes cobrem migração/rollback. Stores de vault/locker permanecem com o agente responsável por essas features. |
+| FND-07 | P0 | 🧪 | Pareamentos e passkeys usam envelopes v2 com migração, snapshot anterior, rollback reportado e recusa de versão futura. O locker usa container v1 estrito e publicação atômica; o store do cofre ainda não existe. |
 | FND-08 | P0 | 🧪 | Passkeys agora carregam o mesmo request ID browser→host→agent→Android. Abort, timeout de browser, timeout do agent e desconexão enviam/cumprem cancelamento; notificação e `BiometricPrompt` são removidos, conclusão é once-only e testes cobrem bridge, registry Rust, frame Dart e coordinator Kotlin. Idempotência específica de vault/locker e o race de create WebAuthn já commitado ainda impedem ✅ global. |
 | FND-09 | P1 | ✅ | iOS foi removido da matriz do primeiro release e está explicitamente marcado como não suportado; a implementação futura permanece em `SYS-03`/`WEB-13`. |
 | FND-10 | P1 | ✅ | `docs/desktop.md` agora descreve os transportes LAN/BLE, handshake Dart, scanner, `KeyKind` e limitação iOS atuais; o README documenta corretamente que publicação sem os quatro secrets falha. |
@@ -150,18 +152,21 @@ O locker deve criptografar arquivos no computador. O telefone autoriza o
 unwrap da chave; ele não substitui um formato de arquivo, atomicidade nem uma
 chave offline de recuperação.
 
+O formato está especificado em `docs/locker-format.md`, a engine vive em
+`desktop/crates/phone-auth-locker` e o protocolo em `docs/protocol-application.md`.
+
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
-| FLK-01 | P0 | ⛔ | Especificar e revisar o container versionado: magic/version, algoritmo, salt/nonces, chunks autenticados, tamanho, metadata cifrada, wrappers de chave e limites. Formato ad hoc não entra em produção. |
-| FLK-02 | P0 | ⬜ | Implementar DEK aleatória por locker e credencial Android separada para unwrap, auth-per-use e invalidada conforme política biométrica. Nunca reutilizar chave de assinatura ou de vault. |
-| FLK-03 | P0 | ⬜ | Implementar no protocolo `locker.create`, `locker.unlock` e `locker.rekey`, ligados à sessão e a um resumo autenticado do container/caminho mostrado ao usuário. |
-| FLK-04 | P0 | ⬜ | Criar engine Rust de criptografia/decriptação em streaming, com buffers zeráveis e memória bloqueada quando suportado. Arquivos grandes não podem ser carregados inteiros em RAM. |
-| FLK-05 | P0 | ⬜ | Garantir operação sem perda: escrever em temporário no mesmo filesystem, autenticar tudo, `fsync`, rename atômico e só então permitir remoção do original. Falha/energia perdida nunca destrói a única cópia. |
-| FLK-06 | P0 | ⬜ | Implementar wrapper offline de recuperação e um drill testado. Recuperação não pode depender do agent, telefone ou arquivo que acabou de falhar. |
-| FLK-07 | P1 | ⬜ | Entregar CLI mínima `locker lock/unlock/status/rekey`; a UI desktop apenas chama o agent e nunca recebe chave ou plaintext. |
-| FLK-08 | P1 | ⬜ | Definir diretórios, symlinks, hardlinks, ACLs, ADS no Windows, nomes inválidos e metadata de timestamps/permissões. O MVP pode recusar casos não suportados, mas não segui-los de modo inseguro. |
-| FLK-09 | P1 | ⬜ | Adicionar proteção contra flood/ransomware: confirmação por lote, limites, nenhum unlock automático e detalhe inequívoco de quantidade/tamanho/origem. |
-| FLK-10 | P1 | ⬜ | Testar round-trip e corrupção por chunk, header truncado, chave errada, arquivo vazio, multi-GB, disco cheio, cancelamento e kill em cada fase. |
+| FLK-01 | P0 | ✅ | Container versionado especificado em `docs/locker-format.md` e implementado: magic com versão, header CBOR canônico, ChaCha20-Poly1305 por chunk com contador e flag de último chunk, salt/nonces por container, metadata cifrada, wrappers de chave e todos os limites conferidos antes de qualquer alocação. Revisão externa continua sendo `REL-04`. |
+| FLK-02 | P0 | 🧪 | DEK aleatória por container, nunca reutilizada, e chave AES-GCM dedicada `bioauth_file_locker_v1` no Keystore, com auth-per-use, `BIOMETRIC_STRONG`, `setInvalidatedByBiometricEnrollment` e tentativa de StrongBox. O AAD do wrapper é derivado igual nos dois lados e o vetor está fixado em Rust e Kotlin. Falta rodar em aparelho físico e a matriz de fabricantes. |
+| FLK-03 | P0 | 🧪 | `locker.create`, `locker.unlock` e `locker.rekey` implementados em Rust e Dart dentro do envelope de aplicação, ligados à sessão e ao binding do container, com nome de arquivo e nome do computador mostrados ao usuário. Vetores passam em Rust, Dart e Kotlin; falta a cerimônia em aparelho físico. |
+| FLK-04 | P0 | ✅ | Engine em streaming por chunks de 64 KiB nos dois sentidos: nenhum arquivo é carregado inteiro em RAM. Chaves ficam em buffers zerados no drop (`Dek`, `Zeroizing`). Páginas **não** são travadas em memória: a decisão está registrada em `secret.rs` — o caminho realista de vazamento é um processo que já lê a RAM, e swap é problema de criptografia de disco. |
+| FLK-05 | P0 | ✅ | Toda escrita vai para um temporário no mesmo diretório, com `fsync`, rename e `fsync` do diretório onde a plataforma suporta; o container é reaberto e verificado inteiro antes de o original ser removido, e o destino nunca é sobrescrito. Coberto por testes de recusa, falha e arquivo que cresce durante a leitura. |
+| FLK-06 | P0 | ✅ | Wrapper offline com código de recuperação de 256 bits em base32 agrupado. O drill roda pelo binário publicado em `locker_recovery_drill.rs`: sem agent, sem sessão, sem telefone. O código é escrito no arquivo que o usuário escolher e nunca atravessa o IPC. |
+| FLK-07 | P1 | ✅ | `phone-auth locker lock/unlock/status/rekey`, com `status` e recuperação rodando no próprio processo da CLI. `lock` exige `--recovery-out` e o agent devolve apenas o caminho, nunca o código: nenhuma UI recebe chave, código ou plaintext. Ainda não existe UI gráfica de locker — quando existir, ela chama os mesmos métodos IPC. |
+| FLK-08 | P1 | 🧪 | Diretórios e não-arquivos são recusados em vez de seguidos; nomes com separador, `..`, controle ou nome reservado do Windows são recusados na leitura da metadata; modo Unix e mtime são restaurados quando a plataforma permite. Symlink e hardlink agora têm comportamento decidido e implementado em `docs/locker-format.md`: um caminho é recusado antes de qualquer biometria quando é link simbólico/diretório/dispositivo, ou quando tem um segundo hardlink **e** a operação apagaria ou renomearia o nome; rekey é sempre estrito; destino usa `symlink_metadata` para não consumir um symlink pendurado. O agent também faz a checagem porque ele mesmo apaga o plaintext. Faltam: contagem de hardlink no Windows (exige `windows-sys`), aviso de que ACL/ADS/xattr não são carregados, e os quatro testes novos são `cfg(unix)` — compilam cruzado mas só executam no CI Ubuntu. |
+| FLK-09 | P1 | ⬜ | Não há operação em lote, e cada unlock exige biometria por uso, então não existe caminho automático hoje. Falta o trabalho real: limites, confirmação por lote e o detalhe de quantidade/tamanho/origem quando o lote existir. |
+| FLK-10 | P1 | 🧪 | Cobertos: round-trip byte a byte, arquivo vazio, chunk exato, cauda parcial, corrupção amostrada em todo o container, truncamento, bytes sobrando, troca de chunks, splice entre containers, chave errada, recusa em cada fase, destino ocupado e arquivo que cresce durante a leitura. Multi-GB **foi executado**: 4 GiB + 3 bytes (comprimento além de `u32`, índice de chunk passando de 65536, cauda de 3 bytes) fazem round-trip com SHA-256 idêntico e 65 537 chunks, em 136,88 s no perfil release. O teste é `#[ignore]` porque move ~28 GiB de disco, então é evidência sob demanda e não cobertura contínua: `cargo test -p phone-auth-locker --release -- --ignored`. Faltam disco cheio e kill do processo por sinal — os dois exigem uma costura de injeção de erro ou um binário de teste separado, que ainda não existem. |
 | FLK-11 | P2 | ⬜ | Integração com Explorer/Nautilus e drag-and-drop depois da CLI estar estável. Montagem de drive virtual/FUSE fica fora do MVP. |
 
 ### Gate de conclusão File Locker
@@ -173,6 +178,9 @@ chave offline de recuperação.
 - telefone perdido e rotação de telefone funcionam pelo recovery wrapper;
 - agent/UI/log/clipboard nunca persistem chave ou conteúdo claro.
 
+Estado do gate: os itens de integridade, recuperação e não-vazamento passam em
+teste automatizado. Faltam disco cheio, kill por sinal, contagem de hardlinks
+no Windows e a matriz com aparelho físico.
 ## Cofre de senhas pessoal
 
 O primeiro corte deve ser um cofre pessoal sólido, não uma cópia de toda a
@@ -237,7 +245,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 | REL-01 | P0 | ✅ | Licença MIT completa adicionada em `LICENSE` e em `packages/phone_auth_native/LICENSE`; o `TODO` foi removido. |
 | REL-02 | P0 | 🧪 | A publicação falha se qualquer um dos quatro secrets Android estiver ausente; APK debug-signed só pode sair de dispatch não publicável e tem nome explícito. Falta configurar a chave real e validar um release production-signed. |
 | REL-03 | P0 | ✅ | `SECURITY.md` define disclosure privado, escopo, prazos e resposta a incidentes; `PRIVACY.md` documenta armazenamento local, tráfego LAN/BLE/asset links, logs, retenção e contato. Ambos estão ligados no README. |
-| REL-04 | P0 | ⬜ | Revisão externa do protocolo novo de vault/locker, container, recovery e fronteiras de autofill antes de declarar produção. A revisão existente do código pelo próprio projeto não substitui isso. |
+| REL-04 | P0 | ⬜ | Revisão externa do protocolo novo de vault/locker, container, recovery e fronteiras de autofill antes de declarar produção. A revisão existente do código pelo próprio projeto não substitui isso. O container do locker (`docs/locker-format.md`) é o primeiro item da fila. |
 | REL-05 | P0 | ⬜ | Fuzz/property tests para CBOR, handshake, native messaging, frames vault/locker, importadores e container de arquivos, com limites de CPU/memória. |
 | REL-06 | P1 | ⬜ | CI em Windows além de Ubuntu; Android instrumentation em emulador/API suportada; job iOS apenas quando iOS entrar no escopo. |
 | REL-07 | P1 | ⬜ | Code signing do instalador Windows, assinatura/verificação de updates e checksums dos artefatos Linux. |
@@ -258,8 +266,11 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
    física, background, permissões separadas, frames e recovery design.
 3. **Release 1 — passkeys instaláveis:** `WEB-01..14`, gestão de credenciais e
    instaladores reais. Isso transforma o recurso mais avançado atual em produto.
-4. **Release 2 — File Locker mínimo:** formato revisado, CLI, recovery e testes
-   de falha; integração gráfica só depois.
+4. **Release 2 — File Locker mínimo:** formato, CLI, recovery, testes de falha,
+   comportamento de links e o round-trip de 4 GiB estão feitos; o que resta é
+   `FLK-02` em aparelho físico, `FLK-09` em lote, o disco cheio e o kill do
+   `FLK-10`, a contagem de hardlink no Windows do `FLK-08` e a revisão externa
+   de `REL-04`.
 5. **Release 3 — cofre pessoal:** storage/CRUD/recovery no telefone e cópia
    segura via agent.
 6. **Release 4 — autofill/import:** extensão de senhas, Android Autofill,
@@ -273,21 +284,26 @@ próprios.
 
 ## Evidência desta auditoria
 
-- `cargo test --workspace`: **221 testes aprovados** localmente.
-- `desktop/ui/npm test`: **11 testes aprovados** localmente, incluindo a ponte
-  da extensão e falhas do native host.
-- `flutter test`: **130 testes aprovados** localmente; o package nativo soma
-  **10 testes Flutter**, incluindo gestão de passkeys.
-- `flutter analyze`: **nenhum problema** com Flutter 3.47.1. A suíte Android
-  `:phone_auth_native:testDebugUnitTest` foi reexecutada: **26 testes Kotlin**.
-- Vault/locker agora compartilham apenas o envelope de aplicação; ainda não há
-  engine, store, payloads CRUD/crypto nem UI desses produtos.
-- Limitações confirmadas em código: plugin iOS é scaffold, native host
-  depende de instalação manual, conditional mediation cai deliberadamente no
-  autenticador nativo e passkeys permanecem device-bound sem backup/sync.
-- Pendências concretas preservadas de `goals.md`: concorrência IPC,
-  validação/commit do `flake.lock`, LUKS/initrd, Windows Credential Provider,
-  SSH e smoke test dos artefatos. O cleanup/cancelamento mobile foi concluído.
+<!-- Contagens atualizadas pelos gates após o merge. -->
+- `cargo test --workspace`: **273 testes aprovados** no Windows; um teste
+  multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
+  `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
+- O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
+  4 GiB + 3 bytes com SHA-256 idêntico. Ele permanece `#[ignore]` porque move
+  aproximadamente 28 GiB; é evidência datada, não cobertura contínua.
+- Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
+  Ubuntu; a verificação Windows apenas prova compilação cruzada.
+- `desktop/ui/npm test`: **11 testes aprovados**.
+- `flutter analyze`: limpo. A suíte mobile soma **144 testes Flutter**, o
+  package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
+  **30 testes Kotlin**.
+- O drill de recuperação (`FLK-06`) roda pelo binário, sem agent e sem telefone.
+- Limitações confirmadas em código: plugin iOS é scaffold, native host depende
+  de instalação manual, conditional mediation usa o autenticador nativo,
+  passkeys são device-bound sem backup/sync e o locker não trava páginas.
+- Pendências preservadas: concorrência IPC, LUKS/initrd, Windows Credential
+  Provider, SSH, smoke test dos artefatos, testes destrutivos do locker e
+  matrizes com hardware físico.
 
 ## Como manter este tracking
 

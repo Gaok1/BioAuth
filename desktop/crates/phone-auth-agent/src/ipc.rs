@@ -24,7 +24,8 @@ use phone_auth_verifier::random;
 
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
-    RecentParams, Reply, SetPermissionsParams, WebAuthnParams,
+    LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
+    SetPermissionsParams, WebAuthnParams,
 };
 use crate::paths::Paths;
 use crate::service::Service;
@@ -321,6 +322,46 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
                 )
             }
             Ok(_) => Reply::err(id, "bad-request", "invalid WebAuthn request id"),
+            Err(reply) => reply(id),
+        },
+
+        // The locker methods hold the service lock for the length of a file
+        // operation. That is deliberate: two concurrent locks of the same file
+        // would race over the same destination, and the phone can only answer
+        // one prompt at a time anyway.
+        "locker.lock" => match parse::<LockerLockParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").locker_lock(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        "locker.unlock" => match parse::<LockerUnlockParams>(call) {
+            Ok(params) => {
+                let result = service
+                    .lock()
+                    .expect("service mutex")
+                    .locker_unlock(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        "locker.rekey" => match parse::<LockerRekeyParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").locker_rekey(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
             Err(reply) => reply(id),
         },
 

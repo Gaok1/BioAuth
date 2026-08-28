@@ -184,6 +184,83 @@ pub struct WebAuthnResult {
     pub response: Value,
 }
 
+/// Lock a file into a container.
+///
+/// `recovery_code_path` is where the agent writes the one-time recovery code.
+/// It is a required field, and the reply carries only the path: no client —
+/// least of all the Electron tray — ever receives the code over IPC.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerLockParams {
+    pub path: String,
+    pub recovery_code_path: String,
+    /// Keep the plaintext where it is. The default removes it once the
+    /// container has been written and verified.
+    #[serde(default)]
+    pub keep_original: bool,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerLockResult {
+    pub container: String,
+    /// Where the recovery code was written. Never the code itself.
+    pub recovery_code_path: String,
+    pub plaintext_len: u64,
+    pub original_removed: bool,
+    pub device_name: String,
+    pub development: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerUnlockParams {
+    pub path: String,
+    #[serde(default)]
+    pub keep_container: bool,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// Where to restore. Defaults to the container's own directory.
+    #[serde(default)]
+    pub destination_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerUnlockResult {
+    pub restored: String,
+    pub plaintext_len: u64,
+    pub container_removed: bool,
+    pub device_name: String,
+    pub development: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerRekeyParams {
+    pub path: String,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// Also issue a fresh recovery code, invalidating the previous one. When
+    /// set, `recovery_code_path` says where to write it.
+    #[serde(default)]
+    pub new_recovery_code: bool,
+    #[serde(default)]
+    pub recovery_code_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockerRekeyResult {
+    pub container: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_code_path: Option<String>,
+    pub device_name: String,
+    pub development: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForgetParams {
