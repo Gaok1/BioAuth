@@ -499,6 +499,21 @@ jobs:
         with:
           path: incoming
 
+      # Shipped with the release rather than only kept in CI. Answering "was
+      # the version I installed affected by this" months from now needs the
+      # dependency list as it was then, and a list that only exists in an
+      # expired workflow run does not answer it.
+      - name: Make room for the release set
+        run: mkdir -p release
+
+      - name: Software bill of materials
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: release/sbom.cyclonedx.json
+          upload-artifact: false
+
       - name: Flatten and checksum
         run: |
           mkdir -p release
@@ -542,6 +557,10 @@ jobs:
             | Headless Linux x64 | `phone-auth-linux-x86_64.tar.gz` |
             | NixOS | `nix build github:${{ github.repository }}#default` |
             | Browser extension | `phoneauth-passkeys-*-*.zip` |
+
+            `sbom.cyclonedx.json` lists every dependency this release was built
+            from, so a future advisory can be checked against what actually
+            shipped.
 
             ### Verifying a download
 

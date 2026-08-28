@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# Never published to crates.io. These crates are the internals of one
+# application, they reference each other by path, and a version number on
+# crates.io would be a promise this project has no reason to make.
+publish = false
 
 # Deliberately dependency-free. This crate defines the bytes that get signed,
 # so its encoding rules must not drift with a third-party CBOR library's

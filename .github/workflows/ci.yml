@@ -128,3 +128,43 @@ jobs:
           cargo test -p phone-auth-protocol --test decoder_properties
           cargo test -p phone-auth-agent --test framing_properties
           PROPTEST_CASES=256 cargo test -p phone-auth-locker --test container_properties
+
+      # Licences and advisories are different questions. A crate can have no
+      # CVEs and still be one this project cannot ship inside a signed
+      # installer, and a review that conflates the two lets the second through.
+      - name: Dependency policy
+        working-directory: desktop
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check
+
+  # Four ecosystems, four lockfiles, one scanner. Rust and npm each have their
+  # own auditing tool and pub has none at all, so a per-ecosystem approach
+  # would leave the Flutter side unwatched — which is where the app that holds
+  # the vault lives.
+  supply-chain:
+    name: Dependencies and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Known vulnerabilities across every lockfile
+        uses: google/osv-scanner-action/osv-scanner-action@v2
+        with:
+          scan-args: |-
+            --lockfile=desktop/Cargo.lock
+            --lockfile=desktop/ui/package-lock.json
+            --lockfile=mobile/pubspec.lock
+            --lockfile=packages/phone_auth_native/pubspec.lock
+
+      # Kept as a build artefact rather than only a log line: answering "was
+      # this version affected" months later needs the list as it was then, not
+      # as it is now.
+      - name: Software bill of materials
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: sbom.cyclonedx.json
+          output-file: sbom.cyclonedx.json

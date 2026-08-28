@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# Never published to crates.io. These crates are the internals of one
+# application, they reference each other by path, and a version number on
+# crates.io would be a promise this project has no reason to make.
+publish = false
 
 # The container format is shared with nothing else, so this crate owns its own
 # bytes the way `phone-auth-protocol` owns the wire format. It reuses that

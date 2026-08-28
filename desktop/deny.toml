@@ -1,0 +1,56 @@
+# Licence and advisory policy for the Rust side.
+#
+# Two questions this answers, and they are different. *Advisories* are about
+# code that is known to be broken; *licences* are about code the project is not
+# allowed to ship. A dependency can pass one and fail the other, and a review
+# that conflates them lets a copyleft crate into a signed installer because it
+# had no CVEs.
+#
+#   cargo deny check
+
+[advisories]
+# A crate with no maintained upstream is a crate whose next advisory nobody
+# will write. That is a reason to notice, not a reason to fail a build at
+# three in the morning.
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+# Permissive only. This ships inside a signed installer and inside an initrd
+# image, and a copyleft dependency in either would make the whole artefact
+# something the project cannot distribute on its current terms.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+# A crate whose licence cannot be read is not a crate that is fine by default.
+unused-allowed-license = "allow"
+confidence-threshold = 0.9
+
+[bans]
+# Two versions of the same crate is ordinary in a dependency tree and not
+# worth failing over. Two *cryptography* crates doing the same job is worth
+# knowing about: it usually means one path is using something nobody reviewed.
+multiple-versions = "warn"
+# A version range of `*` on a published crate means the next release of it
+# lands in this build unreviewed. The workspace's own crates are referenced by
+# path and are exempt: there is no registry for them to drift from.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[[bans.deny]]
+name = "openssl"
+reason = "This project uses RustCrypto throughout. An OpenSSL binding would add a C dependency to an initrd binary and a second, unreviewed crypto path."
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
