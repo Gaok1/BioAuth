@@ -32,6 +32,7 @@ final pairingControllerProvider =
 
 class PairingController extends Notifier<PairingState> {
   PairingSession? _pending;
+  int _attemptId = 0;
 
   @override
   PairingState build() => const PairingState.idle();
@@ -45,10 +46,19 @@ class PairingController extends Notifier<PairingState> {
         state.stage != PairingStage.failed) {
       return;
     }
+    final attemptId = ++_attemptId;
     state = const PairingState(stage: PairingStage.connecting);
     try {
       final service = await ref.read(pairingServiceProvider.future);
       final session = await service.begin(raw);
+      if (attemptId != _attemptId) {
+        try {
+          await session.reject();
+        } on Object {
+          // The attempt is already cancelled; closing is best effort.
+        }
+        return;
+      }
       _pending = session;
       state = PairingState(
         stage: PairingStage.awaitingCode,
@@ -56,9 +66,9 @@ class PairingController extends Notifier<PairingState> {
         verifierId: session.proposed.verifierId,
       );
     } on PairingException catch (error) {
-      _fail(error.message);
+      if (attemptId == _attemptId) _fail(error.message);
     } on Object catch (error) {
-      _fail(_readable(error));
+      if (attemptId == _attemptId) _fail(_readable(error));
     }
   }
 
@@ -66,9 +76,11 @@ class PairingController extends Notifier<PairingState> {
   Future<void> confirm() async {
     final session = _pending;
     if (session == null) return;
+    final attemptId = ++_attemptId;
     _pending = null;
     try {
       await session.confirm();
+      if (attemptId != _attemptId) return;
       ref.invalidate(pairedVerifiersProvider);
       state = PairingState(
         stage: PairingStage.paired,
@@ -76,21 +88,26 @@ class PairingController extends Notifier<PairingState> {
         message: 'Pareado com ${session.proposed.verifierId}.',
       );
     } on Object catch (error) {
-      _fail(_readable(error));
+      if (attemptId == _attemptId) _fail(_readable(error));
     }
   }
 
   /// The user says they do not, or backs out.
-  Future<void> reject() async {
+  Future<void> reject() => _cancel();
+
+  Future<void> reset() => _cancel();
+
+  Future<void> _cancel() async {
+    ++_attemptId;
     final session = _pending;
     _pending = null;
-    await session?.reject();
     state = const PairingState.idle();
-  }
-
-  void reset() {
-    _pending = null;
-    state = const PairingState.idle();
+    try {
+      await session?.reject();
+    } on Object {
+      // Cancellation already won locally. A close failure must not trap the
+      // user on a verification code that can no longer be acted on.
+    }
   }
 
   void _fail(String message) {

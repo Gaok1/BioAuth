@@ -171,9 +171,11 @@ class PairingService {
       throw const PairingException('O computador não estava em pareamento.');
     }
 
-    final credential = await _credential.describe();
+    late final ({Uint8List publicKey, String algorithm, KeyKind keyKind})
+    credential;
     final credentialId = '${bootstrap.verifierId}-authorization-v1';
     try {
+      credential = await _credential.describe();
       await outcome.session.send(
         Enrolment(
           deviceName: deviceName,
@@ -185,7 +187,11 @@ class PairingService {
         ).encode(),
       );
     } on Object {
-      await outcome.session.close();
+      try {
+        await outcome.session.close();
+      } on Object {
+        // Preserve the credential/enrolment error that caused the cleanup.
+      }
       rethrow;
     }
 

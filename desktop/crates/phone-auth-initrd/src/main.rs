@@ -162,7 +162,6 @@ fn run(args: Args) -> u8 {
         volume.clone(),
         "root",
     )
-    .with_purpose(CredentialPurpose::DiskUnlock)
     .with_validity_ms((args.timeout_secs as i64 * 1000).min(phone_auth_protocol::MAX_VALIDITY_MS));
 
     // Everything above this line is real. What is missing is the transport.

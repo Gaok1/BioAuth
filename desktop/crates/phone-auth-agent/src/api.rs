@@ -164,11 +164,18 @@ pub struct AuthorizeResult {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebAuthnParams {
+    pub request_id: String,
     pub operation: String,
     pub origin: String,
     pub options: Value,
     #[serde(default)]
     pub credential_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelWebAuthnParams {
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

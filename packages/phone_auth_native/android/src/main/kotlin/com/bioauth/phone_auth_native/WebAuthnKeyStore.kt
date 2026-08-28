@@ -45,6 +45,11 @@ internal class WebAuthnKeyStore(private val context: Context) {
 
     fun delete(alias: String) = keyStore.deleteEntry(alias)
 
+    fun aliases(): Set<String> =
+        keyStore.aliases().toList().filterTo(mutableSetOf()) { it.startsWith(ALIAS_PREFIX) }
+
+    fun isUsable(alias: String): Boolean = runCatching { initializedSignature(alias) }.isSuccess
+
     private fun generate(alias: String, strongBox: Boolean): ECPublicKey {
         val builder = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))

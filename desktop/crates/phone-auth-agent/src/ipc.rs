@@ -9,10 +9,12 @@
 //! identically on Linux, macOS and Windows, and the agent has to run on all
 //! three without a platform abstraction layer for one small channel.
 
+use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -21,11 +23,41 @@ use phone_auth_verifier::encoding::to_hex;
 use phone_auth_verifier::random;
 
 use crate::api::{
-    AuthorizeParams, Call, ConfirmPairingParams, Event, ForgetParams, RecentParams, Reply,
-    SetPermissionsParams, WebAuthnParams,
+    AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
+    RecentParams, Reply, SetPermissionsParams, WebAuthnParams,
 };
 use crate::paths::Paths;
 use crate::service::Service;
+
+static WEBAUTHN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+fn webauthn_cancellations() -> &'static Mutex<HashMap<String, Instant>> {
+    WEBAUTHN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn take_webauthn_cancellation(request_id: &str) -> bool {
+    webauthn_cancellations()
+        .lock()
+        .expect("cancellation mutex")
+        .remove(request_id)
+        .is_some()
+}
+
+fn cancel_webauthn(request_id: &str) -> bool {
+    let mut cancellations = webauthn_cancellations().lock().expect("cancellation mutex");
+    cancellations.retain(|_, created| created.elapsed() < Duration::from_secs(300));
+    if cancellations.len() >= 128 {
+        if let Some(oldest) = cancellations
+            .iter()
+            .min_by_key(|(_, created)| *created)
+            .map(|(request_id, _)| request_id.clone())
+        {
+            cancellations.remove(&oldest);
+        }
+    }
+    cancellations.insert(request_id.to_owned(), Instant::now());
+    true
+}
 
 /// Contents of the endpoint file the UI and CLI read to find the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +310,20 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
             Err(reply) => reply(id),
         },
 
+        // Deliberately does not acquire the service mutex: `webauthn.perform`
+        // holds it while waiting for the phone, and cancellation must be able
+        // to interrupt that wait from a second native-host connection.
+        "webauthn.cancel" => match parse::<CancelWebAuthnParams>(call) {
+            Ok(params) if !params.request_id.is_empty() && params.request_id.len() <= 64 => {
+                Reply::ok(
+                    id,
+                    json!({ "cancelled": cancel_webauthn(&params.request_id) }),
+                )
+            }
+            Ok(_) => Reply::err(id, "bad-request", "invalid WebAuthn request id"),
+            Err(reply) => reply(id),
+        },
+
         "subscribe" => {
             let receiver = service.lock().expect("service mutex").subscribe();
             let writer = Arc::clone(writer);
@@ -350,5 +396,13 @@ mod tests {
         assert_eq!(parsed.port, endpoint.port);
         assert_eq!(parsed.token, endpoint.token);
         assert_eq!(parsed.verifier_id, endpoint.verifier_id);
+    }
+
+    #[test]
+    fn webauthn_cancellation_is_bounded_and_consumed_once() {
+        let request_id = format!("cancel-test-{}", std::process::id());
+        assert!(cancel_webauthn(&request_id));
+        assert!(take_webauthn_cancellation(&request_id));
+        assert!(!take_webauthn_cancellation(&request_id));
     }
 }

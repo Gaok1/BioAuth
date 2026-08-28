@@ -24,16 +24,3 @@ class SecurityStatus extends StatelessWidget {
     );
   }
 }
-
-class BiometricStatus extends StatelessWidget {
-  const BiometricStatus({required this.available, super.key});
-
-  final bool available;
-
-  @override
-  Widget build(BuildContext context) => SecurityStatus(
-    title: 'Biometria',
-    detail: available ? 'Disponível neste dispositivo' : 'Não verificada',
-    secure: available,
-  );
-}

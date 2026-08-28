@@ -42,7 +42,7 @@
 | Sensitive logging | Never log challenges, session keys, payloads, signatures, credentials, or LUKS material |
 | WebAuthn RP confusion | Validate HTTPS origin host against RP ID on phone; validate Android callers with privileged allowlist or asset links; fail closed |
 | RP ID claiming a public suffix | Bundled Public Suffix List rejects an RP ID that is not registrable, so a page under `com.br` or `github.io` cannot scope a credential to the whole suffix |
-| Passkey requested by a third-party iframe | Extension re-checks the `publickey-credentials-create`/`-get` Permissions Policy that overriding `navigator.credentials` bypasses; unknown policy fails closed |
+| Passkey requested by a third-party iframe | Main-world and isolated bridges independently re-check the `publickey-credentials-create`/`-get` Permissions Policy, including forged DOM events; unknown policy fails closed |
 | Malicious desktop page/extension | Authenticated session proves the paired computer, not the tab; show origin on phone and require biometric for every assertion |
 | Passkey loss | No sync/export in this phase; require a second service recovery path |
 

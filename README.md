@@ -68,11 +68,11 @@ Grab the files from the [latest release](https://github.com/Gaok1/BioAuth/releas
 
 | Platform | File | Notes |
 |---|---|---|
-| **Android** | `PhoneAuth-android*.apk` | Needs a fingerprint enrolled and `BIOMETRIC_STRONG` support |
-| **Windows 10/11** | `PhoneAuth-Setup-*.exe` | Installs the tray app and the background agent |
-| **Linux** | `PhoneAuth-*.AppImage` | Portable, no install |
-| **Debian / Ubuntu** | `phoneauth_*_amd64.deb` | |
-| **Headless Linux** | `phone-auth-linux-x86_64.tar.gz` | Agent, CLI and the initrd client |
+| **Android 14+** | `PhoneAuth-android.apk` | Needs a fingerprint enrolled and `BIOMETRIC_STRONG` support |
+| **Windows 11 x64** | `PhoneAuth-Setup-*.exe` | Installs the tray app and the background agent |
+| **Linux x64** | `PhoneAuth-*.AppImage` | Portable, no install |
+| **Debian / Ubuntu x64** | `phoneauth_*_amd64.deb` | |
+| **Headless Linux x64** | `phone-auth-linux-x86_64.tar.gz` | Agent, CLI and the initrd client |
 | **NixOS** | `nix build github:Gaok1/BioAuth#default` | Plus the module at `nixosModules.default` |
 
 Check what you downloaded against `SHA256SUMS.txt` in the same release.
@@ -142,9 +142,10 @@ Honest about what is finished:
 | QR / local-network transport | **Done.** Phone and desktop, end-to-end over a real socket |
 | Pairing, enrolment, verification code | **Done** |
 | Android biometric signing | **Implemented.** Keystore, `BIOMETRIC_STRONG`, auth-per-use |
+| Android passkeys | Credential Provider, desktop relay, account selection and biometric management implemented; physical/browser matrix pending |
 | Bluetooth LE transport | Android LAN→BLE fallback and Linux/BlueZ GATT server implemented; physical-device validation pending |
 | Disk unlock from the initrd | Scaffold. Not wired to a real LUKS flow yet |
-| iOS | Project exists, Secure Enclave bridge does not |
+| iOS | Deferred; outside the first supported matrix |
 
 The end-to-end path has been exercised against a desktop written from the same
 specification, over a real TCP socket. It has **not** yet been run phone-to-Rust
@@ -181,17 +182,23 @@ cd desktop && cargo build --release -p phone-auth-agent -p phone-auth-cli
 cd ui && npm ci && npx electron-builder --win     # or --linux
 ```
 
-Release APKs are signed only when real signing material is supplied. Without
-it the build stays unsigned rather than falling back to the debug key, which
-anyone can forge an update for.
+Local release builds are signed only when real signing material is supplied;
+otherwise they remain unsigned. The release workflow refuses to publish until
+all four Android signing secrets are configured. A debug APK can only be built
+by a non-publishing manual workflow run and is named `PhoneAuth-android-debug`.
 
 ## Documentation
 
 - [Wire format and test vectors](docs/protocol-handshake.md)
+- [Vault and File Locker application frames](docs/protocol-application.md)
 - [Architecture](docs/architecture.md)
 - [Threat model](docs/threat-model.md)
+- [Product and security decisions](docs/product-decisions.md)
+- [Security and vulnerability disclosure](SECURITY.md)
+- [Privacy policy](PRIVACY.md)
 - [Desktop internals](docs/desktop.md)
 - [Roadmap](docs/roadmap.md)
+- [Complete requirements and implementation tracker](docs/implementation-tracker.md)
 
 ## License
 

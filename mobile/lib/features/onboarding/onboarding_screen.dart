@@ -32,6 +32,16 @@ class OnboardingScreen extends ConsumerWidget {
                 'Funciona offline e suas chaves privadas permanecem no aparelho.',
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
+              const SizedBox(height: 20),
+              const Card(
+                child: ListTile(
+                  leading: Icon(Icons.warning_amber),
+                  title: Text('Passkeys ainda não têm backup'),
+                  subtitle: Text(
+                    'Mantenha outro método de acesso em cada site antes de criar uma passkey.',
+                  ),
+                ),
+              ),
               const Spacer(),
               SizedBox(
                 width: double.infinity,

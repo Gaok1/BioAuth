@@ -1,21 +1,22 @@
 //! The PhoneAuth wire format, as consumed by a verifier.
 //!
-//! This crate owns the exact bytes that a phone signs. Every rule here mirrors
-//! `mobile/lib/core/protocol/protocol_codec.dart` and
-//! `mobile/lib/domain/authentication_request.dart`; if the two ever disagree,
-//! a signature produced on the phone will not verify here, so the two sides
-//! must be changed together.
+//! This crate owns the exact protocol bytes shared with the phone. Authorization
+//! requests are biometric-signature payloads; application frames are instead
+//! authenticated and encrypted by the secure session. Every rule has a Dart
+//! counterpart, so both sides must be changed together.
 //!
 //! Nothing in this crate performs I/O, allocates a transport, or knows what a
 //! Bluetooth address is. A frame is a byte string; where it came from is the
 //! caller's problem, and never contributes to identity.
 
+mod application;
 pub mod cbor;
 pub mod encoding;
 mod enrolment;
 mod request;
 mod response;
 
+pub use application::{ApplicationFrame, ApplicationFrameKind, MAX_APPLICATION_PAYLOAD_BYTES};
 pub use enrolment::{CredentialPurpose, Enrolment, KeyKind};
 pub use request::{AuthRequest, RequestContext};
 pub use response::{AuthResponse, Decision};
@@ -51,6 +52,7 @@ pub const PUBLIC_KEY_EC_P256_SPKI: &str = "EC_P256_SPKI";
 const MESSAGE_TYPE_REQUEST: u64 = 1;
 const MESSAGE_TYPE_RESPONSE: u64 = 2;
 const MESSAGE_TYPE_ENROLMENT: u64 = 3;
+const MESSAGE_TYPE_APPLICATION: u64 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -84,6 +86,9 @@ pub enum ProtocolError {
     MissingProof,
     InvalidKeyKind(i64),
     InvalidPurpose(i64),
+    InvalidApplicationKind(u64),
+    InvalidOperation,
+    PayloadSize(usize),
     /// A field reserved for a future version was not zero. Fails closed rather
     /// than ignoring a value this build does not understand.
     InvalidReservedField(u64),
@@ -118,6 +123,11 @@ impl fmt::Display for ProtocolError {
             }
             Self::InvalidKeyKind(value) => write!(f, "invalid key kind: {value}"),
             Self::InvalidPurpose(value) => write!(f, "invalid credential purpose: {value}"),
+            Self::InvalidApplicationKind(value) => {
+                write!(f, "invalid application frame kind: {value}")
+            }
+            Self::InvalidOperation => f.write_str("invalid application operation"),
+            Self::PayloadSize(size) => write!(f, "invalid application payload size: {size}"),
             Self::InvalidReservedField(value) => {
                 write!(f, "reserved field must be zero, got {value}")
             }

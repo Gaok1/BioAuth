@@ -311,16 +311,17 @@ already authenticates it.
 | 4 | text | `EC_P256_SPKI` |
 | 5 | bytes | authorization credential public key, 1–512 bytes |
 | 6 | uint | `0` StrongBox, `1` Hardware, `2` Software |
-| 7 | uint | `0` Authorization, `1` DiskUnlock |
+| 7 | uint | `0` Authorization, `1` DiskUnlock, `2` WebAuthn, `3` Vault, `4` FileLocker |
 | 8 | uint | reserved, must be `0` |
 
 `key_kind` is a claim the verifier cannot check. It is used only to *withhold*
 authority: a `Software` key is refused for disk unlock. Reporting it honestly
 is a correctness requirement on the phone.
 
-`purpose` enforces key separation. A credential enrolled for `Authorization`
-will be refused if later offered for `DiskUnlock`, so a phone that wants both
-must enrol two credentials from two distinct keystore aliases.
+`purpose` enforces key separation. The verifier derives the required purpose
+from the reserved service name (`luks`, `webauthn`, `vault`, or `locker`); a
+caller cannot relabel one of those requests as ordinary authorization. A phone
+that supports more than one purpose must enrol distinct keystore aliases.
 
 A freshly enrolled credential authorizes nothing until the user grants
 permissions.

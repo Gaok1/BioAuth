@@ -35,6 +35,9 @@ void main() {
     expect(KeyKind.software.index, 2);
     expect(CredentialPurpose.authorization.index, 0);
     expect(CredentialPurpose.diskUnlock.index, 1);
+    expect(CredentialPurpose.webAuthn.index, 2);
+    expect(CredentialPurpose.vault.index, 3);
+    expect(CredentialPurpose.fileLocker.index, 4);
   });
 
   test('every key kind and purpose round-trips', () {

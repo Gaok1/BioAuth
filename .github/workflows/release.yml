@@ -116,6 +116,9 @@ jobs:
     # fails to parse rather than evaluating to false.
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -146,20 +149,42 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
-      # A release build must be signed with a real key or it cannot be
-      # installed. When no keystore is configured we ship the debug-signed
-      # build instead of an unsigned artifact nobody can use — and say so in
-      # the release notes rather than letting it look production-signed.
-      - name: Decode signing keystore
+      # A published release must be signed with the project key. A manual
+      # dispatch without secrets may still produce an explicitly named debug
+      # artifact for workflow testing, but it can never reach a release.
+      - name: Validate and decode signing material
         id: signing
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          PUBLISH: ${{ needs.gate.outputs.publish }}
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > mobile/android/release.jks
+          configured=0
+          for value in \
+            "$ANDROID_KEYSTORE_BASE64" \
+            "$ANDROID_KEYSTORE_PASSWORD" \
+            "$ANDROID_KEY_ALIAS" \
+            "$ANDROID_KEY_PASSWORD"; do
+            [ -n "$value" ] && configured=$((configured + 1))
+          done
+
+          if [ "$configured" -ne 0 ] && [ "$configured" -ne 4 ]; then
+            echo "::error::Android release signing is only partially configured"
+            exit 1
+          fi
+          if [ "$PUBLISH" = true ] && [ "$configured" -ne 4 ]; then
+            echo "::error::Published releases require all four Android signing secrets"
+            exit 1
+          fi
+          if [ "$configured" -eq 0 ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > mobile/android/release.jks
           cat > mobile/android/key.properties <<EOF
           storeFile=release.jks
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
           EOF
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
@@ -399,15 +424,6 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
-      - name: Note whether the APK is production-signed
-        id: apk
-        run: |
-          if [ -f release/PhoneAuth-android.apk ]; then
-            echo "note=Signed with the project release key." >> "$GITHUB_OUTPUT"
-          else
-            echo "note=**Debug-signed.** No release keystore is configured for this repository, so the APK is signed with Android's debug key. Fine for trying it out; do not treat it as a production build." >> "$GITHUB_OUTPUT"
-          fi
-
       # `tag_name` is explicit because on a push to main the ref is a branch.
       # The action creates the tag at this commit as part of creating the
       # release, so the tag only ever exists for a build that got this far.
@@ -422,18 +438,17 @@ jobs:
 
             | Platform | File |
             |---|---|
-            | Android | `PhoneAuth-android*.apk` |
-            | Windows 10/11 | `PhoneAuth-Setup-*.exe` |
-            | Linux (portable) | `PhoneAuth-*.AppImage` |
-            | Debian / Ubuntu | `*.deb` |
-            | Headless Linux | `phone-auth-linux-x86_64.tar.gz` |
+            | Android | `PhoneAuth-android.apk` |
+            | Windows 11 x64 | `PhoneAuth-Setup-*.exe` |
+            | Linux x64 (portable) | `PhoneAuth-*.AppImage` |
+            | Debian / Ubuntu x64 | `*.deb` |
+            | Headless Linux x64 | `phone-auth-linux-x86_64.tar.gz` |
             | NixOS | `nix build github:${{ github.repository }}#default` |
 
             Verify what you downloaded against `SHA256SUMS.txt`.
 
-            ## Android note
-
-            ${{ steps.apk.outputs.note }}
+            The Android artifact is signed with the project release key. The
+            workflow refuses to publish when any signing secret is absent.
 
             ## Pairing
 

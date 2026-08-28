@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 internal class WebAuthnRequestParserTest {
     @Test
@@ -76,6 +77,47 @@ internal class WebAuthnRequestParserTest {
                   "challenge":"$challenge",
                   "allowCredentials":[{"type":"password","id":"AQ"}]
                 }""",
+            )
+        }
+    }
+
+    @Test
+    fun validatesSelectionAttestationVerificationAndExtensions() {
+        val challenge = b64(ByteArray(32))
+        val supported = WebAuthnRequestParser.creation(
+            """{
+              "rp":{"id":"example.org","name":"Example"},
+              "user":{"id":"AQ","name":"alice"},
+              "challenge":"$challenge",
+              "pubKeyCredParams":[{"type":"public-key","alg":-7}],
+              "authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},
+              "attestation":"none",
+              "extensions":{"credProps":true}
+            }""",
+        )
+        assertTrue(supported.reportCredentialProperties)
+
+        for (unsupported in listOf(
+            "\"authenticatorSelection\":{\"authenticatorAttachment\":\"cross-platform\"}",
+            "\"attestation\":\"direct\"",
+            "\"extensions\":{\"largeBlob\":{\"support\":\"required\"}}",
+        )) {
+            assertFailsWith<IllegalArgumentException> {
+                WebAuthnRequestParser.creation(
+                    """{
+                      "rp":{"id":"example.org","name":"Example"},
+                      "user":{"id":"AQ","name":"alice"},
+                      "challenge":"$challenge",
+                      "pubKeyCredParams":[{"type":"public-key","alg":-7}],
+                      $unsupported
+                    }""",
+                )
+            }
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            WebAuthnRequestParser.request(
+                """{"rpId":"example.org","challenge":"$challenge","userVerification":"sometimes"}""",
             )
         }
     }

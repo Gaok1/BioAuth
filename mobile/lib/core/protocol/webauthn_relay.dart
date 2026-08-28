@@ -50,7 +50,7 @@ class WebAuthnRelayRequest {
     final options = value['options'];
     final uri = origin is String ? Uri.tryParse(origin) : null;
     if (requestId is! String ||
-        requestId.length > 128 ||
+        requestId.length > 64 ||
         requestId.isEmpty ||
         verifierId != expectedVerifierId ||
         operation is! String ||
@@ -87,6 +87,7 @@ class WebAuthnRelayHandler {
     try {
       final response = jsonDecode(
         await _native.perform(
+          requestId: request.requestId,
           operation: request.operation,
           origin: request.origin,
           optionsJson: request.optionsJson,
@@ -113,6 +114,8 @@ class WebAuthnRelayHandler {
     }
   }
 
+  Future<void> cancel(String requestId) => _native.cancel(requestId);
+
   Uint8List _encode(Map<String, Object?> value) {
     final bytes = Uint8List.fromList([
       ..._magic,
@@ -122,5 +125,27 @@ class WebAuthnRelayHandler {
       throw const FormatException('WebAuthn relay response is too large');
     }
     return bytes;
+  }
+}
+
+class WebAuthnRelayCancel {
+  const WebAuthnRelayCancel(this.requestId);
+
+  final String requestId;
+
+  factory WebAuthnRelayCancel.decode(Uint8List frame) {
+    if (!WebAuthnRelayRequest.recognizes(frame) || frame.length > 8192) {
+      throw const FormatException('Invalid WebAuthn cancellation frame');
+    }
+    final value = jsonDecode(utf8.decode(frame.sublist(_magic.length)));
+    if (value is! Map<String, dynamic> ||
+        value['version'] != 1 ||
+        value['type'] != 'webauthn.cancel' ||
+        value['requestId'] is! String ||
+        (value['requestId'] as String).isEmpty ||
+        (value['requestId'] as String).length > 64) {
+      throw const FormatException('Rejected WebAuthn cancellation frame');
+    }
+    return WebAuthnRelayCancel(value['requestId'] as String);
   }
 }

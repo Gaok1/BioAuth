@@ -35,6 +35,19 @@ void main() {
             'requestBlePermissions' => true,
             'setBackgroundSessionsEnabled' => true,
             'performWebAuthn' => {'responseJson': '{"id":"credential"}'},
+            'cancelWebAuthn' => null,
+            'listPasskeys' => [
+              {
+                'kind': 'credential',
+                'identifier': 'AQ',
+                'rpId': 'example.com',
+                'userName': 'alice',
+                'userDisplayName': 'Alice',
+                'createdAtMillis': 1787875200000,
+                'status': 'available',
+              },
+            ],
+            'deletePasskey' => true,
             'bleRequestMtu' => 247,
             'bleStartScan' ||
             'bleStopScan' ||
@@ -111,12 +124,24 @@ void main() {
   test('forwards a desktop WebAuthn operation to Android', () async {
     expect(
       await const PhoneAuthWebAuthnRelay().perform(
+        requestId: 'request-1',
         operation: 'get',
         origin: 'https://example.com',
         optionsJson: '{}',
       ),
       '{"id":"credential"}',
     );
+    await const PhoneAuthWebAuthnRelay().cancel('request-1');
+  });
+
+  test('lists and deletes managed passkeys', () async {
+    final manager = const PhoneAuthPasskeys();
+    final passkey = (await manager.list()).single;
+
+    expect(passkey.rpId, 'example.com');
+    expect(passkey.userName, 'alice');
+    expect(passkey.status, ManagedPasskeyStatus.available);
+    await manager.delete(passkey);
   });
 
   test('forwards native BLE lifecycle and bounded writes', () async {

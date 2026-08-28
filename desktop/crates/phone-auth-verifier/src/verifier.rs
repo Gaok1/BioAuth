@@ -44,7 +44,6 @@ pub struct RequestSpec {
     pub action: String,
     pub resource: String,
     pub user: String,
-    pub purpose: CredentialPurpose,
     /// How long the phone has to answer, clamped to the protocol maximum.
     pub validity_ms: i64,
 }
@@ -63,14 +62,8 @@ impl RequestSpec {
             action: action.into(),
             resource: resource.into(),
             user: user.into(),
-            purpose: CredentialPurpose::Authorization,
             validity_ms: 60_000,
         }
-    }
-
-    pub fn with_purpose(mut self, purpose: CredentialPurpose) -> Self {
-        self.purpose = purpose;
-        self
     }
 
     pub fn with_validity_ms(mut self, validity_ms: i64) -> Self {
@@ -266,14 +259,15 @@ impl Verifier {
             .find_credential(&spec.credential_id)
             .ok_or_else(|| AuthorizationError::UnknownCredential(spec.credential_id.clone()))?;
 
-        if credential.purpose != spec.purpose {
+        let purpose = CredentialPurpose::for_service(&spec.service);
+        if credential.purpose != purpose {
             return Err(AuthorizationError::PurposeMismatch {
                 credential_id: spec.credential_id.clone(),
                 registered: credential.purpose,
-                requested: spec.purpose,
+                requested: purpose,
             });
         }
-        if spec.purpose == CredentialPurpose::DiskUnlock {
+        if purpose == CredentialPurpose::DiskUnlock {
             // Boot-time unlock has no fallback path and no logged-in user to
             // notice something is wrong, so both the key and the transport
             // have to be the real thing.

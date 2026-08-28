@@ -330,6 +330,7 @@ impl Transport for QrNetworkTransport {
                 is_development: self.shared.is_development,
             },
             closed: false,
+            pending_record: Vec::new(),
         }))
     }
 }
@@ -341,6 +342,7 @@ struct NetworkSession {
     origin: String,
     security: TransportSecurity,
     closed: bool,
+    pending_record: Vec<u8>,
 }
 
 impl SecureSession for NetworkSession {
@@ -372,7 +374,8 @@ impl SecureSession for NetworkSession {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "session closed"));
         }
         self.stream.set_read_timeout(Some(timeout))?;
-        let record = read_frame(&mut self.stream)?;
+        let record =
+            crate::framing::read_frame_resumable(&mut self.stream, &mut self.pending_record)?;
         self.channel
             .open(&record)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))

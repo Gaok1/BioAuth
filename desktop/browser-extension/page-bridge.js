@@ -112,6 +112,9 @@
       }
       const timer = setTimeout(() => {
         pending.delete(id);
+        document.dispatchEvent(new CustomEvent("bioauth-webauthn-cancel", {
+          detail: JSON.stringify({ id }),
+        }));
         reject(new DOMException("PhoneAuth request timed out", "NotAllowedError"));
       }, deadline(options.publicKey));
       pending.set(id, { operation, resolve, reject, timer });
@@ -120,6 +123,9 @@
         if (!current) return;
         clearTimeout(current.timer);
         pending.delete(id);
+        document.dispatchEvent(new CustomEvent("bioauth-webauthn-cancel", {
+          detail: JSON.stringify({ id }),
+        }));
         reject(options.signal.reason ?? new DOMException("Aborted", "AbortError"));
       }, { once: true });
       document.dispatchEvent(new CustomEvent("bioauth-webauthn-request", {

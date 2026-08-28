@@ -54,6 +54,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                     authenticate(
                         title = "Criar passkey",
                         subtitle = options.rpId,
+                        description = NO_BACKUP_WARNING,
                         crypto = null,
                         onSuccess = { finishCreate(core.create(options, client)) },
                         onFailure = { failCreate("Biometric verification failed") },
@@ -82,6 +83,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                     authenticate(
                         title = "Usar passkey",
                         subtitle = prepared.credential.rpId,
+                        description = null,
                         crypto = BiometricPrompt.CryptoObject(prepared.signature),
                         onSuccess = { result ->
                             val signature = result.cryptoObject?.signature
@@ -101,6 +103,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
     private fun authenticate(
         title: String,
         subtitle: String,
+        description: String?,
         crypto: BiometricPrompt.CryptoObject?,
         onSuccess: (BiometricPrompt.AuthenticationResult) -> Unit,
         onFailure: () -> Unit,
@@ -128,6 +131,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
+            .setDescription(description)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .setNegativeButtonText("Cancelar")
             .setConfirmationRequired(true)
@@ -200,6 +204,8 @@ class WebAuthnCredentialActivity : FragmentActivity() {
     }
 
     companion object {
+        private const val NO_BACKUP_WARNING =
+            "Sem backup: continue somente se a conta tiver outro método de acesso"
         const val ACTION_CREATE = "com.bioauth.phone_auth_native.WEBAUTHN_CREATE"
         const val ACTION_GET = "com.bioauth.phone_auth_native.WEBAUTHN_GET"
         const val EXTRA_CREDENTIAL_ID = "credential_id"

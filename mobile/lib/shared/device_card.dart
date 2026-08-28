@@ -44,7 +44,7 @@ class DeviceCard extends StatelessWidget {
               tooltip: 'Opções do dispositivo',
               itemBuilder: (context) => [
                 PopupMenuItem<void>(
-                  onTap: onRevoke,
+                  onTap: () => _confirmRevoke(context),
                   child: const Text('Revogar dispositivo'),
                 ),
               ],
@@ -53,6 +53,32 @@ class DeviceCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmRevoke(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Revogar este computador?'),
+        content: Text(
+          'O telefone removerá ${device.name} e encerrará a sessão. '
+          'O computador ainda pode guardar sua chave pública até você remover '
+          'o pareamento também nele. Para reconectar, faça um novo pareamento '
+          'e confira os dois códigos.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Revogar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) onRevoke();
   }
 
   String _relativeTime(DateTime at) {

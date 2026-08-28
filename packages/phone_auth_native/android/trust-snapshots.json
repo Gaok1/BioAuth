@@ -1,0 +1,17 @@
+{
+  "max_age_days": 45,
+  "snapshots": {
+    "public_suffix_list": {
+      "path": "packages/phone_auth_native/android/src/main/res/raw/public_suffix_list.dat",
+      "url": "https://publicsuffix.org/list/public_suffix_list.dat",
+      "retrieved": "2026-08-27",
+      "sha256": "14ef61b1c212f701f3636c1d01ab9254daf841f57eb6433bcbbef56c726ca656"
+    },
+    "privileged_browsers": {
+      "path": "packages/phone_auth_native/android/src/main/res/raw/privileged_browsers.json",
+      "url": "https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json",
+      "retrieved": "2026-08-27",
+      "sha256": "594a83e3cb3475e8af8da22595b3481cbefb61b747c7a67a66aa2e47433ed79c"
+    }
+  }
+}

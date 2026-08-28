@@ -140,113 +140,55 @@ Each of these has a test that fails if the check is removed:
 - the `sudo` credential borrowed for a LUKS unwrap
 - any single-bit mutation of a frame
 
-## Pendências — bloqueadas no mobile
+## Current mobile integration state
 
-Every item below needs the phone. The desktop half of each one exists, is
-tested, and is specified in `protocol-handshake.md` with test vectors.
+The Android and desktop halves now share the production protocol. The remaining
+work in this section is real-device validation and product scope, not missing
+transport, handshake, or scanner code.
 
-### 1. No transport on the phone (blocks real authorization)
+### Transport and background operation
 
-`mobile/lib/core/transport/auth_transport.dart` defines `AuthTransport` and
-`SecureTransportSession`. Both `FakeTransport` and `BleTransport` implement
-that boundary without changing the protocol or authorization core.
+`QrNetworkTransport` is the Android TCP client for the Rust listener and uses
+4-byte length-prefixed frames. `BleTransport` is the Android GATT client for the
+Linux BlueZ service. `FallbackAuthTransport` tries LAN before BLE and never
+changes transport during pairing. Both paths use the same authenticated secure
+session. They still need the hardware, network-failure, OEM background, and task
+removal matrices tracked in `implementation-tracker.md`.
 
-- **`QrNetworkTransport`** — the desktop side is built and listening. It
-  accepts a TCP connection, runs the handshake and hands a `SecureSession` to
-  the verifier. The phone needs the matching client: a socket, 4-byte
-  length-prefixed frames, and the two-message handshake. This is the shortest
-  path to a working phone.
-- **`BleTransport`** — the mobile Android GATT client, bounded framing, MTU,
-  notifications, permissions and timeout behaviour exist. The Linux agent now
-  advertises the matching BlueZ GATT service, authenticates the phone with the
-  shared production handshake and parks the secure session for the verifier.
-  Real-device validation, reconnect policy and Android background policy remain.
+### Handshake, QR, and verification
 
-Until one exists, `phone-auth authorize` exits 3 (`no-transport`) with a real
-phone.
+The Dart client handshake lives under `mobile/lib/core/transport/` and matches
+the Rust server through the pinned v1/v2 vectors. `PairingQRScanner` scans the
+bootstrap, `PairingBootstrap` validates its identity commitment and expiry, and
+`PairingController` presents the six-digit comparison before persisting the
+pairing. The desktop tray renders the QR and requires its own matching
+confirmation.
 
-### 2. The client half of the handshake
+### Credential purpose and key kind
 
-The desktop implements both halves in `phone-auth-session`; the phone needs
-the client one. It is fully specified in `protocol-handshake.md`:
+Android enrolls `bioauth_authorization_v1` for ordinary authorization and
+reports hardware/StrongBox backing in the enrolment frame. The verifier stores
+and enforces both `KeyKind` and `CredentialPurpose`. Reserved `vault`, `locker`,
+`luks`, and `webauthn` services select distinct credential purposes inside the
+verifier; IPC callers cannot override that mapping. Their native Android aliases
+are delivered with the corresponding feature and never reuse the authorization
+alias.
 
-- the ClientHello encoding and its signature envelope
-- the key schedule, split in the documented order
-- the session binding — byte-identical or every request fails
-- the record layer, including in-order counter enforcement
+### iOS
 
-`ClientHandshake::respond` is the reference and is under 80 lines. The
-deterministic parts have published test vectors; **implement those first**,
-because each of them fails on the wire with the same undiagnosable symptom.
+`packages/phone_auth_native/ios/.../PhoneAuthNativePlugin.swift` remains a
+scaffold. There is no Secure Enclave/Keychain, biometric, transport, background,
+or credential-provider implementation, so iOS is outside the current product
+matrix.
 
-### 3. QR scanner and the verification code screen
+### Cross-language vectors
 
-`shared/pairing_qr_code.dart` is a placeholder icon, not a scanner. The phone
-needs to parse the bootstrap, check `SHA-256("PhoneAuth/identity/v1" ‖ spki)`
-against the code's commitment, and show the six-digit verification code with
-an explicit confirm step.
-
-That screen is not cosmetic. The QR authenticates the desktop to the phone;
-the code is the only thing that stops someone who photographed the QR from
-pairing their own device instead of the user's.
-
-The desktop side is complete: the tray renders a scannable code, polls for a
-completed handshake, shows the same six digits and stores nothing until the
-user confirms.
-
-### 4. One credential, no purpose separation
-
-`DeviceKeyStore.kt` has a single alias, `bioauth_authorization_v1`. The
-architecture requires separate credentials per purpose, and the desktop already
-models and enforces that (`CredentialPurpose::{Authorization, DiskUnlock}`).
-
-Needed on mobile: a second, separately-enrolled alias for the LUKS wrapping
-credential, and a way to report which alias is which at pairing time. Without
-it, no disk-unlock credential can ever be enrolled — the verifier will refuse
-to reuse the authorization credential, by design.
-
-### 5. `KeyKind` is not reported at pairing
-
-`PhoneAuthNativePlugin.kt` computes `keySecurity()` — `hardwareBacked`,
-`strongBoxBacked` — but nothing carries it into a pairing record.
-
-The desktop now has somewhere to put it: the enrolment frame
-(`protocol-handshake.md`) carries `key_kind` and `purpose`, and the verifier
-stores both. The phone has to fill them in honestly. It is a claim the
-verifier cannot check, used only to *withhold* authority — a `Software` key is
-refused for disk unlock — so reporting it truthfully is a correctness
-requirement on the phone, not a formality.
-
-### 6. iOS is not implemented
-
-`packages/phone_auth_native/ios/.../PhoneAuthNativePlugin.swift` is a stub. The
-desktop is platform-agnostic — it verifies a P-256 SPKI key and a DER signature
-regardless of origin — so a Secure Enclave implementation should need no
-desktop change. Worth confirming that `SecKeyCreateSignature` with
-`ecdsaSignatureMessageX962SHA256` produces the same bytes Android's
-`SHA256withECDSA` does. It should; it is the same algorithm and the same DER
-encoding.
-
-### 7. Cross-language vectors
-
-`desktop/crates/phone-auth-protocol/tests/golden_vectors.rs` pins the wire
-format against a vector derived independently from RFC 8949.
-`mobile/test/protocol_golden_vector_test.dart` asserts the same bytes from the
-Dart side. Both the Flutter and Rust suites execute it in CI, proving the two
-independent codecs agree on the pinned frame.
-
-It has not been executed here: no Flutter or Dart SDK is installed on this
-machine. **Run `flutter test test/protocol_golden_vector_test.dart` before
-trusting the two codecs to match.** If it fails, the desktop is wrong and the
-phone is right — the Dart codec is the older of the two.
-
-The handshake has its own vectors, in
-`desktop/crates/phone-auth-session/tests/handshake_vectors.rs` and reproduced
-in `protocol-handshake.md`. They were derived from the specification with an
-independent implementation rather than from the Rust source, so agreement is
-evidence and not a tautology. There is no Dart counterpart yet, because there
-is no Dart handshake yet; writing the vectors test first is the cheapest way
-to build one.
+`desktop/crates/phone-auth-protocol/tests/golden_vectors.rs` and
+`mobile/test/protocol_golden_vector_test.dart` pin the authorization frame.
+Handshake and session-binding vectors live in
+`desktop/crates/phone-auth-session/tests/handshake_vectors.rs` and the Dart
+session-binding tests. Rust and Flutter run both sides in CI; the current local
+suite results are recorded in `implementation-tracker.md`.
 
 ## Boot, NixOS and PAM
 

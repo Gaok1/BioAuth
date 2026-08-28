@@ -52,7 +52,10 @@ domain. `PublicSuffixListTest` asserts the shipped file still covers the
 suffixes that matter, so a truncated or emptied list fails the build rather
 than silently making every suffix registrable.
 
-Refreshing either file is a reviewed app release. Neither is fetched at
+Refreshing either file is automated by
+`scripts/update_android_trust_snapshots.py` and enters the repository through a
+reviewed pull request after Android unit tests. CI verifies the committed hashes
+and freshness metadata. Neither is fetched at
 runtime: a security decision must not depend on a network call that can fail
 open.
 

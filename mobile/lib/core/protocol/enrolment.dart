@@ -51,6 +51,12 @@ enum CredentialPurpose {
 
   /// WebAuthn assertions. Uses a separate per-RP Keystore alias.
   webAuthn,
+
+  /// Password-vault encryption and release operations.
+  vault,
+
+  /// File-locker key wrapping and release operations.
+  fileLocker,
 }
 
 class EnrolmentException implements Exception {

@@ -82,6 +82,11 @@ internal class WebAuthnCore(
                 put("publicKey", b64(publicKey.encoded))
                 put("publicKeyAlgorithm", Ctap2Encoder.ES256)
             },
+            JSONObject().apply {
+                if (options.reportCredentialProperties) {
+                    put("credProps", JSONObject().put("rk", true))
+                }
+            },
         )
     }
 
@@ -150,14 +155,18 @@ internal class WebAuthnCore(
         return ClientData(json, Ctap2Encoder.sha256(json))
     }
 
-    private fun credentialJson(credentialId: ByteArray, response: JSONObject): String =
+    private fun credentialJson(
+        credentialId: ByteArray,
+        response: JSONObject,
+        clientExtensionResults: JSONObject = JSONObject(),
+    ): String =
         JSONObject().apply {
             put("id", b64(credentialId))
             put("rawId", b64(credentialId))
             put("type", "public-key")
             put("authenticatorAttachment", "platform")
             put("response", response)
-            put("clientExtensionResults", JSONObject())
+            put("clientExtensionResults", clientExtensionResults)
         }.toString()
 
     private fun b64(value: ByteArray) = WebAuthnRequestParser.base64Url(value)

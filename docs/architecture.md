@@ -121,12 +121,16 @@ device identity root
 |- pairing identity
 |- PC authorization credentials
 |- WebAuthn/passkeys
+|- password-vault credential
+|- file-locker credential
 |- LUKS wrapping credential
 `- physical-access credentials
 ```
 
 The MVP Android alias is scoped to PhoneAuth authorization and must not later be
-reused for LUKS, WebAuthn, or physical access.
+reused for vault, locker, LUKS, WebAuthn, or physical access. The verifier maps
+the reserved `vault`, `locker`, `luks`, and `webauthn` service names to their
+credential purposes instead of trusting a purpose supplied over IPC.
 
 ## Background execution
 
@@ -142,3 +146,12 @@ biometric approval.
 WebAuthn uses per-credential `bioauth_webauthn_v1_...` aliases and never the
 authorization or session-identity aliases. See `webauthn.md` for its CTAP2
 encoding and local-versus-desktop trust boundary.
+
+Pairing metadata and Android passkey metadata use explicit v2 envelopes. An
+upgrade migrates the legacy snapshot into a new key without deleting it; every
+later write preserves the last valid v2 snapshot before replacing the current
+one. Malformed current data is restored from that snapshot and surfaced as an
+error, while an unknown future version is preserved and rejected rather than
+misclassified as corruption. The authoritative replacement is one atomic
+SharedPreferences value/commit, so process death cannot expose a half-encoded
+record set.

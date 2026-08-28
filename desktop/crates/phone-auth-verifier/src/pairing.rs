@@ -55,6 +55,26 @@ pub enum CredentialPurpose {
     DiskUnlock,
     /// WebAuthn assertions. Uses per-RP keys held only by the phone.
     WebAuthn,
+    /// Password-vault encryption and release operations.
+    Vault,
+    /// File-locker key wrapping and release operations.
+    FileLocker,
+}
+
+impl CredentialPurpose {
+    /// Returns the credential purpose reserved for a protocol service.
+    ///
+    /// The verifier owns this mapping so an IPC caller cannot label a vault
+    /// request as ordinary authorization and borrow the sudo credential.
+    pub fn for_service(service: &str) -> Self {
+        match service {
+            "luks" => Self::DiskUnlock,
+            "webauthn" => Self::WebAuthn,
+            "vault" => Self::Vault,
+            "locker" => Self::FileLocker,
+            _ => Self::Authorization,
+        }
+    }
 }
 
 /// One public credential belonging to a paired device.

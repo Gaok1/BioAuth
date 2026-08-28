@@ -25,7 +25,25 @@ const sendToHost = (payload) => {
 // answer that never arrives. `sendResponse` plus `return true` is the one shape
 // both implement.
 runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "bioauth-webauthn" || !sender.url) return undefined;
+  if (!sender.url) return undefined;
+  if (message?.type === "bioauth-webauthn-cancel") {
+    if (typeof message.requestId !== "string" || !message.requestId) return undefined;
+    sendToHost({ operation: "cancel", requestId: message.requestId }).then(
+      (response) => sendResponse(response ?? { ok: false, error: "PhoneAuth host sent no answer" }),
+      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }),
+    );
+    return true;
+  }
+  if (message?.type !== "bioauth-webauthn") return undefined;
+  if (!["create", "get"].includes(message.operation)
+      || typeof message.requestId !== "string"
+      || !message.requestId
+      || !message.options
+      || typeof message.options !== "object"
+      || Array.isArray(message.options)) {
+    sendResponse({ ok: false, error: "Invalid browser request" });
+    return true;
+  }
 
   let origin;
   try {
@@ -37,7 +55,12 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  sendToHost({ operation: message.operation, origin, options: message.options }).then(
+  sendToHost({
+    operation: message.operation,
+    requestId: message.requestId,
+    origin,
+    options: message.options,
+  }).then(
     (response) => sendResponse(response ?? { ok: false, error: "PhoneAuth host sent no answer" }),
     (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }),
   );

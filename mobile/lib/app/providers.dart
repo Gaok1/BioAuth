@@ -32,6 +32,10 @@ final pairingStoreProvider = Provider<PairingStore>(
   (ref) => SharedPreferencesPairingStore(),
 );
 
+final securityCapabilitiesProvider = FutureProvider<SecurityCapabilities>(
+  (ref) => const PhoneAuthNative().getSecurityCapabilities(),
+);
+
 /// This phone's stable identifier, created on first use.
 final deviceIdProvider = FutureProvider<String>(
   (ref) => ref.watch(pairingStoreProvider).deviceId(),

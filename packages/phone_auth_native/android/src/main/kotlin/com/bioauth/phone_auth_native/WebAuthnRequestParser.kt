@@ -11,6 +11,7 @@ internal data class WebAuthnCreationOptions(
     val userDisplayName: String,
     val challenge: ByteArray,
     val excludedCredentialIds: List<ByteArray>,
+    val reportCredentialProperties: Boolean,
 )
 
 internal data class WebAuthnRequestOptions(
@@ -35,6 +36,19 @@ internal object WebAuthnRequestParser {
                 it.optString("type") == "public-key" && it.optInt("alg", Int.MIN_VALUE) == Ctap2Encoder.ES256
             } == true
         }) { "ES256 is not permitted by the relying party" }
+        val selection = root.optionalObject("authenticatorSelection")
+        selection?.optionalEnum("authenticatorAttachment", setOf("platform"))
+        selection?.optionalEnum("residentKey", RESIDENT_KEY_VALUES)
+        selection?.optionalEnum("userVerification", USER_VERIFICATION_VALUES)
+        selection?.optionalBoolean("requireResidentKey")
+        root.optionalEnum("attestation", setOf("none"))
+        val extensions = root.optionalObject("extensions")
+        val reportCredentialProperties = extensions?.let {
+            require(it.keys().asSequence().all { name -> name == "credProps" }) {
+                "Unsupported WebAuthn extension"
+            }
+            it.optionalBoolean("credProps") ?: false
+        } ?: false
 
         return WebAuthnCreationOptions(
             rpId = rpId,
@@ -48,12 +62,17 @@ internal object WebAuthnRequestParser {
             ),
             challenge = challenge,
             excludedCredentialIds = credentialIds(root.optJSONArray("excludeCredentials")),
+            reportCredentialProperties = reportCredentialProperties,
         )
     }
 
     fun request(json: String): WebAuthnRequestOptions {
         require(json.length in 2..65536) { "Invalid WebAuthn assertion request" }
         val root = JSONObject(json)
+        root.optionalEnum("userVerification", USER_VERIFICATION_VALUES)
+        root.optionalObject("extensions")?.let {
+            require(!it.keys().hasNext()) { "Unsupported WebAuthn extension" }
+        }
         return WebAuthnRequestOptions(
             rpId = validRpId(root.requiredString("rpId")),
             challenge = challenge(root.requiredString("challenge")),
@@ -137,5 +156,25 @@ internal object WebAuthnRequestParser {
     private fun JSONObject.requiredString(name: String): String =
         optString(name).takeIf { it.isNotEmpty() } ?: throw IllegalArgumentException("$name is required")
 
+    private fun JSONObject.optionalObject(name: String): JSONObject? {
+        if (!has(name)) return null
+        return optJSONObject(name) ?: throw IllegalArgumentException("$name is invalid")
+    }
+
+    private fun JSONObject.optionalEnum(name: String, supported: Set<String>): String? {
+        if (!has(name)) return null
+        val value = optString(name)
+        require(value in supported) { "$name is unsupported" }
+        return value
+    }
+
+    private fun JSONObject.optionalBoolean(name: String): Boolean? {
+        if (!has(name)) return null
+        require(get(name) is Boolean) { "$name is invalid" }
+        return getBoolean(name)
+    }
+
     private const val BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    private val RESIDENT_KEY_VALUES = setOf("discouraged", "preferred", "required")
+    private val USER_VERIFICATION_VALUES = setOf("discouraged", "preferred", "required")
 }

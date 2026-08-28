@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
@@ -120,16 +121,48 @@ class PairedSessionService {
       policy: policyFor(record),
       clock: _clock,
     );
+    final frames = StreamIterator<Uint8List>(outcome.session.incomingFrames);
     try {
-      final frame = await outcome.session.incomingFrames.first.timeout(
-        pairedSessionIdleTimeout,
-      );
+      if (!await frames.moveNext().timeout(pairedSessionIdleTimeout)) {
+        throw StateError('Desktop closed before sending a request');
+      }
+      final frame = frames.current;
       if (WebAuthnRelayRequest.recognizes(frame)) {
         final request = WebAuthnRelayRequest.decode(
           frame,
           expectedVerifierId: record.verifierId,
         );
-        await outcome.session.send(await _webAuthn.perform(request));
+        final response = _webAuthn.perform(request);
+        final nextFrame = frames.moveNext().then((available) {
+          if (!available) {
+            throw StateError('Desktop closed the passkey session');
+          }
+          return frames.current;
+        });
+        var nativeSettled = false;
+        try {
+          final completed = await Future.any<(bool, Uint8List)>([
+            response.then((value) => (false, value)),
+            nextFrame.then((value) => (true, value)),
+          ]);
+          if (completed.$1) {
+            final cancel = WebAuthnRelayCancel.decode(completed.$2);
+            if (cancel.requestId != request.requestId) {
+              throw const FormatException(
+                'Cancellation belongs to another request',
+              );
+            }
+            await _webAuthn.cancel(request.requestId);
+            nativeSettled = true;
+          }
+          final encoded = await response;
+          nativeSettled = true;
+          await outcome.session.send(encoded);
+        } finally {
+          if (!nativeSettled) {
+            await _webAuthn.cancel(request.requestId);
+          }
+        }
         return null;
       }
       return await core.serveFrame(outcome.session, frame);
@@ -137,6 +170,7 @@ class PairedSessionService {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
     } finally {
+      await frames.cancel();
       if (identical(_active[record.verifierId], outcome.session)) {
         _active.remove(record.verifierId);
       }

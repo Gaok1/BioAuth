@@ -35,9 +35,28 @@ fn run() -> Result<(), String> {
 
 fn handle(message: Value) -> Value {
     let operation = message.get("operation").and_then(Value::as_str);
+    let request_id = message.get("requestId").and_then(Value::as_str);
+    if operation == Some("cancel") {
+        let Some(request_id) = request_id.filter(|value| !value.is_empty() && value.len() <= 64)
+        else {
+            return json!({"ok": false, "error": "invalid browser cancellation"});
+        };
+        let mut client = match AgentClient::connect(&Paths::resolve(None)) {
+            Ok(client) => client,
+            Err(error) => return json!({"ok": false, "error": error.to_string()}),
+        };
+        return match client.call("webauthn.cancel", json!({"requestId": request_id})) {
+            Ok(value) => json!({"ok": true, "response": value}),
+            Err(error) => json!({"ok": false, "error": error.to_string()}),
+        };
+    }
     let origin = message.get("origin").and_then(Value::as_str);
     let options = message.get("options").filter(|value| value.is_object());
-    if !matches!(operation, Some("create" | "get")) || origin.is_none() || options.is_none() {
+    if !matches!(operation, Some("create" | "get"))
+        || request_id.is_none()
+        || origin.is_none()
+        || options.is_none()
+    {
         return json!({"ok": false, "error": "invalid browser request"});
     }
     let mut client = match AgentClient::connect(&Paths::resolve(None)) {
@@ -48,6 +67,7 @@ fn handle(message: Value) -> Value {
         "webauthn.perform",
         json!({
             "operation": operation,
+            "requestId": request_id,
             "origin": origin,
             "options": options,
         }),

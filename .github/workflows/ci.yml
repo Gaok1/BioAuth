@@ -28,6 +28,8 @@ jobs:
       # Hooks the Gradle user home into the Actions cache. It applies to every
       # later gradlew invocation, including the one `flutter build apk` makes.
       - uses: gradle/actions/setup-gradle@v4
+      - name: Check Android trust snapshots
+        run: python3 scripts/update_android_trust_snapshots.py
       - name: Flutter checks
         working-directory: mobile
         run: |

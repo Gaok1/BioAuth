@@ -49,6 +49,40 @@ pub fn read_frame(stream: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(frame)
 }
 
+/// Reads a frame across short socket timeouts without losing a partial prefix
+/// or body. Callers keep `pending` between attempts.
+pub fn read_frame_resumable(stream: &mut impl Read, pending: &mut Vec<u8>) -> io::Result<Vec<u8>> {
+    fill_to(stream, pending, PREFIX)?;
+    let len = u32::from_be_bytes(pending[..PREFIX].try_into().expect("four-byte prefix")) as usize;
+    if len == 0 || len > MAX_FRAME {
+        pending.clear();
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("peer announced a {len}-byte frame"),
+        ));
+    }
+    fill_to(stream, pending, PREFIX + len)?;
+    let frame = pending[PREFIX..PREFIX + len].to_vec();
+    pending.drain(..PREFIX + len);
+    Ok(frame)
+}
+
+fn fill_to(stream: &mut impl Read, pending: &mut Vec<u8>, target: usize) -> io::Result<()> {
+    while pending.len() < target {
+        let mut chunk = [0u8; 1024];
+        let wanted = (target - pending.len()).min(chunk.len());
+        let read = stream.read(&mut chunk[..wanted])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection closed inside a frame",
+            ));
+        }
+        pending.extend_from_slice(&chunk[..read]);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +139,41 @@ mod tests {
     #[test]
     fn a_truncated_prefix_is_an_error() {
         assert!(read_frame(&mut Cursor::new(vec![0u8, 1])).is_err());
+    }
+
+    #[test]
+    fn a_short_timeout_does_not_discard_a_partial_frame() {
+        struct TimeoutOnce {
+            bytes: Cursor<Vec<u8>>,
+            calls: usize,
+        }
+        impl Read for TimeoutOnce {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.calls += 1;
+                if self.calls == 2 {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "poll"));
+                }
+                self.bytes.read(buffer)
+            }
+        }
+
+        let mut bytes = 5u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(b"hello");
+        let mut reader = TimeoutOnce {
+            bytes: Cursor::new(bytes),
+            calls: 0,
+        };
+        let mut pending = Vec::new();
+        assert_eq!(
+            read_frame_resumable(&mut reader, &mut pending)
+                .expect_err("first poll times out")
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(!pending.is_empty());
+        assert_eq!(
+            read_frame_resumable(&mut reader, &mut pending).unwrap(),
+            b"hello"
+        );
     }
 }

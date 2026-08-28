@@ -48,4 +48,15 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('cancellation is bound to a bounded request id', () {
+    final cancel = WebAuthnRelayCancel.decode(
+      frame({
+        'version': 1,
+        'type': 'webauthn.cancel',
+        'requestId': 'request-1',
+      }),
+    );
+    expect(cancel.requestId, 'request-1');
+  });
 }

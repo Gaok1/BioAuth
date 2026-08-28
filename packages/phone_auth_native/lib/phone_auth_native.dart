@@ -210,18 +210,103 @@ class PhoneAuthWebAuthnRelay {
   static const _channel = MethodChannel('phone_auth_native');
 
   Future<String> perform({
+    required String requestId,
     required String operation,
     required String origin,
     required String optionsJson,
   }) async {
-    final response = await _channel.invokeMapMethod<String, Object?>(
-      'performWebAuthn',
-      {'operation': operation, 'origin': origin, 'optionsJson': optionsJson},
-    );
+    final response = await _channel
+        .invokeMapMethod<String, Object?>('performWebAuthn', {
+          'requestId': requestId,
+          'operation': operation,
+          'origin': origin,
+          'optionsJson': optionsJson,
+        });
     final json = response?['responseJson'];
     if (json is! String || json.isEmpty) {
       throw const FormatException('Invalid native WebAuthn response');
     }
     return json;
+  }
+
+  Future<void> cancel(String requestId) =>
+      _channel.invokeMethod<void>('cancelWebAuthn', {'requestId': requestId});
+}
+
+enum ManagedPasskeyStatus { available, missingKey, invalidKey, orphanKey }
+
+class ManagedPasskey {
+  const ManagedPasskey({
+    required this.kind,
+    required this.identifier,
+    required this.rpId,
+    required this.userName,
+    required this.userDisplayName,
+    required this.createdAt,
+    required this.status,
+  });
+
+  final String kind;
+  final String identifier;
+  final String rpId;
+  final String userName;
+  final String userDisplayName;
+  final DateTime? createdAt;
+  final ManagedPasskeyStatus status;
+}
+
+class PhoneAuthPasskeys {
+  const PhoneAuthPasskeys();
+
+  static const _channel = MethodChannel('phone_auth_native');
+
+  Future<List<ManagedPasskey>> list() async {
+    final response = await _channel.invokeListMethod<Object?>('listPasskeys');
+    return (response ?? const <Object?>[])
+        .map((raw) {
+          if (raw is! Map) {
+            throw const FormatException('Invalid passkey summary');
+          }
+          final map = raw.cast<Object?, Object?>();
+          String string(String key) {
+            final value = map[key];
+            if (value is! String) {
+              throw const FormatException('Invalid passkey summary');
+            }
+            return value;
+          }
+
+          final statusName = string('status');
+          final status = ManagedPasskeyStatus.values.where(
+            (value) => value.name == statusName,
+          );
+          final createdAtMillis = map['createdAtMillis'];
+          if (createdAtMillis is! int || status.isEmpty) {
+            throw const FormatException('Invalid passkey summary');
+          }
+          return ManagedPasskey(
+            kind: string('kind'),
+            identifier: string('identifier'),
+            rpId: string('rpId'),
+            userName: string('userName'),
+            userDisplayName: string('userDisplayName'),
+            createdAt: createdAtMillis == 0
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(
+                    createdAtMillis,
+                    isUtc: true,
+                  ),
+            status: status.first,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> delete(ManagedPasskey passkey) async {
+    final deleted = await _channel.invokeMethod<bool>('deletePasskey', {
+      'kind': passkey.kind,
+      'identifier': passkey.identifier,
+    });
+    if (deleted != true) throw const FormatException('Passkey was not deleted');
   }
 }

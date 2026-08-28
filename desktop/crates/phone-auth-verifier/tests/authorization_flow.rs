@@ -267,8 +267,8 @@ fn policy_denies_a_service_the_credential_was_not_granted() {
     let (mut verifier, _) = paired();
     let session = LoopbackSession::secure();
     let mut other_service = spec();
-    other_service.service = "luks".into();
-    other_service.action = "unlock".into();
+    other_service.service = "login".into();
+    other_service.action = "sign-in".into();
 
     assert_eq!(
         verifier.issue(&other_service, &session, NOW_MS),
@@ -330,8 +330,7 @@ fn a_software_key_cannot_be_used_for_disk_unlock() {
     let mut verifier = Verifier::new(identity(), store);
     let session = LoopbackSession::secure();
 
-    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root")
-        .with_purpose(CredentialPurpose::DiskUnlock);
+    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root");
 
     assert_eq!(
         verifier.issue(&unlock, &session, NOW_MS),
@@ -355,8 +354,7 @@ fn a_hardware_key_registered_for_disk_unlock_is_accepted() {
     let mut verifier = Verifier::new(identity(), store);
     let mut session = LoopbackSession::posing_as_production();
 
-    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root")
-        .with_purpose(CredentialPurpose::DiskUnlock);
+    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root");
 
     let pending = verifier.issue(&unlock, &session, NOW_MS).expect("issue");
     session.send(&pending.frame()).expect("send");
@@ -386,8 +384,7 @@ fn a_development_transport_cannot_unlock_a_disk() {
     let session = LoopbackSession::secure();
     assert!(session.security().is_development);
 
-    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root")
-        .with_purpose(CredentialPurpose::DiskUnlock);
+    let unlock = RequestSpec::new("luks-v1", "luks", "unlock", "nvme0n1p2", "root");
 
     assert!(matches!(
         verifier.issue(&unlock, &session, NOW_MS),
@@ -401,13 +398,54 @@ fn an_authorization_credential_cannot_be_borrowed_for_disk_unlock() {
     let (mut verifier, _) = paired();
     let session = LoopbackSession::secure();
 
-    let unlock = RequestSpec::new(CREDENTIAL_ID, "luks", "unlock", "nvme0n1p2", "root")
-        .with_purpose(CredentialPurpose::DiskUnlock);
+    let unlock = RequestSpec::new(CREDENTIAL_ID, "luks", "unlock", "nvme0n1p2", "root");
 
     assert!(matches!(
         verifier.issue(&unlock, &session, NOW_MS),
         Err(AuthorizationError::PurposeMismatch { .. })
     ));
+}
+
+#[test]
+fn vault_and_locker_refuse_every_foreign_credential_purpose() {
+    let all_purposes = [
+        CredentialPurpose::Authorization,
+        CredentialPurpose::DiskUnlock,
+        CredentialPurpose::WebAuthn,
+        CredentialPurpose::Vault,
+        CredentialPurpose::FileLocker,
+    ];
+
+    for (service, required) in [
+        ("vault", CredentialPurpose::Vault),
+        ("locker", CredentialPurpose::FileLocker),
+    ] {
+        for purpose in all_purposes
+            .into_iter()
+            .filter(|purpose| *purpose != required)
+        {
+            let authenticator = SoftwareAuthenticator::new(DEVICE_ID, CREDENTIAL_ID, 11);
+            let mut store = PairingStore::in_memory();
+            store
+                .insert(authenticator.pairing_record_with(
+                    vec![Permission::service(service)],
+                    purpose,
+                    KeyKind::StrongBox,
+                ))
+                .expect("pair");
+            let mut verifier = Verifier::new(identity(), store);
+
+            assert!(matches!(
+                verifier.issue(
+                    &RequestSpec::new(CREDENTIAL_ID, service, "unlock", "item", "alice"),
+                    &LoopbackSession::secure(),
+                    NOW_MS,
+                ),
+                Err(AuthorizationError::PurposeMismatch { requested, .. })
+                    if requested == required
+            ));
+        }
+    }
 }
 
 #[test]

@@ -6,7 +6,7 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use phone_auth_session::ServerBootstrap;
 
@@ -561,7 +561,13 @@ impl Service {
         &mut self,
         params: &WebAuthnParams,
     ) -> Result<WebAuthnResult, ServiceError> {
-        if !matches!(params.operation.as_str(), "create" | "get")
+        if params.request_id.is_empty()
+            || params.request_id.len() > 64
+            || !params
+                .request_id
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '-')
+            || !matches!(params.operation.as_str(), "create" | "get")
             || params.origin.len() > 2048
             || !params.origin.starts_with("https://")
             || params.origin.chars().any(char::is_whitespace)
@@ -591,7 +597,7 @@ impl Service {
             ));
         }
 
-        let request_id = random::request_id();
+        let request_id = &params.request_id;
         let envelope = serde_json::json!({
             "version": 1,
             "type": "webauthn.request",
@@ -606,11 +612,43 @@ impl Service {
             session
                 .send(&frame)
                 .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
-            let response = session
-                .receive(RECEIVE_TIMEOUT)
-                .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
-            decode_webauthn_response(&response, &request_id)
+            let deadline = Instant::now() + RECEIVE_TIMEOUT;
+            loop {
+                if crate::ipc::take_webauthn_cancellation(request_id) {
+                    let cancel = webauthn_frame(&serde_json::json!({
+                        "version": 1,
+                        "type": "webauthn.cancel",
+                        "requestId": request_id,
+                    }))?;
+                    let _ = session.send(&cancel);
+                    return Err(ServiceError::new(
+                        "cancelled",
+                        "WebAuthn request was cancelled",
+                    ));
+                }
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    let cancel = webauthn_frame(&serde_json::json!({
+                        "version": 1,
+                        "type": "webauthn.cancel",
+                        "requestId": request_id,
+                    }))?;
+                    let _ = session.send(&cancel);
+                    return Err(ServiceError::new("timeout", "WebAuthn request timed out"));
+                };
+                match session.receive(remaining.min(Duration::from_millis(250))) {
+                    Ok(response) => break decode_webauthn_response(&response, request_id),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        ) => {}
+                    Err(error) => {
+                        return Err(ServiceError::new("transport-failed", error.to_string()))
+                    }
+                }
+            }
         })();
+        crate::ipc::take_webauthn_cancellation(request_id);
         let _ = session.close();
         result.map(|response| WebAuthnResult { response })
     }
@@ -668,6 +706,7 @@ impl Service {
         params: &AuthorizeParams,
     ) -> Result<(String, String), ServiceError> {
         let store = self.verifier.store();
+        let purpose = CredentialPurpose::for_service(&params.service);
 
         if let Some(requested) = &params.credential_id {
             let (device, _) = store.find_credential(requested).ok_or_else(|| {
@@ -679,7 +718,7 @@ impl Service {
         let mut candidates: Vec<(String, String)> = Vec::new();
         for device in store.devices() {
             for credential in &device.credentials {
-                if credential.purpose == CredentialPurpose::Authorization
+                if credential.purpose == purpose
                     && policy::permits_fields(
                         &credential.permissions,
                         &params.service,
@@ -798,6 +837,8 @@ fn map_purpose(purpose: phone_auth_protocol::CredentialPurpose) -> CredentialPur
         phone_auth_protocol::CredentialPurpose::Authorization => CredentialPurpose::Authorization,
         phone_auth_protocol::CredentialPurpose::DiskUnlock => CredentialPurpose::DiskUnlock,
         phone_auth_protocol::CredentialPurpose::WebAuthn => CredentialPurpose::WebAuthn,
+        phone_auth_protocol::CredentialPurpose::Vault => CredentialPurpose::Vault,
+        phone_auth_protocol::CredentialPurpose::FileLocker => CredentialPurpose::FileLocker,
     }
 }
 

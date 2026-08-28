@@ -24,7 +24,6 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.security.Signature
-import java.util.UUID
 
 class PhoneAuthNativePlugin :
     FlutterPlugin,
@@ -34,6 +33,8 @@ class PhoneAuthNativePlugin :
     private lateinit var keyStore: DeviceKeyStore
     private lateinit var biometricManager: BiometricManager
     private lateinit var bleController: BleController
+    private lateinit var passkeyStore: PasskeyStore
+    private lateinit var webAuthnKeyStore: WebAuthnKeyStore
     private lateinit var applicationContext: Context
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
@@ -47,6 +48,8 @@ class PhoneAuthNativePlugin :
         keyStore = DeviceKeyStore(binding.applicationContext)
         biometricManager = BiometricManager.from(binding.applicationContext)
         bleController = BleController(binding.applicationContext, binding.binaryMessenger)
+        passkeyStore = PasskeyStore(binding.applicationContext)
+        webAuthnKeyStore = WebAuthnKeyStore(binding.applicationContext)
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
     }
@@ -63,6 +66,9 @@ class PhoneAuthNativePlugin :
             "requestBlePermissions" -> requestBlePermissions(result)
             "setBackgroundSessionsEnabled" -> setBackgroundSessionsEnabled(call.arguments, result)
             "performWebAuthn" -> performWebAuthn(call.arguments, result)
+            "cancelWebAuthn" -> cancelWebAuthn(call.arguments, result)
+            "listPasskeys" -> listPasskeys(result)
+            "deletePasskey" -> deletePasskey(call.arguments, result)
             "sign" -> sign(call.arguments, result)
             else -> if (!bleController.handle(call, result)) result.notImplemented()
         }
@@ -163,6 +169,79 @@ class PhoneAuthNativePlugin :
                 .setConfirmationRequired(true)
                 .build()
             prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(signature))
+        }
+    }
+
+    private fun listPasskeys(result: MethodChannel.Result) {
+        runCatching {
+            val records = passkeyStore.all()
+            val aliases = webAuthnKeyStore.aliases()
+            passkeyInventory(records, aliases, webAuthnKeyStore::isUsable)
+        }.onSuccess(result::success)
+            .onFailure { result.error("passkey_store_failed", "Unable to read passkeys", null) }
+    }
+
+    private fun deletePasskey(arguments: Any?, result: MethodChannel.Result) {
+        if (pendingResult != null) {
+            result.error("operation_in_progress", "Another biometric operation is active", null)
+            return
+        }
+        if (strongBiometricStatus() != BiometricManager.BIOMETRIC_SUCCESS) {
+            result.error("biometric_unavailable", "Strong biometrics are unavailable", null)
+            return
+        }
+        val fragmentActivity = activity as? FragmentActivity
+        if (fragmentActivity == null) {
+            result.error("activity_unavailable", "A foreground FragmentActivity is required", null)
+            return
+        }
+        val map = arguments as? Map<*, *>
+        val kind = map?.get("kind") as? String
+        val identifier = map?.get("identifier") as? String
+        val target = runCatching {
+            require(identifier != null)
+            when (kind) {
+                "credential" -> {
+                    val id = WebAuthnRequestParser.decode(identifier, "credentialId")
+                    val record = requireNotNull(passkeyStore.find(id)) { "Passkey not found" }
+                    Pair("${record.rpId} · ${record.userName}") {
+                        val current = requireNotNull(passkeyStore.find(id)) { "Passkey not found" }
+                        webAuthnKeyStore.delete(current.keyAlias)
+                        passkeyStore.delete(id)
+                    }
+                }
+                "orphan" -> {
+                    require(identifier.startsWith(WebAuthnKeyStore.ALIAS_PREFIX))
+                    require(identifier in webAuthnKeyStore.aliases())
+                    require(passkeyStore.all().none { it.keyAlias == identifier })
+                    Pair("Chave órfã") {
+                        require(passkeyStore.all().none { it.keyAlias == identifier })
+                        webAuthnKeyStore.delete(identifier)
+                    }
+                }
+                else -> throw IllegalArgumentException("Invalid passkey kind")
+            }
+        }.getOrElse {
+            result.error("invalid_arguments", "Passkey no longer exists", null)
+            return
+        }
+
+        pendingResult = result
+        biometricPrompt = BiometricPrompt(
+            fragmentActivity,
+            ContextCompat.getMainExecutor(fragmentActivity),
+            deletionCallback(target.second),
+        ).also { prompt ->
+            prompt.authenticate(
+                BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Excluir passkey")
+                    .setSubtitle(target.first)
+                    .setDescription("A chave e os metadados serão removidos deste telefone")
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                    .setNegativeButtonText("Cancelar")
+                    .setConfirmationRequired(true)
+                    .build(),
+            )
         }
     }
 
@@ -284,10 +363,13 @@ class PhoneAuthNativePlugin :
 
     private fun performWebAuthn(arguments: Any?, result: MethodChannel.Result) {
         val map = arguments as? Map<*, *>
+        val requestId = map?.get("requestId") as? String
         val operation = map?.get("operation") as? String
         val origin = map?.get("origin") as? String
         val optionsJson = map?.get("optionsJson") as? String
-        if (operation !in setOf(WebAuthnRelayActivity.OP_CREATE, WebAuthnRelayActivity.OP_GET) ||
+        if (requestId == null || requestId.length !in 1..64 ||
+            requestId.any { !it.isLetterOrDigit() && it != '-' } ||
+            operation !in setOf(WebAuthnRelayActivity.OP_CREATE, WebAuthnRelayActivity.OP_GET) ||
             origin == null || origin.length !in 8..2048 ||
             optionsJson == null || optionsJson.length !in 2..65536
         ) {
@@ -330,7 +412,6 @@ class PhoneAuthNativePlugin :
                 return
             }
         }
-        val requestId = UUID.randomUUID().toString()
         if (!WebAuthnRelayCoordinator.add(requestId, result)) {
             result.error("operation_in_progress", "Passkey request already exists", null)
             return
@@ -364,12 +445,25 @@ class PhoneAuthNativePlugin :
         )
         Handler(Looper.getMainLooper()).postDelayed({
             manager.cancel(WebAuthnRelayCoordinator.notificationId(requestId))
-            WebAuthnRelayCoordinator.complete(
+            WebAuthnRelayCoordinator.cancel(
                 requestId,
-                null,
                 "Desktop passkey request expired",
             )
         }, WEBAUTHN_TIMEOUT_MS)
+    }
+
+    private fun cancelWebAuthn(arguments: Any?, result: MethodChannel.Result) {
+        val requestId = (arguments as? Map<*, *>)?.get("requestId") as? String
+        if (requestId == null || requestId.length !in 1..64 ||
+            requestId.any { !it.isLetterOrDigit() && it != '-' }
+        ) {
+            result.error("invalid_arguments", "Invalid desktop passkey request id", null)
+            return
+        }
+        applicationContext.getSystemService(NotificationManager::class.java)
+            .cancel(WebAuthnRelayCoordinator.notificationId(requestId))
+        WebAuthnRelayCoordinator.cancel(requestId, "Desktop cancelled the passkey request")
+        result.success(null)
     }
 
     private fun onRequestPermissionsResult(
@@ -419,6 +513,28 @@ class PhoneAuthNativePlugin :
                     }.onFailure {
                         finishWithError("signing_failed", "Unable to sign canonical payload")
                     }
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                finishWithError(
+                    if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                        errorCode == BiometricPrompt.ERROR_USER_CANCELED
+                    ) {
+                        "authentication_cancelled"
+                    } else {
+                        "authentication_failed"
+                    },
+                    "Biometric authentication did not complete",
+                )
+            }
+        }
+
+    private fun deletionCallback(delete: () -> Unit) =
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                runCatching(delete)
+                    .onSuccess { finishWithSuccess(true) }
+                    .onFailure { finishWithError("passkey_delete_failed", "Unable to delete passkey") }
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -531,5 +647,39 @@ class PhoneAuthNativePlugin :
         private const val NOTIFICATION_PERMISSION_REQUEST = 5711
         private const val WEBAUTHN_CHANNEL = "bioauth_webauthn_requests"
         private const val WEBAUTHN_TIMEOUT_MS = 90_000L
+    }
+}
+
+internal fun passkeyInventory(
+    records: List<PasskeyRecord>,
+    aliases: Set<String>,
+    isUsable: (String) -> Boolean,
+): List<Map<String, Any>> {
+    val referenced = records.mapTo(mutableSetOf()) { it.keyAlias }
+    return records.map { record ->
+        val status = when {
+            record.keyAlias !in aliases -> "missingKey"
+            !isUsable(record.keyAlias) -> "invalidKey"
+            else -> "available"
+        }
+        mapOf(
+            "kind" to "credential",
+            "identifier" to WebAuthnRequestParser.base64Url(record.credentialId),
+            "rpId" to record.rpId,
+            "userName" to record.userName,
+            "userDisplayName" to record.userDisplayName,
+            "createdAtMillis" to record.createdAtMillis,
+            "status" to status,
+        )
+    } + (aliases - referenced).map { alias ->
+        mapOf(
+            "kind" to "orphan",
+            "identifier" to alias,
+            "rpId" to "",
+            "userName" to "",
+            "userDisplayName" to "",
+            "createdAtMillis" to 0L,
+            "status" to "orphanKey",
+        )
     }
 }

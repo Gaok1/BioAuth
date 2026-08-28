@@ -1,0 +1,47 @@
+name: Android trust snapshots
+
+on:
+  schedule:
+    - cron: '23 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Download and validate canonical snapshots
+        run: python3 scripts/update_android_trust_snapshots.py --update
+      - name: Test Android trust boundary
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :phone_auth_native:testDebugUnitTest
+      - name: Open reviewed update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git diff --check
+          branch=automation/android-trust-snapshots
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout -B "$branch"
+          git add packages/phone_auth_native/android/src/main/res/raw \
+            packages/phone_auth_native/android/trust-snapshots.json
+          git commit -m "chore(android): refresh WebAuthn trust snapshots"
+          git push --force origin "$branch"
+          gh pr view "$branch" >/dev/null 2>&1 || gh pr create \
+            --head "$branch" \
+            --title "chore(android): refresh WebAuthn trust snapshots" \
+            --body "Automated canonical snapshot refresh. Review the data diff before merging; Android unit tests passed in this workflow."

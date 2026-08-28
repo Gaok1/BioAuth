@@ -31,7 +31,9 @@ class SharedPreferencesPairingStore implements PairingStore {
   SharedPreferencesPairingStore({Random? random})
     : _random = random ?? Random.secure();
 
-  static const _recordsKey = 'bioauth.pairings.v1';
+  static const _legacyRecordsKey = 'bioauth.pairings.v1';
+  static const _recordsKey = 'bioauth.pairings.v2';
+  static const _previousRecordsKey = 'bioauth.pairings.v2.previous';
   static const _deviceIdKey = 'bioauth.deviceId.v1';
 
   final Random _random;
@@ -39,20 +41,33 @@ class SharedPreferencesPairingStore implements PairingStore {
   @override
   Future<List<PairingRecord>> load() async {
     final preferences = await SharedPreferences.getInstance();
-    final stored = preferences.getStringList(_recordsKey) ?? const [];
-    final records = <PairingRecord>[];
-    for (final entry in stored) {
-      try {
-        records.add(
-          PairingRecord.fromJson(jsonDecode(entry) as Map<String, Object?>),
-        );
-      } on Object {
-        // A record this build cannot read is dropped rather than guessed at.
-        // Guessing would mean pairing against a key that was not stored.
-        continue;
-      }
+    final current = preferences.getString(_recordsKey);
+    if (current == null) {
+      final records = _decodeLegacy(
+        preferences.getStringList(_legacyRecordsKey) ?? const [],
+      );
+      await _persist(preferences, records);
+      return records;
     }
-    return records;
+    try {
+      return _decodeSnapshot(current);
+    } on _UnsupportedPairingStoreVersion {
+      rethrow;
+    } on Object catch (error) {
+      final previous = preferences.getString(_previousRecordsKey);
+      if (previous == null) {
+        throw StateError('Pairing store is corrupt: $error');
+      }
+      final records = _decodeSnapshot(previous);
+      if (!await preferences.setString(_recordsKey, previous) ||
+          !await preferences.setStringList(
+            _legacyRecordsKey,
+            _encodeLegacy(records),
+          )) {
+        throw StateError('Pairing store is corrupt and rollback failed');
+      }
+      throw StateError('Pairing store was corrupt and rolled back: $error');
+    }
   }
 
   @override
@@ -63,10 +78,7 @@ class SharedPreferencesPairingStore implements PairingStore {
             .where((existing) => existing.verifierId != record.verifierId)
             .toList()
           ..add(record);
-    await preferences.setStringList(
-      _recordsKey,
-      records.map((entry) => jsonEncode(entry.toJson())).toList(),
-    );
+    await _persist(preferences, records);
   }
 
   @override
@@ -74,9 +86,8 @@ class SharedPreferencesPairingStore implements PairingStore {
     final preferences = await SharedPreferences.getInstance();
     final records = (await load())
         .where((existing) => existing.verifierId != verifierId)
-        .map((entry) => jsonEncode(entry.toJson()))
         .toList();
-    await preferences.setStringList(_recordsKey, records);
+    await _persist(preferences, records);
   }
 
   @override
@@ -93,6 +104,72 @@ class SharedPreferencesPairingStore implements PairingStore {
     await preferences.setString(_deviceIdKey, generated);
     return generated;
   }
+
+  Future<void> _persist(
+    SharedPreferences preferences,
+    List<PairingRecord> records,
+  ) async {
+    final current = preferences.getString(_recordsKey);
+    if (current != null &&
+        !await preferences.setString(_previousRecordsKey, current)) {
+      throw StateError('Unable to preserve the previous pairing store');
+    }
+    if (!await preferences.setString(_recordsKey, _encodeSnapshot(records))) {
+      throw StateError('Unable to persist pairing records');
+    }
+    if (!await preferences.setStringList(
+      _legacyRecordsKey,
+      _encodeLegacy(records),
+    )) {
+      throw StateError('Unable to persist the pairing compatibility snapshot');
+    }
+  }
+
+  static String _encodeSnapshot(List<PairingRecord> records) => jsonEncode({
+    'version': 2,
+    'records': records.map((record) => record.toJson()).toList(),
+  });
+
+  static List<String> _encodeLegacy(List<PairingRecord> records) => records
+      .map((record) => jsonEncode(record.toJson()))
+      .toList(growable: false);
+
+  static List<PairingRecord> _decodeSnapshot(String encoded) {
+    final value = jsonDecode(encoded);
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException('Pairing snapshot is not an object');
+    }
+    if (value['version'] != 2) {
+      throw _UnsupportedPairingStoreVersion(value['version']);
+    }
+    final records = value['records'];
+    if (records is! List) {
+      throw const FormatException('Pairing snapshot has no records');
+    }
+    return records
+        .map(
+          (record) =>
+              PairingRecord.fromJson(Map<String, Object?>.from(record as Map)),
+        )
+        .toList(growable: false);
+  }
+
+  static List<PairingRecord> _decodeLegacy(List<String> stored) => stored
+      .map(
+        (entry) => PairingRecord.fromJson(
+          Map<String, Object?>.from(jsonDecode(entry) as Map),
+        ),
+      )
+      .toList(growable: false);
+}
+
+final class _UnsupportedPairingStoreVersion implements Exception {
+  const _UnsupportedPairingStoreVersion(this.version);
+
+  final Object? version;
+
+  @override
+  String toString() => 'Unsupported pairing store version: $version';
 }
 
 /// An in-memory store, for tests and for the development flavour.

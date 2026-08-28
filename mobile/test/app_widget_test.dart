@@ -46,6 +46,7 @@ void main() {
     await tester.pumpWidget(const ProviderScope(child: PhoneAuthApp()));
 
     expect(find.text('Seu telefone, sua aprovação'), findsOneWidget);
+    expect(find.text('Passkeys ainda não têm backup'), findsOneWidget);
     expect(find.text('Desktop-Casa'), findsNothing);
   });
 }
