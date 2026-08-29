@@ -244,10 +244,31 @@ function hidePairing() {
   el('confirm-error').textContent = '';
 }
 
+// What each pairing gets the phone to do, in the words the phone will use.
+// Shown before the code because the picture is identical for all of them, and
+// a credential enrolled for the wrong one is invisible in the device list.
+const PAIRING_SERVICES = {
+  authorization: 'A credencial aprova logins e ações neste computador.',
+  vault: 'A credencial libera senhas do cofre do telefone para este computador.',
+  locker: 'A credencial abre arquivos trancados guardados aqui.',
+  webauthn: 'A credencial responde por chaves de acesso em sites.',
+  ssh: 'A credencial assina logins SSH. Cada login ainda pede a digital no telefone.',
+};
+
+function describeService() {
+  const service = el('pair-service').value;
+  el('pair-service-note').textContent = PAIRING_SERVICES[service] || '';
+}
+
+el('pair-service').addEventListener('change', describeService);
+describeService();
+
 el('pair').addEventListener('click', async () => {
   el('confirm').hidden = true;
+  const service = el('pair-service').value;
   try {
-    const bootstrap = await api.call('pair.begin', {});
+    const bootstrap = await api.call('pair.begin', { service });
+    el('pairing-service').textContent = PAIRING_SERVICES[bootstrap.service] || '';
     el('pairing-payload').textContent = bootstrap.qrPayload;
     el('pairing-blocked').textContent = bootstrap.blockedOn || '';
     el('pairing-expiry').textContent = `Válido até ${new Date(

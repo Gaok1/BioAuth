@@ -54,10 +54,20 @@
     <main>
       <section id="panel-devices" class="panel">
         <div id="devices"></div>
+        <label class="label" for="pair-service">Parear para</label>
+        <select id="pair-service" class="select">
+          <option value="authorization">Login e `sudo`</option>
+          <option value="vault">Cofre de senhas</option>
+          <option value="locker">Arquivos trancados</option>
+          <option value="webauthn">Chaves de acesso em sites</option>
+          <option value="ssh">Login SSH em servidores</option>
+        </select>
+        <p class="muted" id="pair-service-note"></p>
         <button id="pair" class="button">Parear um telefone…</button>
 
         <div id="pairing" class="card" hidden>
           <p class="label">Escaneie no telefone</p>
+          <p class="muted" id="pairing-service"></p>
           <div class="qr"><img id="pairing-qr" alt="Código de pareamento" /></div>
           <p class="muted" id="pairing-expiry"></p>
           <details>

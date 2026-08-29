@@ -265,6 +265,37 @@ main {
   cursor: pointer;
 }
 
+/* Matches `.button` so the two read as one control pair, and inherits the
+   theme's colours rather than the platform's — a native select here renders
+   white-on-white in dark mode on Windows. */
+.select {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 4px 14px 0;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+#pair-service-note {
+  margin: 6px 14px 0;
+  font-size: 11px;
+}
+
+label.label {
+  display: block;
+  margin: 12px 14px 0;
+}
+
 .button:hover {
   border-color: var(--accent);
   color: var(--accent);
