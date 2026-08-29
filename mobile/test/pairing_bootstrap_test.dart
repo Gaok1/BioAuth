@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/transport/pairing_bootstrap.dart';
 
 void main() {
@@ -153,5 +154,51 @@ void main() {
       PairingBootstrap.parse(uri(ep: '[fe80::1]:8765')).endpoint,
       '[fe80::1]:8765',
     );
+  });
+
+  /// The purpose is what stops one scan from enrolling a key for the wrong
+  /// job, so it has to survive the trip through the picture.
+  test('a purpose in the code round trips', () {
+    for (final purpose in CredentialPurpose.values) {
+      final uri = PairingBootstrap(
+        sessionId: 'session-1',
+        nonce: Uint8List(32),
+        verifierId: 'desktop-1',
+        verifierIdentityHash: Uint8List(32),
+        endpoint: '192.168.1.10:8765',
+        expiresAtMs: 1787745600000,
+        purpose: purpose,
+      ).toUri();
+
+      expect(PairingBootstrap.parse(uri).purpose, purpose);
+    }
+  });
+
+  /// A number this build has no name for is a purpose it does not understand.
+  /// Enrolling it as an ordinary login key is the single outcome the field
+  /// exists to prevent, so the scan fails instead.
+  test('an unknown purpose is refused rather than defaulted', () {
+    final base = PairingBootstrap(
+      sessionId: 'session-1',
+      nonce: Uint8List(32),
+      verifierId: 'desktop-1',
+      verifierIdentityHash: Uint8List(32),
+      endpoint: '',
+      expiresAtMs: 1787745600000,
+    ).toUri();
+
+    for (final tail in [
+      '&p=${CredentialPurpose.values.length}',
+      '&p=99',
+      '&p=-1',
+      '&p=',
+      '&p=ssh',
+    ]) {
+      expect(
+        () => PairingBootstrap.parse('$base$tail'),
+        throwsA(isA<BootstrapException>()),
+        reason: '`$tail` was accepted',
+      );
+    }
   });
 }

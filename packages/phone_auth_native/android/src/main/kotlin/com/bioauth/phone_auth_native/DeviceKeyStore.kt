@@ -29,12 +29,12 @@ internal class DeviceKeyStore(
                 context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         if (strongBoxAvailable) {
             try {
-                return createKey(useStrongBox = true)
+                return createKey(KEY_ALIAS, useStrongBox = true)
             } catch (_: StrongBoxUnavailableException) {
                 keyStore.deleteEntry(KEY_ALIAS)
             }
         }
-        return createKey(useStrongBox = false)
+        return createKey(KEY_ALIAS, useStrongBox = false)
     }
 
     fun publicKey(): ByteArray =
@@ -43,6 +43,35 @@ internal class DeviceKeyStore(
     fun initializedSignature(): Signature {
         val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
             ?: throw IllegalStateException("Device signing key does not exist")
+        return Signature.getInstance(SIGNATURE_ALGORITHM).apply { initSign(privateKey) }
+    }
+
+    // The SSH credential, created on first use. Its own alias, not the
+    // authorization key: the two sign different bytes for different verifiers,
+    // and one key for both would mean a signature made to approve a `sudo` is
+    // a signature an SSH server would accept.
+    fun generateSshKey(): ByteArray {
+        sshPublicKeyOrNull()?.let { return it }
+
+        val strongBoxAvailable =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        if (strongBoxAvailable) {
+            try {
+                return createKey(SSH_ALIAS, useStrongBox = true)
+            } catch (_: StrongBoxUnavailableException) {
+                keyStore.deleteEntry(SSH_ALIAS)
+            }
+        }
+        return createKey(SSH_ALIAS, useStrongBox = false)
+    }
+
+    fun sshPublicKey(): ByteArray =
+        sshPublicKeyOrNull() ?: throw IllegalStateException("SSH key does not exist")
+
+    fun initializedSshSignature(): Signature {
+        val privateKey = keyStore.getKey(SSH_ALIAS, null) as? PrivateKey
+            ?: throw IllegalStateException("SSH key does not exist")
         return Signature.getInstance(SIGNATURE_ALGORITHM).apply { initSign(privateKey) }
     }
 
@@ -103,6 +132,8 @@ internal class DeviceKeyStore(
 
     private fun publicKeyOrNull(): ByteArray? = keyStore.getCertificate(KEY_ALIAS)?.publicKey?.encoded
 
+    private fun sshPublicKeyOrNull(): ByteArray? = keyStore.getCertificate(SSH_ALIAS)?.publicKey?.encoded
+
     private fun sessionIdentityPublicKeyOrNull(): ByteArray? =
         keyStore.getCertificate(SESSION_IDENTITY_ALIAS)?.publicKey?.encoded
 
@@ -122,9 +153,9 @@ internal class DeviceKeyStore(
         return pair.public.encoded
     }
 
-    private fun createKey(useStrongBox: Boolean): ByteArray {
+    private fun createKey(alias: String, useStrongBox: Boolean): ByteArray {
         val builder = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
+            alias,
             KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
         ).setAlgorithmParameterSpec(ECGenParameterSpec(EC_CURVE))
             .setDigests(KeyProperties.DIGEST_SHA256)
@@ -158,6 +189,7 @@ internal class DeviceKeyStore(
         const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "bioauth_authorization_v1"
+        private const val SSH_ALIAS = "bioauth_ssh_v1"
         private const val SESSION_IDENTITY_ALIAS = "bioauth_session_identity_v1"
         private const val EC_CURVE = "secp256r1"
     }

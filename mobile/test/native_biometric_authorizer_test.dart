@@ -27,6 +27,16 @@ class _RecordingAuthenticator implements SecureAuthenticator {
       );
 
   @override
+  Future<DevicePublicKey> generateSshKey() =>
+      throw UnimplementedError('not part of this test');
+
+  @override
+  Future<SignatureResult> signSsh({
+    required Uint8List payload,
+    required AuthenticationContext context,
+  }) => throw UnimplementedError('not part of this test');
+
+  @override
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,

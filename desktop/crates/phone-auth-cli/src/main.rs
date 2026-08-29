@@ -35,7 +35,10 @@ COMMANDS:
     status                     Show the agent, paired phones and transports
     devices                    List paired phones and their permissions
     forget --device <ID>       Remove a pairing
-    pair                       Print a pairing bootstrap for the phone to scan
+    pair [--service <S>]       Print a pairing bootstrap for the phone to scan.
+                               `--service ssh` (or vault, locker, luks,
+                               webauthn) enrols a credential for that use
+                               instead of for ordinary authorization
     history [--limit <N>]      Show recent authorization decisions
     authorize --service <S> --action <A> --resource <R> --user <U>
                                Ask for an authorization and exit 0 only if it
@@ -272,13 +275,17 @@ fn run(cli: Cli) -> u8 {
             cli.json,
             print_devices,
         ),
-        "pair" => simple(
-            &mut client,
-            "pair.begin",
-            json!({}),
-            cli.json,
-            print_pairing,
-        ),
+        "pair" => {
+            // Which credential this pairing enrols. Absent is an ordinary
+            // authorization pairing; `--service ssh` enrols an SSH key, which
+            // has to be decided here because the phone cannot guess it from a
+            // scan.
+            let params = match cli.service.as_deref() {
+                Some(service) => json!({ "service": service }),
+                None => json!({}),
+            };
+            simple(&mut client, "pair.begin", params, cli.json, print_pairing)
+        }
         "history" => {
             let params = json!({ "limit": cli.limit.unwrap_or(20) });
             simple(&mut client, "audit.recent", params, cli.json, print_history)

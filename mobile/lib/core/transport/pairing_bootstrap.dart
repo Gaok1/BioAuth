@@ -15,6 +15,8 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../protocol/enrolment.dart';
+
 /// URL scheme and path the phone scans.
 const String bootstrapPrefix = 'phoneauth://pair/v1?';
 
@@ -38,6 +40,7 @@ class PairingBootstrap {
     required Uint8List verifierIdentityHash,
     required this.endpoint,
     required this.expiresAtMs,
+    this.purpose = CredentialPurpose.authorization,
   }) : nonce = Uint8List.fromList(nonce),
        verifierIdentityHash = Uint8List.fromList(verifierIdentityHash) {
     _validate();
@@ -60,6 +63,14 @@ class PairingBootstrap {
   /// Milliseconds since the Unix epoch, after which this must be refused.
   final int expiresAtMs;
 
+  /// What the credential enrolled by this scan is for.
+  ///
+  /// The desktop decides it — it is the side that knows whether it wants a key
+  /// for `sudo` or for `ssh` — and the phone cannot infer it, because scanning
+  /// is the same gesture either way. Absent means authorization, which is what
+  /// every code produced before this field existed meant.
+  final CredentialPurpose purpose;
+
   bool isExpiredAt(int nowMs) => nowMs >= expiresAtMs;
 
   /// Parses a scanned string.
@@ -77,6 +88,7 @@ class PairingBootstrap {
     Uint8List? hash;
     String? endpoint;
     int? expiresAtMs;
+    var purpose = CredentialPurpose.authorization;
 
     for (final pair in uri.substring(bootstrapPrefix.length).split('&')) {
       final separator = pair.indexOf('=');
@@ -100,6 +112,17 @@ class PairingBootstrap {
           expiresAtMs =
               int.tryParse(value) ??
               (throw const BootstrapException('invalid bootstrap expiry'));
+        case 'p':
+          // A number this build has no name for is a purpose it does not
+          // understand. Enrolling it as an authorization key is the single
+          // outcome this field exists to prevent, so it fails instead.
+          final index = int.tryParse(value);
+          if (index == null ||
+              index < 0 ||
+              index >= CredentialPurpose.values.length) {
+            throw const BootstrapException('invalid credential purpose');
+          }
+          purpose = CredentialPurpose.values[index];
         default:
           throw const BootstrapException('unknown bootstrap field');
       }
@@ -121,6 +144,7 @@ class PairingBootstrap {
       verifierIdentityHash: hash,
       endpoint: endpoint,
       expiresAtMs: expiresAtMs,
+      purpose: purpose,
     );
   }
 
@@ -160,7 +184,12 @@ class PairingBootstrap {
       '&n=${toBase64Url(nonce)}'
       '&k=${toBase64Url(verifierIdentityHash)}'
       '&ep=$endpoint'
-      '&exp=$expiresAtMs';
+      '&exp=$expiresAtMs'
+      // Written only when it is not the default, matching the desktop: an
+      // ordinary login code stays scannable by a phone built before this
+      // field existed, and anything else is refused there rather than
+      // enrolled under the wrong purpose.
+      '${purpose == CredentialPurpose.authorization ? '' : '&p=${purpose.index}'}';
 
   void _validate() {
     if (sessionId.isEmpty || sessionId.length > 64) {

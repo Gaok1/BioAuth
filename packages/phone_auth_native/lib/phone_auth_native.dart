@@ -9,6 +9,19 @@ import 'phone_auth_native_platform_interface.dart';
 abstract interface class SecureAuthenticator {
   Future<DevicePublicKey> generateKey();
 
+  /// The SSH credential's public half, created on first use.
+  ///
+  /// A key of its own, under its own alias, because an SSH signature and an
+  /// authorization signature cover different bytes and must not come from the
+  /// same key: a server that accepts one would otherwise accept the other.
+  Future<DevicePublicKey> generateSshKey();
+
+  /// Signs an SSH userauth request. Raises the biometric prompt, like [sign].
+  Future<SignatureResult> signSsh({
+    required Uint8List payload,
+    required AuthenticationContext context,
+  });
+
   Future<DevicePublicKey> getPublicKey();
 
   Future<SignatureResult> sign({
@@ -51,6 +64,28 @@ class PhoneAuthNative implements SecureAuthenticator, SessionIdentity {
   @override
   Future<DevicePublicKey> getPublicKey() =>
       PhoneAuthNativePlatform.instance.getPublicKey();
+
+  @override
+  Future<DevicePublicKey> generateSshKey() =>
+      PhoneAuthNativePlatform.instance.generateSshKey();
+
+  @override
+  Future<SignatureResult> signSsh({
+    required Uint8List payload,
+    required AuthenticationContext context,
+  }) {
+    if (payload.isEmpty || payload.length > 8192) {
+      throw ArgumentError.value(
+        payload.length,
+        'payload.length',
+        'O pedido SSH deve conter de 1 a 8192 bytes',
+      );
+    }
+    return PhoneAuthNativePlatform.instance.signSsh(
+      payload: Uint8List.fromList(payload),
+      context: context,
+    );
+  }
 
   @override
   Future<SignatureResult> sign({

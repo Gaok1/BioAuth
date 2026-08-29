@@ -82,6 +82,8 @@ class PhoneAuthNativePlugin :
             "listPasskeys" -> listPasskeys(result)
             "deletePasskey" -> deletePasskey(call.arguments, result)
             "sign" -> sign(call.arguments, result)
+            "generateSshKey" -> generateSshKey(result)
+            "signSsh" -> signSsh(call.arguments, result)
             "lockerKeyStatus" -> lockerKeyStatus(result)
             "generateLockerKey" -> generateLockerKey(result)
             "lockerWrapKey" -> lockerWrapKey(call.arguments, result)
@@ -104,6 +106,16 @@ class PhoneAuthNativePlugin :
         runCatching { keyStore.publicKey() }
             .onSuccess { result.success(publicKeyResponse(it)) }
             .onFailure { result.error("key_not_found", "Device signing key does not exist", null) }
+    }
+
+    private fun generateSshKey(result: MethodChannel.Result) {
+        if (strongBiometricStatus() != BiometricManager.BIOMETRIC_SUCCESS) {
+            result.error("biometric_unavailable", "Strong biometric enrollment is required", null)
+            return
+        }
+        runCatching { keyStore.generateSshKey() }
+            .onSuccess { result.success(publicKeyResponse(it)) }
+            .onFailure { result.error("key_generation_failed", "Unable to generate SSH key", null) }
     }
 
     private fun generateSessionIdentityKey(result: MethodChannel.Result) {
@@ -147,7 +159,20 @@ class PhoneAuthNativePlugin :
             .onFailure { result.error("verification_failed", "Invalid session identity material", null) }
     }
 
-    private fun sign(arguments: Any?, result: MethodChannel.Result) {
+    private fun sign(arguments: Any?, result: MethodChannel.Result) =
+        signWith(arguments, result, keyStore::initializedSignature)
+
+    // The SSH key signs the same way through the same prompt, and differs only
+    // in which key the CryptoObject carries. Sharing the path is deliberate:
+    // a second copy is a second place for the prompt's guarantees to drift.
+    private fun signSsh(arguments: Any?, result: MethodChannel.Result) =
+        signWith(arguments, result, keyStore::initializedSshSignature)
+
+    private fun signWith(
+        arguments: Any?,
+        result: MethodChannel.Result,
+        signature: () -> Signature,
+    ) {
         if (pendingResult != null) {
             result.error("operation_in_progress", "Another biometric operation is active", null)
             return
@@ -165,8 +190,8 @@ class PhoneAuthNativePlugin :
             result.error("invalid_arguments", it.message, null)
             return
         }
-        val signature = runCatching { keyStore.initializedSignature() }.getOrElse {
-            result.error("key_not_found", "Device signing key does not exist", null)
+        val initialized = runCatching(signature).getOrElse {
+            result.error("key_not_found", "Signing key does not exist", null)
             return
         }
 
@@ -184,7 +209,7 @@ class PhoneAuthNativePlugin :
                 .setNegativeButtonText("Cancelar")
                 .setConfirmationRequired(true)
                 .build()
-            prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(signature))
+            prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(initialized))
         }
     }
 

@@ -527,6 +527,19 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
     };
 
     if let Some(enrolment) = enrolment {
+        // The code said what this pairing is for. A phone that answers with a
+        // credential for something else is enrolling a key the user did not
+        // ask for — the user who ran `pair --service ssh` would end up with an
+        // authorization key and no way to see the difference in the list.
+        if let Some(armed) = &armed {
+            if enrolment.purpose != armed.purpose {
+                return Err(format!(
+                    "the phone offered a {:?} credential for a {:?} pairing",
+                    enrolment.purpose, armed.purpose
+                ));
+            }
+        }
+
         let mut state = shared.state.lock().expect("state mutex");
         state.armed_pairing = None;
         state.proposal = Some(PairingProposal {

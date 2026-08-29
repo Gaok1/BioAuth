@@ -235,10 +235,25 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
             Err(reply) => reply(id),
         },
 
-        "pair.begin" => match service.lock().expect("service mutex").begin_pairing() {
-            Ok(bootstrap) => to_reply(id, &bootstrap),
-            Err(error) => Reply::err(id, error.code, error.message),
-        },
+        "pair.begin" => {
+            // Absent means an ordinary authorization pairing, which is what
+            // the tray asks for and what every caller written before purposes
+            // travelled in the code meant.
+            let service_name = call
+                .params
+                .get("service")
+                .and_then(|value| value.as_str())
+                .unwrap_or("authorization")
+                .to_owned();
+            match service
+                .lock()
+                .expect("service mutex")
+                .begin_pairing_for(&service_name)
+            {
+                Ok(bootstrap) => to_reply(id, &bootstrap),
+                Err(error) => Reply::err(id, error.code, error.message),
+            }
+        }
 
         "pair.cancel" => {
             service.lock().expect("service mutex").cancel_pairing();

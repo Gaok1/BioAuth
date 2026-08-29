@@ -62,7 +62,9 @@ pub enum CredentialPurpose {
 }
 
 impl CredentialPurpose {
-    fn from_wire(value: i64) -> Result<Self> {
+    /// Public because the pairing bootstrap carries this same number in the QR
+    /// code: the desktop says what it is pairing for before any frame exists.
+    pub fn from_wire(value: i64) -> Result<Self> {
         match value {
             0 => Ok(Self::Authorization),
             1 => Ok(Self::DiskUnlock),

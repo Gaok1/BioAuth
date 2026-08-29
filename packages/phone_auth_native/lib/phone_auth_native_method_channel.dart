@@ -19,6 +19,22 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
   );
 
   @override
+  Future<DevicePublicKey> generateSshKey() async => _publicKey(
+    await methodChannel.invokeMapMethod<String, Object?>('generateSshKey'),
+  );
+
+  @override
+  Future<SignatureResult> signSsh({
+    required Uint8List payload,
+    required AuthenticationContext context,
+  }) async => _signature(
+    await methodChannel.invokeMapMethod<String, Object?>('signSsh', {
+      'payload': payload,
+      'context': context.toMap(),
+    }),
+  );
+
+  @override
   Future<DevicePublicKey> generateSessionIdentityKey() async => _publicKey(
     await methodChannel.invokeMapMethod<String, Object?>(
       'generateSessionIdentityKey',

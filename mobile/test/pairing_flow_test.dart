@@ -69,6 +69,32 @@ void main() {
     );
   }
 
+  /// The QR says what the pairing is for, and that decides which key is
+  /// enrolled. Getting this wrong is not a cosmetic mislabel: it is the same
+  /// key approving a `sudo` and signing an SSH login, which is what the
+  /// purposes exist to keep apart.
+  test('a purpose in the code is the purpose that is enrolled', () async {
+    final credential = _FakeCredential();
+    final bootstrap = await desktop.bootstrap(purpose: CredentialPurpose.ssh);
+    final accepting = desktop.accept(bootstrap);
+
+    final session = await PairingService(
+      transport: transport,
+      store: store,
+      deviceName: 'Pixel sob teste',
+      credential: credential,
+    ).begin(bootstrap.toUri());
+    final enrolment = await (await accepting).readEnrolment();
+
+    expect(credential.asked, [CredentialPurpose.ssh]);
+    expect(enrolment.purpose, CredentialPurpose.ssh);
+    // The id says it too, so two credentials from one desktop cannot collide.
+    expect(enrolment.credentialId, 'desktop-1-ssh-v1');
+
+    await session.confirm();
+    expect((await store.load()).single.purpose, CredentialPurpose.ssh);
+  });
+
   test('pairing enrols a credential and stores the verifier key', () async {
     final bootstrap = await desktop.bootstrap();
     final accepting = desktop.accept(bootstrap);
@@ -232,13 +258,19 @@ Future<AuthorizationResult> _tapApprove(
 
 /// The credential a phone with no keystore can offer.
 class _FakeCredential implements AuthorizationCredential {
+  final List<CredentialPurpose> asked = [];
+
   @override
-  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})>
-  describe() async => (
-    publicKey: Uint8List.fromList(List<int>.filled(91, 3)),
-    algorithm: publicKeyEcP256Spki,
-    // Reported honestly. A verifier must be able to refuse this for disk
-    // unlock, and it can only do that if the phone says what it really has.
-    keyKind: KeyKind.software,
-  );
+  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe(
+    CredentialPurpose purpose,
+  ) async {
+    asked.add(purpose);
+    return (
+      publicKey: Uint8List.fromList(List<int>.filled(91, 3)),
+      algorithm: publicKeyEcP256Spki,
+      // Reported honestly. A verifier must be able to refuse this for disk
+      // unlock, and it can only do that if the phone says what it really has.
+      keyKind: KeyKind.software,
+    );
+  }
 }

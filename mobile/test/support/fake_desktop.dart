@@ -59,7 +59,9 @@ class FakeDesktop {
   Future<PairingBootstrap> bootstrap({
     String sessionId = 'session-1',
     Duration lifetime = const Duration(minutes: 2),
+    CredentialPurpose purpose = CredentialPurpose.authorization,
   }) async => PairingBootstrap(
+    purpose: purpose,
     sessionId: sessionId,
     nonce: ascendingBytes(32),
     verifierId: verifierId,

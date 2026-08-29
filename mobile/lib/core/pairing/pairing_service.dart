@@ -91,7 +91,13 @@ class PairingSession {
 /// with no user present and must never touch the key that approves a login.
 abstract interface class AuthorizationCredential {
   /// The credential's public half, and how honestly its private half is stored.
-  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe();
+  ///
+  /// Takes the purpose because the key depends on it: an SSH login and a
+  /// `sudo` must not be signed by the same key, or a signature made for one
+  /// would be a signature the other accepts.
+  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe(
+    CredentialPurpose purpose,
+  );
 }
 
 class NativeAuthorizationCredential implements AuthorizationCredential {
@@ -103,8 +109,10 @@ class NativeAuthorizationCredential implements AuthorizationCredential {
 
   @override
   Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})>
-  describe() async {
-    final key = await _authenticator.generateKey();
+  describe(CredentialPurpose purpose) async {
+    final key = purpose == CredentialPurpose.ssh
+        ? await _authenticator.generateSshKey()
+        : await _authenticator.generateKey();
     final capabilities = await _authenticator.getSecurityCapabilities();
     // Reported honestly, including when it is bad news: the verifier uses this
     // only to withhold authority, never to grant more of it.
@@ -173,9 +181,10 @@ class PairingService {
 
     late final ({Uint8List publicKey, String algorithm, KeyKind keyKind})
     credential;
-    final credentialId = '${bootstrap.verifierId}-authorization-v1';
+    final purpose = bootstrap.purpose;
+    final credentialId = '${bootstrap.verifierId}-${purpose.name}-v1';
     try {
-      credential = await _credential.describe();
+      credential = await _credential.describe(purpose);
       await outcome.session.send(
         Enrolment(
           deviceName: deviceName,
@@ -183,7 +192,7 @@ class PairingService {
           algorithm: credential.algorithm,
           publicKey: credential.publicKey,
           keyKind: credential.keyKind,
-          purpose: CredentialPurpose.authorization,
+          purpose: purpose,
         ).encode(),
       );
     } on Object {
@@ -203,7 +212,7 @@ class PairingService {
         endpoint: bootstrap.endpoint,
         credentialId: credentialId,
         keyKind: credential.keyKind,
-        purpose: CredentialPurpose.authorization,
+        purpose: purpose,
         pairedAt: now,
       ),
       session: outcome.session,

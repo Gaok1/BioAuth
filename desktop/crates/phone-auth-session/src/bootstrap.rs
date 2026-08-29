@@ -18,6 +18,7 @@
 //! of the user.
 
 use phone_auth_protocol::encoding::{from_base64url, to_base64url};
+use phone_auth_protocol::CredentialPurpose;
 
 use crate::identity::IdentityKey;
 use crate::SessionError;
@@ -42,6 +43,15 @@ pub struct ServerBootstrap {
     pub endpoint: String,
     /// Milliseconds since the Unix epoch, after which this must be refused.
     pub expires_at_ms: i64,
+    /// What the credential enrolled by this scan is for.
+    ///
+    /// The desktop decides it, not the phone: `phone-auth pair --service ssh`
+    /// knows it wants an SSH key, and the phone has no way to guess. Sent only
+    /// when it is not [`CredentialPurpose::Authorization`], so a QR for an
+    /// ordinary login still scans on a phone built before this field existed —
+    /// and a QR for anything else is refused there rather than quietly
+    /// enrolled under the wrong purpose.
+    pub purpose: CredentialPurpose,
 }
 
 impl ServerBootstrap {
@@ -54,6 +64,28 @@ impl ServerBootstrap {
         now_ms: i64,
         lifetime_ms: i64,
     ) -> Result<Self, SessionError> {
+        Self::for_purpose(
+            session_id,
+            verifier_id,
+            endpoint,
+            identity,
+            now_ms,
+            lifetime_ms,
+            CredentialPurpose::Authorization,
+        )
+    }
+
+    /// Builds a bootstrap that asks for a credential of one specific purpose.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_purpose(
+        session_id: impl Into<String>,
+        verifier_id: impl Into<String>,
+        endpoint: impl Into<String>,
+        identity: &IdentityKey,
+        now_ms: i64,
+        lifetime_ms: i64,
+        purpose: CredentialPurpose,
+    ) -> Result<Self, SessionError> {
         let mut nonce = [0u8; 32];
         getrandom::getrandom(&mut nonce).expect("operating system CSPRNG is unavailable");
 
@@ -64,6 +96,7 @@ impl ServerBootstrap {
             verifier_identity_hash: identity.public_key_hash()?,
             endpoint: endpoint.into(),
             expires_at_ms: now_ms.saturating_add(lifetime_ms.max(1)),
+            purpose,
         };
         bootstrap.validate()?;
         Ok(bootstrap)
@@ -99,7 +132,7 @@ impl ServerBootstrap {
 
     /// Renders the scannable string.
     pub fn to_uri(&self) -> String {
-        format!(
+        let uri = format!(
             "{BOOTSTRAP_PREFIX}vid={}&sid={}&n={}&k={}&ep={}&exp={}",
             self.verifier_id,
             self.session_id,
@@ -107,7 +140,11 @@ impl ServerBootstrap {
             to_base64url(&self.verifier_identity_hash),
             self.endpoint,
             self.expires_at_ms
-        )
+        );
+        match self.purpose {
+            CredentialPurpose::Authorization => uri,
+            other => format!("{uri}&p={}", other as u8),
+        }
     }
 
     /// Parses a scanned string.
@@ -128,6 +165,7 @@ impl ServerBootstrap {
         let mut hash = None;
         let mut endpoint = None;
         let mut expires_at_ms = None;
+        let mut purpose = CredentialPurpose::Authorization;
 
         for pair in query.split('&') {
             let (key, value) = pair
@@ -145,6 +183,15 @@ impl ServerBootstrap {
                             SessionError::InvalidBootstrap("invalid bootstrap expiry")
                         })?)
                 }
+                "p" => {
+                    purpose = value
+                        .parse::<i64>()
+                        .ok()
+                        .and_then(|value| CredentialPurpose::from_wire(value).ok())
+                        .ok_or(SessionError::InvalidBootstrap(
+                            "invalid bootstrap credential purpose",
+                        ))?
+                }
                 // Unknown keys fail closed. A future version that adds a
                 // meaningful field must not be silently half-understood.
                 _ => return Err(SessionError::InvalidBootstrap("unknown bootstrap field")),
@@ -159,6 +206,7 @@ impl ServerBootstrap {
             verifier_identity_hash: hash.ok_or_else(missing)?,
             endpoint: endpoint.ok_or_else(missing)?,
             expires_at_ms: expires_at_ms.ok_or_else(missing)?,
+            purpose,
         };
         bootstrap.validate()?;
         Ok(bootstrap)
@@ -177,6 +225,70 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_787_745_600_000;
+
+    /// The purpose is what stops one scan from enrolling a key for the wrong
+    /// job, so it has to survive the trip through the picture.
+    #[test]
+    fn a_purpose_round_trips_through_the_uri() {
+        for purpose in [
+            CredentialPurpose::Authorization,
+            CredentialPurpose::DiskUnlock,
+            CredentialPurpose::WebAuthn,
+            CredentialPurpose::Vault,
+            CredentialPurpose::FileLocker,
+            CredentialPurpose::Ssh,
+        ] {
+            let bootstrap = ServerBootstrap::for_purpose(
+                "session-1",
+                "desktop-1",
+                "192.168.1.10:8765",
+                &IdentityKey::generate(),
+                NOW,
+                DEFAULT_LIFETIME_MS,
+                purpose,
+            )
+            .expect("bootstrap");
+
+            let scanned = ServerBootstrap::from_uri(&bootstrap.to_uri()).expect("scan");
+            assert_eq!(scanned.purpose, purpose);
+            assert_eq!(scanned, bootstrap);
+        }
+    }
+
+    /// An ordinary login pairing still produces the code it always did, so a
+    /// phone built before purposes travelled here keeps pairing. Anything else
+    /// carries `p=` and is refused there instead of enrolled as a login key.
+    #[test]
+    fn only_a_non_default_purpose_is_written_out() {
+        assert!(!bootstrap().to_uri().contains("&p="));
+
+        let ssh = ServerBootstrap::for_purpose(
+            "session-1",
+            "desktop-1",
+            "",
+            &IdentityKey::generate(),
+            NOW,
+            DEFAULT_LIFETIME_MS,
+            CredentialPurpose::Ssh,
+        )
+        .expect("bootstrap");
+        assert!(ssh.to_uri().ends_with("&p=5"));
+    }
+
+    /// A number nobody has defined yet is a purpose this build does not
+    /// understand. Enrolling it as authorization would be the one outcome the
+    /// field exists to prevent.
+    #[test]
+    fn an_unknown_purpose_is_refused_rather_than_defaulted() {
+        let base = bootstrap().to_uri();
+        for tail in ["&p=6", "&p=99", "&p=-1", "&p=", "&p=ssh"] {
+            let uri = format!("{base}{tail}");
+            assert!(
+                ServerBootstrap::from_uri(&uri).is_err(),
+                "`{tail}` was accepted"
+            );
+        }
+    }
 
     fn bootstrap() -> ServerBootstrap {
         ServerBootstrap::new(

@@ -308,6 +308,20 @@ impl Service {
     /// secret: losing the picture lets someone attempt a pairing, not complete
     /// one, because the user still has to confirm the verification code.
     pub fn begin_pairing(&mut self) -> Result<PairingBootstrap, ServiceError> {
+        self.begin_pairing_for("authorization")
+    }
+
+    /// Puts a pairing code on screen for one specific kind of credential.
+    ///
+    /// The purpose has to travel in the code because it is decided here and
+    /// the phone cannot infer it: a scan is the same gesture whether the key
+    /// being enrolled will approve a `sudo` or sign an SSH login, and enrolling
+    /// one as the other is exactly the credential reuse the purposes exist to
+    /// prevent.
+    pub fn begin_pairing_for(
+        &mut self,
+        service: &str,
+    ) -> Result<PairingBootstrap, ServiceError> {
         let network = self.network.as_ref().ok_or_else(|| {
             ServiceError::new(
                 "no-transport",
@@ -330,13 +344,14 @@ impl Service {
         })?;
         let endpoint = format!("{address}:{}", network.port());
 
-        let bootstrap = ServerBootstrap::new(
+        let bootstrap = ServerBootstrap::for_purpose(
             random::session_id(),
             self.config.verifier_id.clone(),
             endpoint,
             network.identity(),
             now_ms(),
             PAIRING_WINDOW_MS,
+            wire_purpose(CredentialPurpose::for_service(service)),
         )
         .map_err(|error| ServiceError::new("pairing-failed", error.to_string()))?;
 
@@ -1716,6 +1731,18 @@ fn map_purpose(purpose: phone_auth_protocol::CredentialPurpose) -> CredentialPur
         phone_auth_protocol::CredentialPurpose::Vault => CredentialPurpose::Vault,
         phone_auth_protocol::CredentialPurpose::FileLocker => CredentialPurpose::FileLocker,
         phone_auth_protocol::CredentialPurpose::Ssh => CredentialPurpose::Ssh,
+    }
+}
+
+/// The same mapping the other way, for the pairing code.
+fn wire_purpose(purpose: CredentialPurpose) -> phone_auth_protocol::CredentialPurpose {
+    match purpose {
+        CredentialPurpose::Authorization => phone_auth_protocol::CredentialPurpose::Authorization,
+        CredentialPurpose::DiskUnlock => phone_auth_protocol::CredentialPurpose::DiskUnlock,
+        CredentialPurpose::WebAuthn => phone_auth_protocol::CredentialPurpose::WebAuthn,
+        CredentialPurpose::Vault => phone_auth_protocol::CredentialPurpose::Vault,
+        CredentialPurpose::FileLocker => phone_auth_protocol::CredentialPurpose::FileLocker,
+        CredentialPurpose::Ssh => phone_auth_protocol::CredentialPurpose::Ssh,
     }
 }
 

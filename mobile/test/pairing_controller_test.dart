@@ -162,7 +162,8 @@ class _ControlledPairingService extends PairingService {
 class _FailingCredential implements AuthorizationCredential {
   @override
   Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})>
-  describe() => Future.error(StateError('keystore unavailable'));
+  describe(CredentialPurpose purpose) =>
+      Future.error(StateError('keystore unavailable'));
 }
 
 class _PairingTransport extends _UnusedTransport {

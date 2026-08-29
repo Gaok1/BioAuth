@@ -29,6 +29,14 @@ abstract class PhoneAuthNativePlatform extends PlatformInterface {
     required AuthenticationContext context,
   }) => throw UnimplementedError('sign() has not been implemented.');
 
+  Future<DevicePublicKey> generateSshKey() =>
+      throw UnimplementedError('generateSshKey() has not been implemented.');
+
+  Future<SignatureResult> signSsh({
+    required Uint8List payload,
+    required AuthenticationContext context,
+  }) => throw UnimplementedError('signSsh() has not been implemented.');
+
   Future<SecurityCapabilities> getSecurityCapabilities() =>
       throw UnimplementedError(
         'getSecurityCapabilities() has not been implemented.',

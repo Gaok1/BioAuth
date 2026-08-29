@@ -598,6 +598,7 @@ mod wire_vectors {
             verifier_identity_hash: [0; 32],
             endpoint: String::new(),
             expires_at_ms: EXPIRES_AT_MS,
+            purpose: phone_auth_protocol::CredentialPurpose::Authorization,
         }
     }
 

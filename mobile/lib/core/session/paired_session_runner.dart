@@ -12,6 +12,7 @@ import '../auth/interactive_authorizer.dart';
 import '../auth/phone_authenticator.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
+import '../ssh/native_ssh_signer.dart';
 import '../ssh/ssh_service.dart';
 import '../transport/auth_transport.dart';
 import '../vault/vault_approval.dart';
@@ -42,6 +43,7 @@ class PairedSessionRunner {
     required InteractiveAuthorizer consent,
     InteractiveVaultApproval? vaultApproval,
     InteractiveSshApproval? sshApproval,
+    SshSigner? sshSigner,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
@@ -50,6 +52,10 @@ class PairedSessionRunner {
          consent: consent,
          vaultApproval: vaultApproval,
          sshApproval: sshApproval,
+         // The real key by default. A test passes its own; nothing else has
+         // reason to, and forgetting to pass one must not silently produce a
+         // runner that cannot sign.
+         sshSigner: sshSigner ?? const NativeSshSigner(),
          clock: clock,
        ),
        _consent = consent,
