@@ -166,10 +166,23 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
     children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-        child: SearchBar(
-          hintText: 'Buscar nome, usuário ou endereço',
-          leading: const Icon(Icons.search),
+        // A `TextField` rather than a `SearchBar`. The Material widget looks
+        // 56 tall and reports a 24-pixel semantics rectangle for the field
+        // inside it, and that rectangle is what explore-by-touch and switch
+        // access actually aim at — below Android's 48dp minimum. Here the
+        // padding is ours, so what the accessibility service is told matches
+        // what the eye sees.
+        child: TextField(
           onChanged: controller.search,
+          textInputAction: TextInputAction.search,
+          decoration: const InputDecoration(
+            hintText: 'Buscar nome, usuário ou endereço',
+            prefixIcon: Icon(Icons.search),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.all(Radius.circular(28)),
+            ),
+            contentPadding: EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+          ),
         ),
       ),
       if (controller.error case final message?)

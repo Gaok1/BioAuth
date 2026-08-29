@@ -35,10 +35,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Example'), findsOneWidget);
 
-    await tester.enterText(find.byType(SearchBar), 'missing');
+    await tester.enterText(find.byType(TextField), 'missing');
     await tester.pump();
     expect(find.text('Nenhum item encontrado.'), findsOneWidget);
-    await tester.enterText(find.byType(SearchBar), 'example');
+    await tester.enterText(find.byType(TextField), 'example');
     await tester.pump();
 
     await tester.tap(find.byTooltip('Revelar com biometria'));
