@@ -155,3 +155,10 @@ error, while an unknown future version is preserved and rejected rather than
 misclassified as corruption. The authoritative replacement is one atomic
 SharedPreferences value/commit, so process death cannot expose a half-encoded
 record set.
+
+The Android vault was introduced directly as version 1, so it has no legacy
+plaintext or unversioned format to migrate. Both its authenticated ciphertext
+envelope and its encrypted JSON payload carry explicit versions, and writes use
+Android `AtomicFile`. A future version is reported as
+`store_version_unsupported`, not as corruption: recovery UI must not offer to
+discard data merely because the installed build is older than the store.

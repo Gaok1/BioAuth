@@ -298,7 +298,13 @@ internal object VaultCiphertext {
     }
 
     fun iv(blob: ByteArray): ByteArray {
-        if (blob.size < 2 + 1 + TAG_BYTES || blob[0] != VERSION) malformed()
+        if (blob.size < 2 + 1 + TAG_BYTES) malformed()
+        if (blob[0] != VERSION) {
+            throw VaultStoreFailure(
+                "store_version_unsupported",
+                "Vault storage version is unsupported",
+            )
+        }
         val length = blob[1].toInt() and 0xff
         if (length !in 1..MAX_IV_BYTES || blob.size < 2 + length + TAG_BYTES) malformed()
         return blob.copyOfRange(2, 2 + length)
