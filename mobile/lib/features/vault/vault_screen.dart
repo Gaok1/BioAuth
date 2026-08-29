@@ -239,6 +239,15 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
             ),
           ),
           IconButton(
+            tooltip: controller.isFavourite(item.id)
+                ? 'Tirar dos favoritos'
+                : 'Marcar como favorito',
+            onPressed: () => controller.toggleFavourite(item.id),
+            icon: Icon(
+              controller.isFavourite(item.id) ? Icons.star : Icons.star_border,
+            ),
+          ),
+          IconButton(
             tooltip: 'Copiar com biometria',
             onPressed: controller.busy ? null : () => controller.copy(item),
             icon: const Icon(Icons.copy),

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/vault/totp.dart';
 import '../../core/vault/vault_export.dart';
+import 'vault_favourites.dart';
 import 'vault_store.dart';
 
 typedef VaultClipboard = Future<void> Function(String value);
@@ -27,12 +28,17 @@ class VaultBackup {
 }
 
 class VaultController extends ChangeNotifier {
-  VaultController({VaultStore? store, VaultClipboard? copy})
-    : _store = store ?? const NativeVaultStore(),
-      _copy =
-          copy ?? ((value) => Clipboard.setData(ClipboardData(text: value)));
+  VaultController({
+    VaultStore? store,
+    VaultClipboard? copy,
+    VaultFavourites? favourites,
+  }) : _store = store ?? const NativeVaultStore(),
+       _favourites = favourites ?? VaultFavourites(),
+       _copy =
+           copy ?? ((value) => Clipboard.setData(ClipboardData(text: value)));
 
   final VaultStore _store;
+  final VaultFavourites _favourites;
   final VaultClipboard _copy;
   List<VaultItemSummary> _items = const [];
   String _query = '';
@@ -55,6 +61,11 @@ class VaultController extends ChangeNotifier {
 
   bool _discardable = false;
 
+  /// Set by [dispose]. The favourites load is deliberately not awaited, so it
+  /// can outlive the screen that started it, and notifying a disposed
+  /// `ChangeNotifier` throws.
+  bool _disposed = false;
+
   /// Whether the vault can be thrown away and started over.
   ///
   /// Narrower than [unrecoverable]: only failures that no future version of
@@ -67,15 +78,31 @@ class VaultController extends ChangeNotifier {
 
   List<VaultItemSummary> get items {
     final query = _query.trim().toLowerCase();
-    if (query.isEmpty) return _items;
-    return _items
-        .where(
-          (item) =>
-              item.name.toLowerCase().contains(query) ||
-              item.username.toLowerCase().contains(query) ||
-              item.uri.toLowerCase().contains(query),
-        )
-        .toList(growable: false);
+    final matching = query.isEmpty
+        ? _items
+        : _items
+              .where(
+                (item) =>
+                    item.name.toLowerCase().contains(query) ||
+                    item.username.toLowerCase().contains(query) ||
+                    item.uri.toLowerCase().contains(query),
+              )
+              .toList(growable: false);
+    // Ordering happens after filtering, so a search shows its matches with the
+    // starred ones first rather than showing every favourite regardless.
+    return _favourites.order(matching);
+  }
+
+  bool isFavourite(String id) => _favourites.contains(id);
+
+  /// Stars or unstars an item.
+  ///
+  /// Not routed through [_run]: it touches no key and asks the phone for
+  /// nothing, so making it wait behind a busy vault operation would be a
+  /// spinner on a star.
+  Future<void> toggleFavourite(String id) async {
+    await _favourites.toggle(id);
+    notifyListeners();
   }
 
   String? secretFor(String id) => id == _revealedId ? _revealedSecret : null;
@@ -96,7 +123,21 @@ class VaultController extends ChangeNotifier {
   Future<void> unlock() => _run(() async {
     _items = await _store.listAll();
     locked = false;
+    // Deliberately not awaited. The vault opens at the vault's speed; if the
+    // preference store is slow or absent, the list appears unordered and
+    // reorders a moment later, rather than the unlock waiting on a star.
+    unawaited(_loadFavourites());
   });
+
+  Future<void> _loadFavourites() async {
+    await _favourites.load();
+    // Stars for items that are gone would otherwise accumulate forever, and
+    // the stored list would slowly become a record of everything ever starred.
+    if (_disposed) return;
+    await _favourites.prune(_items.map((item) => item.id));
+    if (_disposed || locked) return;
+    notifyListeners();
+  }
 
   void lock() {
     locked = true;
@@ -134,7 +175,11 @@ class VaultController extends ChangeNotifier {
   Future<void> _tickTotp() async {
     final secret = _totpSecret;
     if (secret == null) return;
-    _revealedCode = await generateTotp(secret);
+    final code = await generateTotp(secret);
+    // The generate is asynchronous, so the screen can be gone by the time it
+    // returns — the ticker fires every second and disposal does not wait.
+    if (_disposed || _totpSecret != secret) return;
+    _revealedCode = code;
     notifyListeners();
   }
 
@@ -154,6 +199,7 @@ class VaultController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _totpTicker?.cancel();
     super.dispose();
   }
