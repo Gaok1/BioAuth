@@ -177,6 +177,11 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
+# The same three checks on Linux, which is what CI runs. Needs Docker.
+# Off Linux the commands above cannot see `#[cfg(unix)]` code at all, so a
+# green run there is not evidence that CI will be green.
+tools/linux-check.sh
+
 # Installers
 cd desktop && cargo build --release -p phone-auth-agent -p phone-auth-cli
 cd ui && npm ci && npx electron-builder --win     # or --linux

@@ -68,6 +68,15 @@ drifts.
 # Everything, including the cross-language golden vector
 cargo test --workspace
 
+# The same suite on Linux, from any host with Docker. CI runs on
+# `ubuntu-latest`, and off Linux the command above is answering a different
+# question: `#[cfg(unix)]` blocks are never compiled, so `clippy -D warnings`
+# cannot fail on them, and `env::temp_dir()` is a private per-user directory
+# on Windows but `/tmp` on Linux — root-owned and sticky, which is enough to
+# turn a passing permissions test into EPERM. The container runs as a
+# non-root user for that second reason.
+../tools/linux-check.sh
+
 # The agent, with the development simulator standing in for a phone
 cargo run -p phone-auth-agent --features dev-simulator -- --dev-simulator
 
