@@ -66,7 +66,13 @@ class CredentialProviderInstrumentationTest {
         assertEquals(Manifest.permission.BIND_CREDENTIAL_PROVIDER_SERVICE, service.permission)
         val metadata = service.metaData.getInt(android.service.credentials.CredentialProviderService.SERVICE_META_DATA)
         assertNotEquals(0, metadata)
-        assertEquals(setOf("androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL"), capabilities(metadata))
+        assertEquals(
+            setOf(
+                "androidx.credentials.TYPE_PUBLIC_KEY_CREDENTIAL",
+                "androidx.credentials.TYPE_PASSWORD_CREDENTIAL",
+            ),
+            capabilities(metadata),
+        )
         assertEquals(
             PackageManager.PERMISSION_DENIED,
             context.packageManager.checkPermission(
@@ -112,9 +118,9 @@ class CredentialProviderInstrumentationTest {
 
     @Test
     fun privilegedOriginRequiresTheRealCallerCertificateInTheAllowlist() {
-        val signatures = currentSignatures()
-        val fingerprint = fingerprint(signatures.single().toByteArray())
-        val caller = CallingAppInfo(context.packageName, signatures, "https://login.example.com")
+        val signingInfo = currentSigningInfo()
+        val fingerprint = fingerprint(signingInfo.apkContentsSigners.single().toByteArray())
+        val caller = CallingAppInfo(context.packageName, signingInfo, "https://login.example.com")
         var fetched = false
         val validator = validator(
             privilegedAllowlist(context.packageName, fingerprint),
@@ -139,15 +145,15 @@ class CredentialProviderInstrumentationTest {
 
     @Test
     fun nativeCallerMustBeAuthorizedByAssetLinksForItsInstalledCertificate() {
-        val signatures = currentSignatures()
-        val fingerprints = signatures.map { fingerprint(it.toByteArray()) }
+        val signingInfo = currentSigningInfo()
+        val fingerprints = signingInfo.apkContentsSigners.map { fingerprint(it.toByteArray()) }
         var fetchedRp: String? = null
         val validator = validator("{\"apps\":[]}", AssetLinksFetcher { rpId ->
             fetchedRp = rpId
             assetLinks(context.packageName, fingerprints)
         })
 
-        val client = validator.validate("example.com", CallingAppInfo(context.packageName, signatures))
+        val client = validator.validate("example.com", CallingAppInfo(context.packageName, signingInfo))
         assertEquals("example.com", fetchedRp)
         assertEquals(context.packageName, client.packageName)
         assertTrue(client.origin.startsWith("android:apk-key-hash:"))
@@ -157,7 +163,7 @@ class CredentialProviderInstrumentationTest {
         })
         assertTrue(
             runCatching {
-                denied.validate("example.com", CallingAppInfo(context.packageName, signatures))
+                denied.validate("example.com", CallingAppInfo(context.packageName, signingInfo))
             }.isFailure,
         )
     }
@@ -178,12 +184,20 @@ class CredentialProviderInstrumentationTest {
 
     private fun componentForActivity() = ComponentName(context, WebAuthnCredentialActivity::class.java)
 
+    /// The credential types the provider XML declares.
+    ///
+    /// `name` is looked up in either namespace. The shipped XML writes it
+    /// unqualified, so reading it only under the android namespace found
+    /// nothing -- an empty set, which reads as a provider that declares no
+    /// capabilities at all rather than as a test looking in the wrong place.
     private fun capabilities(resourceId: Int): Set<String> {
         val result = mutableSetOf<String>()
         context.resources.getXml(resourceId).use { parser ->
             while (parser.eventType != XmlPullParser.END_DOCUMENT) {
                 if (parser.eventType == XmlPullParser.START_TAG && parser.name == "capability") {
-                    parser.getAttributeValue(ANDROID_NAMESPACE, "name")?.let(result::add)
+                    val name = parser.getAttributeValue(ANDROID_NAMESPACE, "name")
+                        ?: parser.getAttributeValue(null, "name")
+                    name?.let(result::add)
                 }
                 parser.next()
             }
@@ -191,10 +205,17 @@ class CredentialProviderInstrumentationTest {
         return result
     }
 
-    private fun currentSignatures() = context.packageManager.getPackageInfo(
+    /// The signing identity the platform holds for this package.
+    ///
+    /// Handed to [CallingAppInfo] whole rather than as a list of signatures.
+    /// The list-taking constructors still exist but throw on sight -- "Use
+    /// SigningInfoCompat.fromSigningInfo(SigningInfo) instead" -- and a
+    /// `SigningInfo` is what the platform actually hands a provider, so this
+    /// is also the shape the service sees in production.
+    private fun currentSigningInfo() = context.packageManager.getPackageInfo(
         context.packageName,
         PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
-    ).signingInfo.let(::requireNotNull).apkContentsSigners.toList()
+    ).signingInfo.let(::requireNotNull)
 
     private fun validator(allowlist: String, fetcher: AssetLinksFetcher) = RpIdValidator(
         allowlist,
