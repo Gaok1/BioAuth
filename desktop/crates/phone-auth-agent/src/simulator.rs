@@ -114,15 +114,29 @@ impl SimulatedPhone {
         self.identity.public_key_spki().expect("spki")
     }
 
-    /// Scans a code and pairs.
+    /// Scans a code and pairs, offering what the code asked for.
     pub fn pair(&self, bootstrap: &ServerBootstrap, now_ms: i64) -> Result<String, String> {
+        self.pair_offering(bootstrap, &self.enrolment_for(bootstrap.purpose), now_ms)
+    }
+
+    /// Pairs while offering an enrolment of the caller's choosing.
+    ///
+    /// Exists so a test can play the phone that ignores the purpose in the
+    /// code — which is what an older build did and what a hostile one would
+    /// do. Nothing in the product should call this.
+    pub fn pair_offering(
+        &self,
+        bootstrap: &ServerBootstrap,
+        enrolment: &Enrolment,
+        now_ms: i64,
+    ) -> Result<String, String> {
         let endpoint = dial(&bootstrap.endpoint);
         let (_, stream, code) = client::pair(
             &endpoint,
             bootstrap,
             DEVICE_ID,
             &self.identity,
-            &self.enrolment_for(bootstrap.purpose),
+            enrolment,
             now_ms,
         )?;
         let _ = stream.shutdown(std::net::Shutdown::Both);
