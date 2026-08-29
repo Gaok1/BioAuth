@@ -5,8 +5,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import android.provider.Settings
 import androidx.biometric.BiometricManager
 import androidx.credentials.CredentialManager
 import androidx.credentials.provider.CallingAppInfo
@@ -39,7 +39,7 @@ class CredentialProviderInstrumentationTest {
     fun enableProvider() {
         assertTrue(Build.VERSION.SDK_INT >= 35)
         assertTrue(context.packageManager.hasSystemFeature(PackageManager.FEATURE_CREDENTIALS))
-        originalProviders = Settings.Secure.getString(context.contentResolver, CREDENTIAL_SERVICE)
+        originalProviders = readProviders()
         val enabled = originalProviders.orEmpty().split(';')
             .filter { it.isNotBlank() && it != "null" }
             .plus(component.flattenToString())
@@ -204,14 +204,33 @@ class CredentialProviderInstrumentationTest {
         fetcher,
     )
 
+    /// Reads the enabled-providers setting, as the shell rather than as us.
+    ///
+    /// `credential_service` is `@hide`, and from S+ a `@hide` key is unreadable
+    /// by an ordinary app -- the restriction is on who is asking, not on what
+    /// they hold, so adopting the shell's *permissions* does not lift it.
+    /// Running the command adopts the shell's *uid*, which does.
+    private fun readProviders(): String? =
+        shell("settings get secure ${'$'}CREDENTIAL_SERVICE").trim()
+            .takeUnless { it.isEmpty() || it == "null" }
+
     private fun writeProviders(value: String?) {
-        instrumentation.uiAutomation.adoptShellPermissionIdentity(Manifest.permission.WRITE_SECURE_SETTINGS)
-        try {
-            assertTrue(Settings.Secure.putString(context.contentResolver, CREDENTIAL_SERVICE, value))
-        } finally {
-            instrumentation.uiAutomation.dropShellPermissionIdentity()
+        // Same route as the read, for the same reason. Neither the component
+        // list nor the key contains whitespace, and nothing here is run by a
+        // shell -- the command is split on spaces and exec'd -- so the `;`
+        // separating components needs no quoting and would not survive it.
+        if (value == null) {
+            shell("settings delete secure ${'$'}CREDENTIAL_SERVICE")
+        } else {
+            shell("settings put secure ${'$'}CREDENTIAL_SERVICE ${'$'}value")
         }
+        assertEquals(value, readProviders())
     }
+
+    private fun shell(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(command),
+        ).use { it.readBytes().decodeToString() }
 
     private fun fingerprint(bytes: ByteArray) = MessageDigest.getInstance("SHA-256")
         .digest(bytes)
