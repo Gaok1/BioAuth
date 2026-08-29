@@ -240,12 +240,20 @@ impl PairingStore {
         })
     }
 
-    /// Adds or replaces a device.
+    /// Adds a device, or merges new credentials into one already known.
+    ///
+    /// Merged rather than replaced because one phone can hold several
+    /// credentials for this desktop — a login one and a vault one are
+    /// different keys with different powers — and pairing the second used to
+    /// drop the first, along with every permission the user had granted it.
+    /// A credential arriving under an id that already exists still replaces
+    /// that one outright: it is a fresh pairing of that credential, and a
+    /// fresh pairing authorizes nothing until the user says otherwise.
     ///
     /// Rejects a credential id already bound to a different public key on
     /// another device, so that pairing a second phone cannot silently take
     /// over an existing credential's identity.
-    pub fn insert(&mut self, device: PairedDevice) -> Result<(), PairingError> {
+    pub fn insert(&mut self, mut device: PairedDevice) -> Result<(), PairingError> {
         for credential in &device.credentials {
             if let Some((owner, existing)) = self.find_credential(&credential.credential_id) {
                 if owner.device_id != device.device_id
@@ -257,6 +265,21 @@ impl PairingStore {
                 }
             }
         }
+        if let Some(existing) = self.devices.get(&device.device_id) {
+            let incoming: Vec<&str> = device
+                .credentials
+                .iter()
+                .map(|credential| credential.credential_id.as_str())
+                .collect();
+            let kept: Vec<PairedCredential> = existing
+                .credentials
+                .iter()
+                .filter(|credential| !incoming.contains(&credential.credential_id.as_str()))
+                .cloned()
+                .collect();
+            device.credentials.extend(kept);
+        }
+
         self.devices.insert(device.device_id.clone(), device);
         self.persist()
     }
@@ -370,6 +393,75 @@ mod tests {
             session_identity_public_key: vec![key ^ 0xff; 91],
             credentials: vec![credential(credential_id, key)],
         }
+    }
+
+    /// One phone, two credentials. Before this merged, pairing the vault
+    /// dropped the login credential and every permission granted to it — from
+    /// the desktop's side the phone simply stopped being able to approve.
+    #[test]
+    fn a_second_credential_joins_the_device_instead_of_replacing_it() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-merge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut store = PairingStore::load(dir.join("devices.json")).expect("load");
+
+        store
+            .insert(device("phone-1", "cred-login", 0xab))
+            .expect("insert");
+
+        let mut vault = device("phone-1", "cred-vault", 0xcd);
+        vault.credentials[0].purpose = CredentialPurpose::Vault;
+        store.insert(vault).expect("insert");
+
+        let stored = store.device("phone-1").expect("device");
+        let mut ids: Vec<&str> = stored
+            .credentials
+            .iter()
+            .map(|credential| credential.credential_id.as_str())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["cred-login", "cred-vault"]);
+
+        // And the permissions the user had granted the first one survive.
+        assert_eq!(
+            stored.credential("cred-login").expect("login").permissions,
+            vec![Permission::service("sudo")]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Re-pairing the same credential is a fresh pairing of that credential,
+    /// so it replaces rather than accumulating — and the permissions go with
+    /// the old one, because a fresh pairing authorizes nothing.
+    #[test]
+    fn re_pairing_one_credential_replaces_only_that_one() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-repair-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let mut store = PairingStore::load(dir.join("devices.json")).expect("load");
+
+        store
+            .insert(device("phone-1", "cred-login", 0xab))
+            .expect("insert");
+        let mut vault = device("phone-1", "cred-vault", 0xcd);
+        vault.credentials[0].purpose = CredentialPurpose::Vault;
+        store.insert(vault).expect("insert");
+
+        let mut again = device("phone-1", "cred-login", 0xab);
+        again.credentials[0].permissions.clear();
+        store.insert(again).expect("insert");
+
+        let stored = store.device("phone-1").expect("device");
+        assert_eq!(stored.credentials.len(), 2);
+        assert!(
+            stored
+                .credential("cred-login")
+                .expect("login")
+                .permissions
+                .is_empty(),
+            "a re-paired credential kept its old permissions"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
