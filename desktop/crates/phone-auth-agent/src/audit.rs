@@ -106,10 +106,22 @@ impl AuditLog {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         line.push(b'\n');
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        // The log names every service, resource and account this machine has
+        // authorized. That is not a secret, but it is a map of what the user
+        // does and it has no business being world-readable — which is what an
+        // ordinary `create` at the default umask makes it.
+        //
+        // Set at creation rather than afterwards: tightening a file that
+        // already exists leaves the window that `private_files` exists to
+        // close, and the mode is ignored when the file is already there.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&self.path)?;
         file.write_all(&line)?;
 
         self.trim_if_needed()?;
@@ -158,8 +170,28 @@ impl AuditLog {
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
             buffer.push(b'\n');
         }
+        // Rotation rewrites the whole log, so the replacement has to be as
+        // narrow as the file it replaces: a plain `fs::write` would hand the
+        // history back to the default umask on every trim.
+        //
+        // Not `private_files::write_private`, which rewrites an explicit DACL
+        // each time. That is right for a file written once at startup and
+        // wrong here — trimming happens on every append past the limit, and on
+        // Windows the DACL call costs enough to turn a flood of authorizations
+        // into ten minutes of security descriptors. The directory's ACL
+        // already covers this file; what rotation has to preserve is the mode,
+        // and that comes free at open.
         let temp = self.path.with_extension("jsonl.tmp");
-        fs::write(&temp, &buffer)?;
+        let mut options = OpenOptions::new();
+        options.write(true).truncate(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(&buffer)?;
+        drop(file);
         fs::rename(&temp, &self.path)
     }
 
@@ -287,5 +319,56 @@ mod tests {
     fn reading_a_missing_log_is_empty_not_an_error() {
         let log = AuditLog::new(std::env::temp_dir().join("phoneauth-audit-does-not-exist.jsonl"));
         assert!(log.recent(10).is_empty());
+    }
+
+    /// The log names every service, resource and account this machine has
+    /// authorized. Not a secret, but a map of what the user does, and an
+    /// ordinary `create` at the default umask makes it world-readable.
+    #[cfg(unix)]
+    #[test]
+    fn the_log_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("phoneauth-audit-mode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("sandbox");
+        // A tiny threshold so a handful of appends forces a rotation.
+        let log = AuditLog::with_limits(dir.join("audit.jsonl"), 2, 64);
+
+        log.append(&entry("first", 1)).expect("append");
+        let created = fs::metadata(log.path()).expect("stat").permissions().mode() & 0o777;
+
+        // Past both limits, so the next appends rotate the file and the
+        // replacement has to be as narrow as what it replaced.
+        for index in 0..8 {
+            log.append(&entry("flood", index)).expect("append");
+        }
+        let rotated = fs::metadata(log.path()).expect("stat").permissions().mode() & 0o777;
+
+        assert_eq!(created, 0o600, "created world-readable");
+        assert_eq!(rotated, 0o600, "rotation widened the log");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A crashed rotation leaves the temp file behind. The next trim has to
+    /// replace it rather than fail, or one interrupted write would stop the
+    /// log from ever being trimmed again.
+    #[test]
+    fn a_leftover_rotation_temp_does_not_wedge_the_log() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-audit-temp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("sandbox");
+        let path = dir.join("audit.jsonl");
+        let log = AuditLog::with_limits(path.clone(), 2, 64);
+
+        fs::write(path.with_extension("jsonl.tmp"), b"left over from a crash").expect("plant");
+        for index in 0..6 {
+            log.append(&entry("entry", index)).expect("append");
+        }
+
+        assert_eq!(log.recent(10).len(), 2, "the log kept trimming");
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

@@ -8,7 +8,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -281,28 +282,61 @@ impl PairingStore {
         let json = serde_json::to_vec_pretty(&file).map_err(PairingError::Corrupt)?;
 
         let temp = self.path.with_extension("json.tmp");
-        fs::write(&temp, &json)?;
-        restrict_permissions(&temp)?;
+        // Restricted before anything is written into it, not after. Creating
+        // the file at whatever the umask happens to be and tightening it
+        // afterwards leaves a window in which another user on the machine can
+        // open it and keep the handle — and the window is the whole attack.
+        //
+        // `create_new` rather than `create`: a temp file that is already there
+        // is either a crashed write or somebody else's, and a symlink planted
+        // under that name would otherwise be followed to wherever it points.
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                fs::remove_file(&temp)?;
+                fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp)?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        restrict_handle(&file)?;
+        file.write_all(&json)?;
+        file.sync_all()?;
+        drop(file);
+
         fs::rename(&temp, &self.path)?;
+        // The rename carries the temp file's permissions onto the store, so
+        // the store is narrow whether or not it existed before.
         Ok(())
     }
 }
 
-/// Narrows a file to the current user.
+/// Narrows an open file to the current user, before anything is in it.
 ///
 /// The store holds no secrets, but a writable pairing store is an authority
-/// grant: anyone who can add a device can add their own phone.
+/// grant: anyone who can add a device can add their own phone. And a readable
+/// one names every phone this machine trusts.
+///
+/// Takes the handle rather than the path so there is no moment between
+/// creating the file and restricting it, and no second lookup of a name that
+/// something else could have replaced in between.
 #[cfg(unix)]
-fn restrict_permissions(path: &Path) -> io::Result<()> {
+fn restrict_handle(file: &fs::File) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    file.set_permissions(fs::Permissions::from_mode(0o600))
 }
 
 /// On Windows the containing directory's ACL is what protects the store;
-/// per-file mode bits have no equivalent. The agent creates the store under
-/// the user's local app data, which is already user-scoped.
+/// per-file mode bits have no equivalent, and the agent's own directories are
+/// restricted explicitly when it creates them.
 #[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> io::Result<()> {
+fn restrict_handle(_file: &fs::File) -> io::Result<()> {
     Ok(())
 }
 
@@ -395,5 +429,60 @@ mod tests {
         assert!(json.contains("\"publicKey\""), "field is camelCase on disk");
         let parsed: PairedDevice = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, original);
+    }
+
+    /// A crashed save leaves the temp file behind. The next save has to
+    /// replace it rather than fail: one interrupted write must not stop the
+    /// machine from ever pairing a phone again.
+    #[test]
+    fn a_leftover_temp_file_does_not_wedge_the_store() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-store-temp-{}", std::process::id()));
+        let path = dir.join("devices.json");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("sandbox");
+        fs::write(path.with_extension("json.tmp"), b"left over").expect("plant");
+
+        let mut store = PairingStore::load(&path).expect("load");
+        store
+            .insert(device("phone-1", "cred-1", 0xab))
+            .expect("insert");
+
+        assert!(PairingStore::load(&path)
+            .expect("reload")
+            .device("phone-1")
+            .is_some());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A readable pairing store names every phone this machine trusts, and a
+    /// writable one is an authority grant: anyone who can add a device can add
+    /// their own phone.
+    #[cfg(unix)]
+    #[test]
+    fn the_store_is_readable_only_by_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("phoneauth-store-mode-{}", std::process::id()));
+        let path = dir.join("devices.json");
+        let _ = fs::remove_dir_all(&dir);
+
+        let mut store = PairingStore::load(&path).expect("load");
+        store
+            .insert(device("phone-1", "cred-1", 0xab))
+            .expect("insert");
+        let first = fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+
+        // A second save renames a fresh temp over the store, so the narrow
+        // mode has to survive replacement as well as creation.
+        store
+            .insert(device("phone-2", "cred-2", 0xcd))
+            .expect("insert");
+        let replaced = fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+
+        assert_eq!(first, 0o600);
+        assert_eq!(replaced, 0o600, "a later save widened the store");
+
+        fs::remove_dir_all(&dir).ok();
     }
 }
