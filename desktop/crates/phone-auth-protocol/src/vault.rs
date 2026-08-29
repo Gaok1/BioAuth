@@ -103,6 +103,10 @@ fn wipe_text(value: &mut str) {
 pub enum ItemKind {
     Login,
     Note,
+    /// A TOTP seed. The stored secret is the base32 key; the six digits are
+    /// derived on the phone and never stored, because a stored code is a code
+    /// that outlives its window.
+    Totp,
 }
 
 impl ItemKind {
@@ -110,6 +114,7 @@ impl ItemKind {
         match self {
             Self::Login => 0,
             Self::Note => 1,
+            Self::Totp => 2,
         }
     }
 
@@ -117,6 +122,7 @@ impl ItemKind {
         match value {
             0 => Ok(Self::Login),
             1 => Ok(Self::Note),
+            2 => Ok(Self::Totp),
             _ => Err(ProtocolError::InvalidItemKind(value)),
         }
     }
@@ -879,10 +885,20 @@ mod tests {
 
     #[test]
     fn an_unknown_item_kind_fails_closed() {
+        // Every kind this build knows round-trips, and the first one past them
+        // does not. Written as a walk rather than a literal: this test used to
+        // assert on `2`, and adding `Totp` as 2 turned it into a test that a
+        // valid kind is rejected.
+        let known = [ItemKind::Login, ItemKind::Note, ItemKind::Totp];
+        for kind in known {
+            assert_eq!(ItemKind::from_wire(kind.wire()), Ok(kind));
+        }
+        let unknown = known.len() as u64;
         assert_eq!(
-            ItemKind::from_wire(2),
-            Err(ProtocolError::InvalidItemKind(2))
+            ItemKind::from_wire(unknown),
+            Err(ProtocolError::InvalidItemKind(unknown))
         );
+        assert!(ItemKind::from_wire(u64::MAX).is_err());
     }
 
     #[test]

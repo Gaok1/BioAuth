@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/vault/totp.dart';
 import '../../core/vault/vault_export.dart';
 import 'vault_store.dart';
 
@@ -37,6 +38,9 @@ class VaultController extends ChangeNotifier {
   String _query = '';
   String? _revealedId;
   String? _revealedSecret;
+  TotpCode? _revealedCode;
+  Timer? _totpTicker;
+  TotpSecret? _totpSecret;
 
   bool locked = true;
   bool busy = false;
@@ -76,6 +80,14 @@ class VaultController extends ChangeNotifier {
 
   String? secretFor(String id) => id == _revealedId ? _revealedSecret : null;
 
+  /// The live code for a revealed TOTP item, or null.
+  ///
+  /// Separate from [secretFor] because they are different things: the stored
+  /// secret of a TOTP item is the seed, and showing that where the user
+  /// expects six digits would put the seed on screen — the one value that must
+  /// never be read aloud or screenshotted.
+  TotpCode? totpFor(String id) => id == _revealedId ? _revealedCode : null;
+
   void search(String query) {
     _query = query;
     notifyListeners();
@@ -91,6 +103,7 @@ class VaultController extends ChangeNotifier {
     _items = const [];
     _revealedId = null;
     _revealedSecret = null;
+    _clearTotp();
     error = null;
     notifyListeners();
   }
@@ -101,19 +114,62 @@ class VaultController extends ChangeNotifier {
       throw StateError('Item alterado; atualize o cofre');
     }
     _revealedId = item.id;
-    _revealedSecret = fetched.secret;
+    if (item.kind == VaultItemKind.totp) {
+      // The seed itself never reaches the screen. What is shown is the code
+      // derived from it, and it keeps deriving while the item is open so the
+      // digits on screen are the digits the site will accept.
+      _totpSecret = TotpSecret.parse(fetched.secret);
+      _revealedSecret = null;
+      await _tickTotp();
+      _totpTicker?.cancel();
+      _totpTicker = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _tickTotp(),
+      );
+    } else {
+      _revealedSecret = fetched.secret;
+    }
   });
+
+  Future<void> _tickTotp() async {
+    final secret = _totpSecret;
+    if (secret == null) return;
+    _revealedCode = await generateTotp(secret);
+    notifyListeners();
+  }
 
   void hide() {
     _revealedId = null;
     _revealedSecret = null;
+    _clearTotp();
     notifyListeners();
+  }
+
+  void _clearTotp() {
+    _totpTicker?.cancel();
+    _totpTicker = null;
+    _totpSecret = null;
+    _revealedCode = null;
+  }
+
+  @override
+  void dispose() {
+    _totpTicker?.cancel();
+    super.dispose();
   }
 
   Future<void> copy(VaultItemSummary item) => _run(() async {
     final fetched = await _store.fetch(item.id);
     if (fetched.revision != item.revision) {
       throw StateError('Item alterado; atualize o cofre');
+    }
+    // A TOTP item copies its six digits, never its seed. Putting the seed on
+    // the clipboard would paste something no login field accepts and leave the
+    // second factor itself sitting there.
+    if (item.kind == VaultItemKind.totp) {
+      final code = await generateTotp(TotpSecret.parse(fetched.secret));
+      await _copy(code.digits);
+      return;
     }
     await _copy(fetched.secret);
   });
@@ -215,6 +271,7 @@ class VaultController extends ChangeNotifier {
     _items = await _store.listAll();
     _revealedId = null;
     _revealedSecret = null;
+    _clearTotp();
   });
 
   Future<void> _run(Future<void> Function() action) async {
@@ -266,6 +323,10 @@ class VaultController extends ChangeNotifier {
               'Atualize antes de abri-lo — não apague nada.',
         _ => 'Não foi possível concluir a operação do cofre.',
       };
+    } on TotpException catch (failure) {
+      // A seed that will not parse is a stored item that is wrong, and saying
+      // so beats the generic message: the user can fix it by editing the item.
+      error = failure.message;
     } on VaultExportException catch (failure) {
       // A backup already says exactly what is wrong with it — bad code, wrong
       // file, edited file — and flattening those into the generic message

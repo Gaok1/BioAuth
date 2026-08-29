@@ -53,8 +53,8 @@ internal data class VaultItemInput(
             if (requireId && id == null) invalid("id is required")
             id?.let { validateText("id", it, 64, allowEmpty = false) }
             val kindValue = map["kind"] as? Number ?: invalid("kind is required")
-            val kind = kindValue.exactLongOrNull()?.takeIf { it in 0..1 }?.toInt()
-                ?: invalid("kind must be 0 or 1")
+            val kind = kindValue.exactLongOrNull()?.takeIf { it in KIND_RANGE }?.toInt()
+                ?: invalid("kind must be a known item kind")
             val name = map.string("name")
             val username = map.optionalString("username")
             val uri = map.optionalString("uri")
@@ -73,6 +73,15 @@ internal class VaultStoreFailure(
     override val message: String,
     val details: Any? = null,
 ) : RuntimeException(message)
+
+/**
+ * The item kinds this build understands: login, note, TOTP seed.
+ *
+ * Named once rather than spelled `0..1` in two places, which is how the two
+ * drifted apart the last time a kind was added — one path accepting an item
+ * the other calls corruption.
+ */
+internal val KIND_RANGE = 0L..2L
 
 internal object VaultStoreData {
     const val PAGE_SIZE = 32
@@ -259,7 +268,7 @@ internal object VaultStoreCodec {
     private fun validate(item: VaultItem) {
         validateText("id", item.id, 64, allowEmpty = false)
         requireRevision(item.revision)
-        if (item.kind !in 0..1) throw VaultStoreFailure("store_corrupt", "Vault storage is corrupt")
+        if (item.kind.toLong() !in KIND_RANGE) throw VaultStoreFailure("store_corrupt", "Vault storage is corrupt")
         validateText("name", item.name, 255, allowEmpty = false)
         validateText("username", item.username, 255, allowEmpty = true)
         validateText("uri", item.uri, 1024, allowEmpty = true)

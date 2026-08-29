@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/vault/totp.dart';
 import 'vault_backup_screen.dart';
 import 'vault_controller.dart';
 import 'vault_store.dart';
@@ -207,23 +208,34 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
 
   Widget _item(VaultItemSummary item) {
     final secret = controller.secretFor(item.id);
+    final code = controller.totpFor(item.id);
     return ListTile(
-      leading: Icon(item.kind == VaultItemKind.login ? Icons.key : Icons.note),
+      leading: Icon(switch (item.kind) {
+        VaultItemKind.login => Icons.key,
+        VaultItemKind.note => Icons.note,
+        VaultItemKind.totp => Icons.timer_outlined,
+      }),
       title: Text(item.name),
-      subtitle: Text(
-        secret ?? (item.username.isEmpty ? item.uri : item.username),
-      ),
+      // A revealed TOTP shows its digits and how long they last — never the
+      // seed, which is what `secret` would be for this kind.
+      subtitle: code != null
+          ? _TotpSubtitle(code: code)
+          : Text(secret ?? (item.username.isEmpty ? item.uri : item.username)),
       trailing: Wrap(
         children: [
           IconButton(
-            tooltip: secret == null ? 'Revelar com biometria' : 'Ocultar',
+            tooltip: secret == null && code == null
+                ? 'Revelar com biometria'
+                : 'Ocultar',
             onPressed: controller.busy
                 ? null
-                : secret == null
+                : secret == null && code == null
                 ? () => controller.reveal(item)
                 : controller.hide,
             icon: Icon(
-              secret == null ? Icons.visibility : Icons.visibility_off,
+              secret == null && code == null
+                  ? Icons.visibility
+                  : Icons.visibility_off,
             ),
           ),
           IconButton(
@@ -338,6 +350,10 @@ class _VaultItemDialogState extends State<_VaultItemDialog> {
                   value: VaultItemKind.note,
                   child: Text('Nota segura'),
                 ),
+                DropdownMenuItem(
+                  value: VaultItemKind.totp,
+                  child: Text('Código TOTP'),
+                ),
               ],
               onChanged: (value) => setState(() => _kind = value!),
             ),
@@ -362,12 +378,33 @@ class _VaultItemDialogState extends State<_VaultItemDialog> {
             TextFormField(
               controller: _secret,
               decoration: InputDecoration(
-                labelText: widget.current == null ? 'Segredo' : 'Novo segredo',
+                labelText: switch ((_kind, widget.current)) {
+                  (VaultItemKind.totp, _) => 'Chave TOTP ou otpauth://',
+                  (_, null) => 'Segredo',
+                  _ => 'Novo segredo',
+                },
+                helperText: _kind == VaultItemKind.totp
+                    ? 'Cole a chave que o site mostrou, ou o link do QR code.'
+                    : null,
               ),
-              obscureText: true,
+              // A TOTP seed is pasted from another screen and read back to
+              // check it, so hiding it while it is being entered only makes a
+              // typo harder to find. It is hidden everywhere afterwards.
+              obscureText: _kind != VaultItemKind.totp,
               maxLength: 4096,
-              validator: (value) =>
-                  value == null || value.isEmpty ? 'Informe o segredo' : null,
+              // Rejected here rather than at save time. A seed that will not
+              // parse becomes an item that shows an error instead of a code,
+              // and by then the user has left the form that could fix it.
+              validator: (value) {
+                if (value == null || value.isEmpty) return 'Informe o segredo';
+                if (_kind != VaultItemKind.totp) return null;
+                try {
+                  _totpSeed(value);
+                  return null;
+                } on TotpException catch (failure) {
+                  return failure.message;
+                }
+              },
             ),
           ],
         ),
@@ -388,7 +425,13 @@ class _VaultItemDialogState extends State<_VaultItemDialog> {
               name: _name.text.trim(),
               username: _username.text,
               uri: _uri.text,
-              secret: _secret.text,
+              // A TOTP item stores the seed, never the `otpauth://` URI it may
+              // have been pasted as. That URI also carries a label and an
+              // issuer, and keeping them would give the item two names that
+              // eventually disagree.
+              secret: _kind == VaultItemKind.totp
+                  ? _totpSeed(_secret.text)
+                  : _secret.text,
             ),
           );
         },
@@ -396,4 +439,62 @@ class _VaultItemDialogState extends State<_VaultItemDialog> {
       ),
     ],
   );
+}
+
+/// The six digits and the seconds they have left.
+///
+/// The countdown is the point: a code with two seconds on it will be rejected
+/// by the time it is typed, and a user who cannot see that blames the site.
+class _TotpSubtitle extends StatelessWidget {
+  const _TotpSubtitle({required this.code});
+
+  final TotpCode code;
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = code.secondsRemaining(DateTime.now().toUtc());
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Text(
+          code.digits,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 18,
+            letterSpacing: 3,
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            value: remaining / totpPeriod.inSeconds,
+            strokeWidth: 2,
+            // Colour alone would not say "about to expire" to a colour-blind
+            // user, so the seconds are written next to it.
+            color: remaining <= 5 ? theme.colorScheme.error : null,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text('${remaining}s', style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
+/// The base32 seed behind whatever the user pasted.
+///
+/// Accepts a bare seed or a whole `otpauth://totp/...`, because both are what
+/// sites put on screen next to the QR code, and a form that took only one of
+/// them would be a form that rejects half of what people paste.
+String _totpSeed(String typed) {
+  final trimmed = typed.trim();
+  final secret = trimmed.toLowerCase().startsWith('otpauth://')
+      ? TotpSecret.fromUri(trimmed)
+      : TotpSecret.parse(trimmed);
+  // The canonical base32, not what was pasted. An item added from a QR link
+  // and one typed by hand are then the same bytes, and a restore does not see
+  // them as two accounts.
+  return totpSecretToBase32(secret);
 }

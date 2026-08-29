@@ -70,7 +70,11 @@ const int _maxSecretLength = 4096;
 /// acrescentar variante é mudança de schema nos dois lados.
 enum VaultItemKind {
   login(0),
-  note(1);
+  note(1),
+
+  /// A TOTP seed. The stored secret is the base32 key; the digits are derived
+  /// on the phone and never stored.
+  totp(2);
 
   const VaultItemKind(this.wire);
 

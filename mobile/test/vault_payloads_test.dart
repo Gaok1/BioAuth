@@ -174,7 +174,19 @@ void main() {
   });
 
   test('tipo de item desconhecido falha fechado', () {
-    expect(() => VaultItemKind.fromWire(2), throwsFormatException);
+    // Um a mais que o último tipo conhecido. Escrito assim para que
+    // acrescentar um tipo não faça este teste passar a exercitar um valor
+    // válido — que é exatamente o que aconteceu quando `totp` entrou como 2.
+    expect(
+      () => VaultItemKind.fromWire(VaultItemKind.values.length),
+      throwsFormatException,
+    );
+    expect(() => VaultItemKind.fromWire(255), throwsFormatException);
+  });
+
+  test('o tipo totp atravessa o fio', () {
+    expect(VaultItemKind.fromWire(2), VaultItemKind.totp);
+    expect(VaultItemKind.totp.wire, 2);
   });
 
   test('segredo vazio é recusado', () {

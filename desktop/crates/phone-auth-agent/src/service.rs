@@ -1543,6 +1543,7 @@ fn vault_item(summary: phone_auth_protocol::vault::ItemSummary) -> VaultItem {
         kind: match summary.kind {
             ItemKind::Login => "login".into(),
             ItemKind::Note => "note".into(),
+            ItemKind::Totp => "totp".into(),
         },
         name: summary.name,
         username: summary.username,

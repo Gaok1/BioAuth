@@ -92,9 +92,24 @@ class VaultStoreTest {
         assertFailsWith<VaultStoreFailure> {
             VaultItemInput.from(inputMap(secret = ""), requireId = false)
         }
+        // One past the last known kind, derived rather than written as a
+        // literal: `2` used to be the unknown one and became `totp`, which
+        // turned this assertion into a test of a valid value.
         assertFailsWith<VaultStoreFailure> {
-            VaultItemInput.from(inputMap(kind = 2), requireId = false)
+            VaultItemInput.from(
+                inputMap(kind = (KIND_RANGE.last + 1).toInt()),
+                requireId = false,
+            )
         }
+        // And the kind that was just added is accepted, so widening the range
+        // is not something a later change can quietly undo.
+        assertEquals(
+            KIND_RANGE.last.toInt(),
+            VaultItemInput.from(
+                inputMap(kind = KIND_RANGE.last.toInt()),
+                requireId = false,
+            ).kind,
+        )
         assertFailsWith<VaultStoreFailure> {
             VaultItemInput.from(inputMap(name = "x".repeat(256)), requireId = false)
         }
