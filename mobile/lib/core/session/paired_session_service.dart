@@ -17,6 +17,7 @@ import '../protocol/application_frame.dart';
 import '../protocol/enrolment.dart';
 import '../protocol/session_attach.dart';
 import '../protocol/webauthn_relay.dart';
+import '../locker/locker_service.dart';
 import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
 import '../vault/vault_service.dart';
@@ -40,12 +41,14 @@ class PairedSessionService {
     VaultApproval? vaultApproval,
     SshApproval? sshApproval,
     SshSigner? sshSigner,
+    LockerKeyGuardian? lockerGuardian,
     DateTime Function()? clock,
   }) : _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
        _vault = VaultService(repository: vaultStore, approval: vaultApproval),
        _ssh = SshService(approval: sshApproval, signer: sshSigner),
+       _lockerGuardian = lockerGuardian ?? const NativeLockerKeyGuardian(),
        _clock = clock;
 
   final AuthTransport _transport;
@@ -53,6 +56,11 @@ class PairedSessionService {
   final AuthorizationConsent _consent;
   final VaultService _vault;
   final SshService _ssh;
+
+  /// Held rather than a built service, because a locker service is bound to one
+  /// credential: the credential id goes into the wrapper's AAD, so the same key
+  /// unwrapping for a different credential must not produce the same bytes.
+  final LockerKeyGuardian _lockerGuardian;
   final DateTime Function()? _clock;
   // Keyed by credential: one loop dials each credential, so one session per
   // credential is live at a time. A desktop holding both a login and a vault
@@ -213,17 +221,25 @@ class PairedSessionService {
         // opened for the vault cannot reach the SSH key by asking for
         // `ssh.sign`, and the other way round.
         final purpose = record.purpose;
-        final response = purpose == CredentialPurpose.ssh
-            ? await _ssh.handle(
-                frame,
-                sessionBinding: outcome.session.sessionBinding,
-                authorized: true,
-              )
-            : await _vault.handle(
-                frame,
-                sessionBinding: outcome.session.sessionBinding,
-                authorized: purpose == CredentialPurpose.vault,
-              );
+        final response = switch (purpose) {
+          CredentialPurpose.ssh => await _ssh.handle(
+            frame,
+            sessionBinding: outcome.session.sessionBinding,
+            authorized: true,
+          ),
+          // The locker asks the Keystore for the gesture itself, naming the
+          // file and the computer in the prompt, so there is no separate
+          // `authorized` to pass: refusing the fingerprint is the refusal.
+          CredentialPurpose.fileLocker => await LockerService(
+            guardian: _lockerGuardian,
+            credentialId: record.credentialId,
+          ).handle(frame, sessionBinding: outcome.session.sessionBinding),
+          _ => await _vault.handle(
+            frame,
+            sessionBinding: outcome.session.sessionBinding,
+            authorized: purpose == CredentialPurpose.vault,
+          ),
+        };
         await outcome.session.send(response);
         return null;
       }

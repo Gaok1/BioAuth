@@ -12,6 +12,7 @@ import '../auth/interactive_authorizer.dart';
 import '../auth/phone_authenticator.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
+import '../locker/locker_service.dart';
 import '../ssh/native_ssh_signer.dart';
 import '../ssh/ssh_service.dart';
 import '../transport/auth_transport.dart';
@@ -44,6 +45,7 @@ class PairedSessionRunner {
     InteractiveVaultApproval? vaultApproval,
     InteractiveSshApproval? sshApproval,
     SshSigner? sshSigner,
+    LockerKeyGuardian? lockerGuardian,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
@@ -56,6 +58,7 @@ class PairedSessionRunner {
          // reason to, and forgetting to pass one must not silently produce a
          // runner that cannot sign.
          sshSigner: sshSigner ?? const NativeSshSigner(),
+         lockerGuardian: lockerGuardian,
          clock: clock,
        ),
        _consent = consent,
