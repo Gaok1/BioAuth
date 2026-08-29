@@ -211,7 +211,7 @@ class CredentialProviderInstrumentationTest {
     /// they hold, so adopting the shell's *permissions* does not lift it.
     /// Running the command adopts the shell's *uid*, which does.
     private fun readProviders(): String? =
-        shell("settings get secure ${'$'}CREDENTIAL_SERVICE").trim()
+        shell("settings get secure $CREDENTIAL_SERVICE").trim()
             .takeUnless { it.isEmpty() || it == "null" }
 
     private fun writeProviders(value: String?) {
@@ -220,9 +220,9 @@ class CredentialProviderInstrumentationTest {
         // shell -- the command is split on spaces and exec'd -- so the `;`
         // separating components needs no quoting and would not survive it.
         if (value == null) {
-            shell("settings delete secure ${'$'}CREDENTIAL_SERVICE")
+            shell("settings delete secure $CREDENTIAL_SERVICE")
         } else {
-            shell("settings put secure ${'$'}CREDENTIAL_SERVICE ${'$'}value")
+            shell("settings put secure $CREDENTIAL_SERVICE $value")
         }
         assertEquals(value, readProviders())
     }
