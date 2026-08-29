@@ -25,7 +25,7 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
-    SetPermissionsParams, VaultCopyParams, VaultCopyResult, VaultFillParams,
+    SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultFillParams,
     VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
@@ -375,6 +375,37 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         "vault.copy" => match parse::<VaultCopyParams>(call) {
             Ok(params) => {
                 let result = service.lock().expect("service mutex").vault_copy(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // The SSH agent's two methods. Off the tray's allow-list for the same
+        // reason `vault.fill` is: the tray has no use for either, and every
+        // method a renderer can reach is a method it can be talked into
+        // calling.
+        "ssh.identities" => {
+            let keys = service.lock().expect("service mutex").ssh_identities();
+            to_reply(
+                id,
+                &json!({
+                    "identities": keys
+                        .into_iter()
+                        .map(|(blob, comment)| json!({
+                            "blob": to_hex(&blob),
+                            "comment": comment,
+                        }))
+                        .collect::<Vec<_>>()
+                }),
+            )
+        }
+
+        "ssh.sign" => match parse::<SshSignParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").ssh_sign(&params);
                 match result {
                     Ok(result) => to_reply(id, &result),
                     Err(error) => Reply::err(id, error.code, error.message),

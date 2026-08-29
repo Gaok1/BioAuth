@@ -350,6 +350,93 @@ pub struct VaultFillResult {
     pub username: String,
 }
 
+/// Ask the phone to sign one SSH authentication request.
+///
+/// `data` is the blob RFC 4252 defines, passed through unchanged: a server
+/// accepts a signature over exactly those bytes and nothing else.
+///
+/// Reachable only from the SSH agent, and not from the tray. The tray has no
+/// use for a signature and every method it can reach is a method a renderer
+/// can be talked into calling.
+///
+/// `Serialize` as well as `Deserialize` so the SSH agent binary builds this
+/// type instead of hand-rolling the same base64 a third time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshSignParams {
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
+    /// What this computer believes the connection is going to, for the phone
+    /// to display. A claim, not a fact — the phone cannot check it.
+    #[serde(default)]
+    pub destination: String,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+/// The raw `r || s` pair. The SSH encoding happens in the agent, so the
+/// `mpint` rule has one implementation rather than two.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshSignResult {
+    #[serde(with = "base64_bytes")]
+    pub signature: Vec<u8>,
+}
+
+/// Bytes over a JSON channel. Base64 rather than an array of numbers: a
+/// two-kilobyte blob as `[1,2,3,...]` is eight kilobytes of JSON.
+mod base64_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let triple = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            out.push(ALPHABET[(triple >> 18) as usize & 63] as char);
+            out.push(ALPHABET[(triple >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 {
+                ALPHABET[(triple >> 6) as usize & 63] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                ALPHABET[triple as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+        serializer.serialize_str(&out)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let mut out = Vec::new();
+        let mut accumulator = 0u32;
+        let mut bits = 0u32;
+        for byte in text.bytes().filter(|byte| *byte != b'=') {
+            let index = ALPHABET
+                .iter()
+                .position(|candidate| *candidate == byte)
+                .ok_or_else(|| serde::de::Error::custom("not base64"))?
+                as u32;
+            accumulator = (accumulator << 6) | index;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((accumulator >> bits) as u8);
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Generate a password and put it straight on the clipboard.
 ///
 /// Every field is optional and falls back to the generator's own default, so a

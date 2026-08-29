@@ -60,7 +60,10 @@ pub enum VaultError {
 }
 
 impl VaultError {
-    fn protocol(reason: impl Into<String>) -> Self {
+    /// Visible to the crate because the SSH client reports the same three
+    /// outcomes over the same frames. One error type rather than two that
+    /// would have to be kept in step by hand.
+    pub(crate) fn protocol(reason: impl Into<String>) -> Self {
         Self::Protocol(reason.into())
     }
 }

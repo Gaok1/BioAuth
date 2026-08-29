@@ -26,9 +26,9 @@ use phone_auth_verifier::{
 use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
-    PairingBootstrap, PermissionSummary, StatusPayload, VaultCopyParams, VaultCopyResult,
-    VaultFillParams, VaultFillResult, VaultItem, VaultListParams, VaultListResult, WebAuthnParams,
-    WebAuthnResult,
+    PairingBootstrap, PermissionSummary, SshSignParams, SshSignResult, StatusPayload,
+    VaultCopyParams, VaultCopyResult, VaultFillParams, VaultFillResult, VaultItem, VaultListParams,
+    VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::clipboard;
@@ -37,6 +37,9 @@ use crate::locker::PhoneCustodian;
 use crate::paths::Paths;
 use crate::secret_memory::SecretBuffer;
 use crate::transport::{Transport, TransportAvailability, TransportRegistry};
+use phone_auth_protocol::ssh;
+
+use crate::ssh_client::PhoneSsh;
 use crate::vault::{PhoneVault, VaultError};
 
 /// How long a pairing bootstrap stays scannable.
@@ -1007,6 +1010,83 @@ impl Service {
             Err(error) => {
                 let error = vault_error(error);
                 self.record_vault("", "list", &device_name, development, Err(&error));
+                Err(error)
+            }
+        }
+    }
+
+    /// The SSH public keys this machine can offer, one per paired credential
+    /// whose purpose is `Ssh`.
+    ///
+    /// Costs no session and no prompt: a paired credential's public key is
+    /// already on this disk, and an agent that woke the phone every time a
+    /// shell started would be an agent people uninstall.
+    pub fn ssh_identities(&self) -> Vec<(Vec<u8>, String)> {
+        self.verifier
+            .store()
+            .devices()
+            .flat_map(|device| {
+                device.credentials.iter().filter_map(move |credential| {
+                    if credential.purpose != CredentialPurpose::Ssh {
+                        return None;
+                    }
+                    // A credential whose key is not a P-256 point is not one
+                    // SSH can use. Skipped rather than reported: it is not an
+                    // error, it is a credential for something else.
+                    let point = ssh::point_from_spki(&credential.public_key).ok()?;
+                    let blob = ssh::encode_public_key(&point).ok()?;
+                    Some((
+                        blob,
+                        format!("{} ({})", device.display_name, credential.credential_id),
+                    ))
+                })
+            })
+            .collect()
+    }
+
+    /// Asks the phone to sign one SSH authentication request.
+    ///
+    /// The blob travels as-is, because a server accepts a signature over
+    /// exactly those bytes. The phone re-parses it and refuses anything that
+    /// is not a `publickey` userauth request — this side cannot be the only
+    /// thing standing between a compromised desktop and an arbitrary
+    /// signature.
+    pub fn ssh_sign(&mut self, params: &SshSignParams) -> Result<SshSignResult, ServiceError> {
+        let (device_id, _credential_id) =
+            self.select_service_credential("ssh", "SSH", params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let signed = PhoneSsh::new(&mut session, self.config.verifier_name.clone())
+            .sign(&params.data, &params.destination);
+        let _ = session.close();
+
+        match signed {
+            Ok(signature) => {
+                self.record_application(
+                    "ssh",
+                    "sign",
+                    params.destination.clone(),
+                    &device_name,
+                    development,
+                    Ok(()),
+                );
+                Ok(SshSignResult { signature })
+            }
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_application(
+                    "ssh",
+                    "sign",
+                    params.destination.clone(),
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
                 Err(error)
             }
         }
