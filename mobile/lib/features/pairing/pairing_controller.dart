@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/pairing/pairing_service.dart';
+import '../../core/protocol/enrolment.dart';
 
 /// Where a pairing attempt is.
 ///
@@ -14,6 +15,7 @@ class PairingState {
     required this.stage,
     this.verificationCode,
     this.verifierId,
+    this.purpose,
     this.message,
   });
 
@@ -22,6 +24,14 @@ class PairingState {
   final PairingStage stage;
   final String? verificationCode;
   final String? verifierId;
+
+  /// What the credential being enrolled is for, as the desktop's code asked.
+  ///
+  /// Carried into the confirmation because the six digits only prove *which*
+  /// computer is on the other end. What that computer will be able to ask for
+  /// is the other half of the decision, and it is the half the user cannot
+  /// work out from the screen otherwise.
+  final CredentialPurpose? purpose;
   final String? message;
 
   bool get isBusy => stage == PairingStage.connecting;
@@ -64,6 +74,7 @@ class PairingController extends Notifier<PairingState> {
         stage: PairingStage.awaitingCode,
         verificationCode: session.verificationCode,
         verifierId: session.proposed.verifierId,
+        purpose: session.proposed.purpose,
       );
     } on PairingException catch (error) {
       if (attemptId == _attemptId) _fail(error.message);

@@ -528,6 +528,12 @@ pub struct PairingBootstrap {
     pub endpoint: String,
     /// The scannable string.
     pub qr_payload: String,
+    /// What the credential this pairing enrols will be for, as a service name.
+    ///
+    /// Echoed back so the person at the keyboard can see that `--service ssh`
+    /// was understood before they scan: the difference is invisible in the
+    /// picture, and a code for the wrong purpose enrols the wrong key.
+    pub service: String,
     /// Set when the exchange cannot actually be completed yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_on: Option<String>,

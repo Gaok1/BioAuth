@@ -108,8 +108,9 @@ class NativeAuthorizationCredential implements AuthorizationCredential {
   final SecureAuthenticator _authenticator;
 
   @override
-  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})>
-  describe(CredentialPurpose purpose) async {
+  Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe(
+    CredentialPurpose purpose,
+  ) async {
     final key = purpose == CredentialPurpose.ssh
         ? await _authenticator.generateSshKey()
         : await _authenticator.generateKey();

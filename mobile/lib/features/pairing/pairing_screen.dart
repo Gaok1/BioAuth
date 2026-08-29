@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/protocol/enrolment.dart';
 import '../../shared/page_heading.dart';
 import '../../shared/pairing_qr_scanner.dart';
 import '../../shared/verification_code_panel.dart';
@@ -33,6 +34,7 @@ class PairingScreen extends ConsumerWidget {
             PairingStage.awaitingCode => VerificationCodePanel(
               code: state.verificationCode!,
               verifierId: state.verifierId!,
+              purpose: state.purpose ?? CredentialPurpose.authorization,
               onConfirm: controller.confirm,
               onReject: controller.reject,
             ),

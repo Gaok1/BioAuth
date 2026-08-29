@@ -318,10 +318,7 @@ impl Service {
     /// being enrolled will approve a `sudo` or sign an SSH login, and enrolling
     /// one as the other is exactly the credential reuse the purposes exist to
     /// prevent.
-    pub fn begin_pairing_for(
-        &mut self,
-        service: &str,
-    ) -> Result<PairingBootstrap, ServiceError> {
+    pub fn begin_pairing_for(&mut self, service: &str) -> Result<PairingBootstrap, ServiceError> {
         let network = self.network.as_ref().ok_or_else(|| {
             ServiceError::new(
                 "no-transport",
@@ -371,6 +368,7 @@ impl Service {
             expires_at_ms: bootstrap.expires_at_ms,
             endpoint: bootstrap.endpoint.clone(),
             qr_payload: bootstrap.to_uri(),
+            service: service.to_owned(),
             blocked_on: None,
         })
     }
