@@ -77,12 +77,40 @@ class SharedPreferencesPairingStore implements PairingStore {
     // credentials — a login one and a vault one are different keys with
     // different powers — and keying this by verifier meant pairing the second
     // silently deleted the first, with nothing on screen to say so.
-    final records =
-        (await load())
-            .where((existing) => existing.credentialId != record.credentialId)
-            .toList()
-          ..add(record);
+    final records = [
+      for (final existing in await load())
+        if (existing.credentialId != record.credentialId)
+          _movedTo(existing, record),
+      record,
+    ];
     await _persist(preferences, records);
+  }
+
+  /// Points a desktop's other credentials at the address it just answered on.
+  ///
+  /// The address belongs to the computer, not to the credential, and it is the
+  /// one thing in a record that goes stale on its own: the router hands out a
+  /// new lease, the machine moves from Wi-Fi to cable, and every credential
+  /// paired before that is left dialling where it used to be. Only the one
+  /// just re-paired learned the new address, so the login credential of a
+  /// computer whose vault was re-paired kept failing over to BLE for good.
+  ///
+  /// Only for records carrying the same identity key, so this is always "the
+  /// same computer moved" and never "something else answered to its name".
+  /// Even then it grants nothing: an address is where to dial, and the
+  /// handshake still has to be against the key already stored here.
+  static PairingRecord _movedTo(PairingRecord existing, PairingRecord fresh) =>
+      existing.verifierId == fresh.verifierId &&
+          _sameKey(existing.verifierIdentitySpki, fresh.verifierIdentitySpki)
+      ? existing.copyWith(endpoint: fresh.endpoint)
+      : existing;
+
+  static bool _sameKey(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// Drops every credential belonging to one desktop.
