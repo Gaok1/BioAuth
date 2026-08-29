@@ -71,6 +71,7 @@ internal class VaultStoreChannel(
         if (!storage.exists()) {
             when (request) {
                 is Request.List -> succeed(VaultStoreData.page(emptyList(), request.cursor))
+                is Request.ListAll -> succeed(VaultStoreData.all(emptyList()))
                 is Request.Create -> write(emptyList(), request)
                 // A vault with no file is an empty vault, not a broken one.
                 // Exporting it yields nothing and restoring into it is the
@@ -92,6 +93,7 @@ internal class VaultStoreChannel(
     private fun process(request: Request, items: List<VaultItem>) {
         when (request) {
             is Request.List -> succeed(VaultStoreData.page(items, request.cursor))
+            is Request.ListAll -> succeed(VaultStoreData.all(items))
             is Request.Fetch -> {
                 val item = VaultStoreData.fetch(items, request.id)
                 succeed(mapOf("id" to item.id, "revision" to item.revision, "secret" to item.secret))
@@ -208,9 +210,13 @@ internal class VaultStoreChannel(
         prompt = BiometricPrompt(fragmentActivity, callback).also {
             it.authenticate(
                 BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Unlock BioAuth vault")
+                    // In the app's language. This dialog is drawn by the
+                    // system over a screen that is entirely in Portuguese, and
+                    // a prompt the user cannot read is a prompt they answer by
+                    // guessing which button dismisses it.
+                    .setTitle("Desbloquear o cofre BioAuth")
                     .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                    .setNegativeButtonText("Cancel")
+                    .setNegativeButtonText("Cancelar")
                     .build(),
                 BiometricPrompt.CryptoObject(cipher),
             )
@@ -221,6 +227,7 @@ internal class VaultStoreChannel(
         val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
         return when (call.method) {
             "list" -> Request.List(arguments.optionalStringOrNull("cursor"))
+            "listAll" -> Request.ListAll
             "fetch" -> Request.Fetch(arguments.requiredString("id"))
             "create" -> Request.Create(VaultItemInput.from(arguments["item"], requireId = false))
             "update" -> Request.Update(
@@ -290,6 +297,15 @@ internal class VaultStoreChannel(
 
     private sealed interface Request {
         data class List(val cursor: String?) : Request
+
+        /**
+         * Every item's metadata, for one unlock.
+         *
+         * Paging is what the desktop needs, because a frame has a size cap.
+         * The phone's own screen has no such cap and does need every item, and
+         * asking for them a page at a time cost one biometric prompt per page.
+         */
+        data object ListAll : Request
         data class Fetch(val id: String) : Request
         data class Create(val item: VaultItemInput) : Request
         data class Update(val item: VaultItemInput, val expectedRevision: Int) : Request

@@ -145,10 +145,16 @@ abstract class VaultStore {
 
   /// One item's metadata, or null when nothing carries that id.
   ///
-  /// Costs no biometric prompt, which is the whole point: the approval sheet
-  /// has to name the item *before* the user is asked to unlock it, and going
-  /// through [fetch] to learn the name would release the secret to draw the
-  /// screen that asks whether to release the secret.
+  /// Costs one unlock and releases no secret, which is the point: the approval
+  /// sheet has to name the item *before* the user is asked to release it, and
+  /// going through [fetch] to learn the name would hand over the secret in
+  /// order to draw the screen that asks whether to hand over the secret.
+  ///
+  /// One unlock, not none. The metadata lives inside the encrypted blob, so
+  /// reading a name needs the key, and the key is auth-per-use -- which means
+  /// a request from a desktop raises a prompt before the sheet that explains
+  /// it. That is the cost of keeping metadata sealed; what it must not also be
+  /// is a prompt *per page*, which is why [listAll] is one call.
   Future<VaultItemSummary?> summary(String id) async {
     for (final item in await listAll()) {
       if (item.id == id) return item;
@@ -282,6 +288,39 @@ class NativeVaultStore extends VaultStore {
       throw const FormatException('Cursor inválido do cofre');
     }
     return VaultPage(items: items, nextCursor: next as String?);
+  }
+
+  /// Every item in one unlock, rather than one unlock per page.
+  ///
+  /// The inherited walk is correct and costs a biometric prompt per page,
+  /// because the Keystore key is auth-per-use and every trip through the
+  /// channel decrypts the blob again. Opening a vault of a hundred items asked
+  /// for four fingerprints in a row, and cancelling any of them left the vault
+  /// shut saying the authentication was cancelled -- which is a vault that,
+  /// from the outside, does not open. [exportAll] is overridden for the same
+  /// reason and this one runs on every unlock.
+  @override
+  Future<List<VaultItemSummary>> listAll() async {
+    final raw = await _channel.invokeMapMethod<Object?, Object?>(
+      'listAll',
+      <String, Object?>{},
+    );
+    if (raw == null || raw['items'] is! List) {
+      throw const FormatException('Resposta inválida do cofre');
+    }
+    final items = raw['items']! as List;
+    // The same ceiling the native store enforces on a restore. A store that
+    // hands back more than a vault can hold is not a vault this build wrote.
+    if (items.length > maxVaultItems) {
+      throw const FormatException('Cofre maior do que o formato permite');
+    }
+    return [
+      for (final value in items)
+        if (value is Map)
+          VaultItemSummary.fromMap(value.cast<Object?, Object?>())
+        else
+          throw const FormatException('Item inválido no cofre'),
+    ];
   }
 
   @override

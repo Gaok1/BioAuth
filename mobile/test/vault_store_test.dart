@@ -31,15 +31,12 @@ void main() {
             };
           });
 
-      expect(
-        (await const NativeVaultStore().listAll()).map((item) => item.id),
-        ['one', 'two'],
-      );
+      expect((await const _PagedStore().listAll()).map((item) => item.id), [
+        'one',
+        'two',
+      ]);
       cyclic = true;
-      await expectLater(
-        const NativeVaultStore().listAll(),
-        throwsFormatException,
-      );
+      await expectLater(const _PagedStore().listAll(), throwsFormatException);
     },
   );
 
@@ -64,7 +61,7 @@ void main() {
           };
         });
 
-    final items = await const NativeVaultStore().listAll();
+    final items = await const _PagedStore().listAll();
 
     expect(items, hasLength(maxVaultItems));
     expect(items.last.id, 'item-${maxVaultItems - 1}');
@@ -85,8 +82,74 @@ void main() {
           };
         });
 
+    expect(const _PagedStore().listAll(), throwsFormatException);
+  });
+
+  /// The whole reason [NativeVaultStore] does not use the walk above.
+  ///
+  /// The Keystore key is auth-per-use, so every trip through the channel is a
+  /// biometric prompt. Walking pages asked for one per thirty-two items, and
+  /// cancelling any of them left the vault shut reporting a cancelled
+  /// authentication -- so a vault of a hundred items looked like a vault that
+  /// would not open.
+  test('the native store asks for the whole vault once', () async {
+    final asked = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          asked.add(call.method);
+          return {
+            'items': [
+              for (var index = 0; index < 70; index++) _summary('item-$index'),
+            ],
+          };
+        });
+
+    final items = await const NativeVaultStore().listAll();
+
+    expect(asked, ['listAll']);
+    expect(items, hasLength(70));
+    expect(items.first.id, 'item-0');
+  });
+
+  test('a native listing larger than a vault may be is refused', () {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          return {
+            'items': [
+              for (var index = 0; index <= maxVaultItems; index++)
+                _summary('item-$index'),
+            ],
+          };
+        });
+
     expect(const NativeVaultStore().listAll(), throwsFormatException);
   });
+}
+
+/// The inherited walk, over the real channel.
+///
+/// [NativeVaultStore] overrides `listAll` to ask once. The walk is still what
+/// any store that implements only [VaultStore.listPage] gets, and its bounds
+/// are what the tests above are about.
+class _PagedStore extends VaultStore {
+  const _PagedStore();
+
+  @override
+  Future<VaultPage> listPage([String? cursor]) =>
+      const NativeVaultStore().listPage(cursor);
+
+  @override
+  Future<VaultSecret> fetch(String id) => throw UnimplementedError();
+
+  @override
+  Future<VaultWrite> create(VaultItemInput item) => throw UnimplementedError();
+
+  @override
+  Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> delete(VaultItemSummary item) => throw UnimplementedError();
 }
 
 Map<String, Object> _summary(String id) => {

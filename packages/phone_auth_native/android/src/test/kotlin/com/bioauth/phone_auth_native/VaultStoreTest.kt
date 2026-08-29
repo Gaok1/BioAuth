@@ -87,6 +87,29 @@ class VaultStoreTest {
     }
 
     @Test
+    fun `every item comes back in one answer, in the order the pages use`() {
+        // The paged walk is one biometric prompt per page, because the key is
+        // auth-per-use and every call decrypts the blob again. This is the
+        // whole vault for one prompt, and it has to agree with `page` about
+        // the order or the same vault would list differently on two screens.
+        val items = (0 until 70).map { index ->
+            item(id = "item-$index", updatedAtMs = index.toLong(), secret = "secret-$index")
+        }
+        val all = VaultStoreData.all(items)["items"] as List<*>
+        assertEquals(70, all.size)
+        assertFalse((all.first() as Map<*, *>).containsKey("secret"))
+
+        val paged = mutableListOf<Any?>()
+        var cursor: String? = null
+        do {
+            val page = VaultStoreData.page(items, cursor)
+            paged.addAll(page["items"] as List<*>)
+            cursor = page["nextCursor"] as String?
+        } while (cursor != null)
+        assertEquals(all, paged.toList())
+    }
+
+    @Test
     fun `item validation enforces the protocol bounds`() {
         assertEquals(0, inputMap()["kind"])
         assertFailsWith<VaultStoreFailure> {

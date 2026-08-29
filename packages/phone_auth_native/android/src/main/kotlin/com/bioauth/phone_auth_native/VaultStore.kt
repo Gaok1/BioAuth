@@ -200,11 +200,31 @@ internal object VaultStoreData {
         val offset = if (cursor.isNullOrEmpty()) 0 else cursor.toIntOrNull()
             ?: invalid("cursor is invalid")
         if (offset !in 0..items.size) invalid("cursor is invalid")
-        val sorted = items.sortedWith(compareByDescending<VaultItem> { it.updatedAtMs }.thenBy { it.id })
+        val sorted = ordered(items)
         val page = sorted.drop(offset).take(PAGE_SIZE)
         val next = (offset + page.size).takeIf { it < sorted.size }?.toString()
         return mapOf("items" to page.map(VaultItem::summary), "nextCursor" to next)
     }
+
+    /**
+     * Every item's metadata in one answer, in the order [page] hands them out.
+     *
+     * The key is auth-per-use, so each trip through the channel costs a
+     * biometric prompt and a paged walk costs one per [PAGE_SIZE] items.
+     * Opening a vault of a hundred items asked for four fingerprints in a row,
+     * and cancelling any of them left the vault shut reporting a cancelled
+     * authentication -- a vault that, from the outside, does not open. Same
+     * reasoning as [export], which is one call for exactly this reason.
+     *
+     * Metadata only. The secrets stay behind [fetch], one at a time, in front
+     * of a user who was told which one.
+     */
+    fun all(items: List<VaultItem>): Map<String, Any?> =
+        mapOf("items" to ordered(items).map(VaultItem::summary))
+
+    /** Newest first, ties broken by id so the order is total and stable. */
+    private fun ordered(items: List<VaultItem>) =
+        items.sortedWith(compareByDescending<VaultItem> { it.updatedAtMs }.thenBy { it.id })
 
     private fun VaultItemInput.item(id: String, revision: Int, nowMs: Long) =
         VaultItem(id, revision, kind, name, username, uri, secret, nowMs)
