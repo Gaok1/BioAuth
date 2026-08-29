@@ -67,6 +67,10 @@ COMMANDS:
                                crosses IPC and is never printed here.
     vault generate             Generate a password straight to the clipboard
 
+    ssh authorized-key         Print the `authorized_keys` line for each SSH
+                               credential this phone holds. Paste it into a
+                               server; the private half never leaves the phone.
+
 OPTIONS:
     --root <DIR>               Override the agent's config/data/runtime root
     --credential <ID>          Choose which paired credential to use
@@ -295,6 +299,7 @@ fn run(cli: Cli) -> u8 {
         "authorize" => authorize(&mut client, &cli),
         "locker" => locker(&mut client, &cli),
         "vault" => vault(&mut client, &cli),
+        "ssh" => ssh(&mut client, &cli),
         other => {
             eprintln!("phone-auth: unknown command `{other}`\n\n{USAGE}");
             EXIT_USAGE
@@ -813,6 +818,69 @@ fn print_locker(action: &str, value: &Value) {
             "phone-auth: WARNING — this was authorized by the development simulator, \
              not by a phone"
         );
+    }
+}
+
+/// The SSH subcommands.
+///
+/// Reading only. There is nothing here that signs: signing belongs to
+/// `phone-auth-ssh-agent`, where `ssh` connects and where a user can be asked.
+fn ssh(client: &mut AgentClient, cli: &Cli) -> u8 {
+    match cli.args.first().map(String::as_str) {
+        // The one step between having this installed and being able to log in.
+        // Without it a user has to work out how to derive the line themselves,
+        // which is where people give up and generate an ordinary key —
+        // defeating the point of the phone holding it.
+        Some("authorized-key") => match client.call("ssh.identities", json!({})) {
+            Ok(value) => {
+                let identities = value["identities"].as_array().cloned().unwrap_or_default();
+                if identities.is_empty() {
+                    eprintln!(
+                        "phone-auth: no SSH credential is paired.\n\
+                         phone-auth: pair a phone and enrol a credential for \
+                         `ssh`."
+                    );
+                    return EXIT_DENIED;
+                }
+                if cli.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&value).unwrap_or_default()
+                    );
+                    return EXIT_GRANTED;
+                }
+                for identity in identities {
+                    let Some(blob) = identity["blob"].as_str() else {
+                        continue;
+                    };
+                    let Ok(blob) = phone_auth_protocol::encoding::from_hex(blob) else {
+                        continue;
+                    };
+                    println!(
+                        "{}",
+                        phone_auth_protocol::ssh::authorized_keys_line(
+                            &blob,
+                            identity["comment"].as_str().unwrap_or("phoneauth"),
+                        )
+                    );
+                }
+                eprintln!(
+                    "\nphone-auth: append a line to ~/.ssh/authorized_keys on \
+                     the server.\n\
+                     phone-auth: the private half stays on the phone, and \
+                     every login asks it."
+                );
+                EXIT_GRANTED
+            }
+            Err(error) => {
+                eprintln!("phone-auth: {error}");
+                EXIT_UNAVAILABLE
+            }
+        },
+        _ => {
+            eprintln!("phone-auth: ssh needs `authorized-key`");
+            EXIT_USAGE
+        }
     }
 }
 

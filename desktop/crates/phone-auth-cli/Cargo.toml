@@ -19,4 +19,8 @@ path = "src/main.rs"
 # the agent stopped. Recovery that needs a running daemon is not recovery.
 phone-auth-locker.workspace = true
 phone-auth-agent.workspace = true
+
+# For the SSH `authorized_keys` line. The encoding lives in the protocol crate
+# so there is one implementation of it rather than one per caller.
+phone-auth-protocol.workspace = true
 serde_json.workspace = true
