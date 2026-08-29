@@ -562,11 +562,25 @@ pub fn ensure_sole_regular_file(path: &Path, will_be_removed: bool) -> Result<()
 /// answer that cannot be silently wrong; following the link and deleting the
 /// target would be a locker that deletes files nobody named.
 fn sole_regular_file(path: &Path, sole_name: bool) -> Result<std::fs::Metadata> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    let file_type = metadata.file_type();
-    if file_type.is_symlink() {
-        return Err(LockerError::NotARegularFile("a symbolic link"));
+    // `symlink_metadata` describes the link itself, which is what the checks
+    // below need whenever the link is the thing being acted on.
+    let mut metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        // Gated on `sole_name` for the same reason the hard-link check below
+        // is, and the paragraph above says why: the danger is removing or
+        // renaming a name that is not the only way to reach the bytes.
+        if sole_name {
+            return Err(LockerError::NotARegularFile("a symbolic link"));
+        }
+        // An operation that only reads takes no name away, so here the link is
+        // just another way to spell the path and what matters is what it
+        // points at. Describing the target is the whole point of following it:
+        // judging the link itself would reject every one of them at the
+        // `is_file` check below, which is a refusal wearing a different
+        // message rather than a different decision.
+        metadata = std::fs::metadata(path)?;
     }
+    let file_type = metadata.file_type();
     if file_type.is_dir() {
         return Err(LockerError::NotARegularFile("a directory"));
     }
