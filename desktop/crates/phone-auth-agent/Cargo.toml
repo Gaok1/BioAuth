@@ -33,6 +33,11 @@ zeroize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# The SSH host-key fingerprint the phone shows must be the exact string `ssh`
+# prints, or a user comparing the two is not comparing anything. Already a
+# workspace dependency for the handshake.
+sha2.workspace = true
+
 # Only the simulator signs anything on this side; a production agent verifies
 # and never holds an authorization key.
 p256 = { workspace = true, optional = true }

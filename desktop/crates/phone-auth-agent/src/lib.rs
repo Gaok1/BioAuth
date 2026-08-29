@@ -24,6 +24,8 @@ pub mod secret_memory;
 pub mod service;
 #[cfg(feature = "dev-simulator")]
 pub mod simulator;
+pub mod ssh_agent;
+pub mod ssh_policy;
 pub mod transport;
 pub mod vault;
 
