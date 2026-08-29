@@ -273,6 +273,58 @@ void main() {
   // had raised, the healthy loop's prompt was cancelled by the other loop's
   // perfectly normal reconnect -- the sheet vanished mid-tap and the desktop
   // that had asked was told the phone failed.
+  // Every path a paired session takes ends in a prompt or a sheet, and every
+  // one of them waited for it forever. The phone goes in a pocket, the sheet
+  // sits behind a game, and that credential's loop stays on a session the
+  // desktop gave up on two minutes ago -- connected, by the only measure the
+  // list has, to a phone that will never answer. A request cannot be valid for
+  // longer than the protocol's ceiling, so past it there is nothing left to
+  // answer and the prompt has to come down with the session.
+  test('a request nobody answers is not held forever', () async {
+    final now = DateTime.utc(2026, 8, 27, 12);
+    final session = _AskingSession();
+    final consent = InteractiveAuthorizer(onRequest: (_) {});
+    final runner = PairedSessionRunner(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: consent,
+      // The window itself is two and a half minutes; what is under test is
+      // that it exists and that the session goes when it passes.
+      answerTimeout: const Duration(milliseconds: 20),
+      clock: () => now,
+    );
+    addTearDown(runner.stop);
+
+    runner.sync([_record]);
+    await session.listening.future;
+    session.ask(
+      AuthenticationRequest(
+        requestId: 'request-1',
+        verifierId: 'desktop-1',
+        verifierName: 'Desktop-NixOS',
+        credentialId: _record.credentialId,
+        challenge: Uint8List.fromList(List<int>.generate(32, (i) => i)),
+        origin: 'replaced by session',
+        service: 'sudo',
+        action: 'nixos-rebuild switch',
+        resource: 'Desktop-NixOS',
+        user: 'alice',
+        issuedAt: now,
+        expiresAt: now.add(const Duration(minutes: 1)),
+        sessionBinding: Uint8List(32),
+      ),
+    );
+    await _until(() => consent.pendingRequestIds.contains('request-1'));
+
+    await _until(() => !consent.pendingRequestIds.contains('request-1'));
+
+    expect(
+      session.closed,
+      isTrue,
+      reason: 'the session went with the prompt it was holding',
+    );
+  });
+
   test(
     'one session ending does not cancel another session\'s prompt',
     () async {

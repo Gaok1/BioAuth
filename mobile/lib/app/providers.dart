@@ -154,7 +154,11 @@ final vaultApprovalProvider = Provider<InteractiveVaultApproval>((ref) {
         approval.settle(request.id, approved: false);
         return;
       }
-      final approved = await showVaultApprovalSheet(context, request);
+      final approved = await showVaultApprovalSheet(
+        context,
+        request,
+        withdrawn: approval.answerFor(request.id),
+      );
       approval.settle(request.id, approved: approved);
     },
   );
@@ -178,7 +182,11 @@ final sshApprovalProvider = Provider<InteractiveSshApproval>((ref) {
       }
       approval.settle(
         request.id,
-        approved: await showSshApprovalSheet(context, request),
+        approved: await showSshApprovalSheet(
+          context,
+          request,
+          withdrawn: approval.answerFor(request.id),
+        ),
       );
     },
   );

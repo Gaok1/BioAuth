@@ -16,10 +16,16 @@ import '../../core/vault/vault_approval.dart';
 /// Dismissing it — back gesture, tap outside — resolves false. There is no
 /// path through this function that returns true without a tap on the button
 /// that says so.
+/// [withdrawn] is the answer to this request from anywhere -- the session that
+/// raised it dying, the app leaving the foreground. It resolves the moment the
+/// request stops being answerable, and the sheet takes itself down: buttons
+/// that no longer reach a session must not look live, because tapping them
+/// looks to the user exactly like approving.
 Future<bool> showVaultApprovalSheet(
   BuildContext context,
-  VaultApprovalRequest request,
-) async {
+  VaultApprovalRequest request, {
+  Future<bool>? withdrawn,
+}) async {
   final approved = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
@@ -27,26 +33,43 @@ Future<bool> showVaultApprovalSheet(
     // Not dismissible by accident, but still dismissible: a sheet the user
     // cannot get rid of is a sheet they will approve to make it go away.
     isDismissible: true,
-    builder: (context) => _VaultApprovalSheet(request: request),
+    builder: (context) =>
+        _VaultApprovalSheet(request: request, withdrawn: withdrawn),
   );
   return approved ?? false;
 }
 
-class _VaultApprovalSheet extends StatelessWidget {
-  const _VaultApprovalSheet({required this.request});
+class _VaultApprovalSheet extends StatefulWidget {
+  const _VaultApprovalSheet({required this.request, this.withdrawn});
 
   final VaultApprovalRequest request;
+  final Future<bool>? withdrawn;
+
+  @override
+  State<_VaultApprovalSheet> createState() => _VaultApprovalSheetState();
+}
+
+class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
+  @override
+  void initState() {
+    super.initState();
+    // Answered elsewhere. When the user is the one answering, the sheet is
+    // already gone by the time this resolves, so `mounted` is the whole guard.
+    widget.withdrawn?.then((_) {
+      if (mounted) Navigator.of(context).pop(false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final domain = request.domain;
+    final domain = widget.request.domain;
 
     // Scrolls, because the sheet is sized by its contents and its contents are
     // sized by the system font and by names the computer chose. Past a certain
     // height a `Column` does not shrink -- it puts its last children below the
-    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
+    // bottom edge, and here those are "Aprovar" and "Recusar". A widget.request that
     // can be neither approved nor refused looks, from the computer, like a
     // phone that stopped answering.
     return SingleChildScrollView(
@@ -69,7 +92,7 @@ class _VaultApprovalSheet extends StatelessWidget {
           Row(
             children: [
               Icon(
-                request.operation.releasesSecret
+                widget.request.operation.releasesSecret
                     ? Icons.content_paste_go
                     : Icons.edit_outlined,
                 color: colors.primary,
@@ -90,11 +113,11 @@ class _VaultApprovalSheet extends StatelessWidget {
           // The computer's own claim about its name, framed as a claim. The
           // phone verified the *pairing*, not that the name is honest, and the
           // wording must not promise more than that.
-          _Field(label: 'Computador', value: request.verifierName),
-          _Field(label: 'Operação', value: request.operation.label),
-          _Field(label: 'Item', value: request.itemName, emphasis: true),
-          if (request.username.isNotEmpty)
-            _Field(label: 'Usuário', value: request.username),
+          _Field(label: 'Computador', value: widget.request.verifierName),
+          _Field(label: 'Operação', value: widget.request.operation.label),
+          _Field(label: 'Item', value: widget.request.itemName, emphasis: true),
+          if (widget.request.username.isNotEmpty)
+            _Field(label: 'Usuário', value: widget.request.username),
           if (domain.isNotEmpty) _Field(label: 'Domínio', value: domain),
 
           const SizedBox(height: 16),
@@ -111,7 +134,7 @@ class _VaultApprovalSheet extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    request.operation.releasesSecret
+                    widget.request.operation.releasesSecret
                         ? 'Se você aprovar, a senha vai para a área de '
                               'transferência desse computador. O telefone '
                               'deixa de controlá-la a partir daí.'
@@ -128,7 +151,7 @@ class _VaultApprovalSheet extends StatelessWidget {
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
             child: Text(
-              request.operation.releasesSecret ? 'Aprovar cópia' : 'Aprovar',
+              widget.request.operation.releasesSecret ? 'Aprovar cópia' : 'Aprovar',
             ),
           ),
           const SizedBox(height: 8),

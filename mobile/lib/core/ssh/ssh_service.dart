@@ -205,6 +205,12 @@ class InteractiveSshApproval implements SshApproval {
     }
   }
 
+  /// This request's answer, from whichever side ends up giving it.
+  ///
+  /// Handed to the sheet so it can close itself when the answer came from
+  /// somewhere else — the session that raised it died, or the app went away.
+  Future<bool>? answerFor(String requestId) => _pending[requestId]?.future;
+
   /// Refuses everything outstanding. A sheet the user can no longer see must
   /// not stay answerable.
   void abandonAll() {

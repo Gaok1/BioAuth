@@ -125,6 +125,14 @@ class InteractiveVaultApproval implements VaultApproval {
   /// The sheet went away without an answer — dismissed, or the session died.
   void abandon(String requestId) => settle(requestId, approved: false);
 
+  /// This request's answer, from whichever side ends up giving it.
+  ///
+  /// Handed to the sheet so it can close itself when the answer came from
+  /// somewhere else: a session that died, or the app leaving the foreground.
+  /// Null once the request is settled, which is also the answer to "is this
+  /// still worth showing".
+  Future<bool>? answerFor(String requestId) => _pending[requestId]?.future;
+
   /// Refuses everything outstanding. Called when the app leaves the
   /// foreground: a sheet the user cannot see must not stay answerable.
   void abandonAll() {

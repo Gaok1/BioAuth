@@ -19,35 +19,58 @@ import '../../core/ssh/ssh_service.dart';
 ///
 /// Dismissing resolves false. No path returns true without a tap on the button
 /// that says so.
+/// [withdrawn] is the answer to this request from anywhere -- the session that
+/// raised it dying, the app leaving the foreground. It resolves the moment the
+/// request stops being answerable, and the sheet takes itself down: buttons
+/// that no longer reach a session must not look live, because tapping them
+/// looks to the user exactly like approving.
 Future<bool> showSshApprovalSheet(
   BuildContext context,
-  SshApprovalRequest request,
-) async {
+  SshApprovalRequest request, {
+  Future<bool>? withdrawn,
+}) async {
   final approved = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     isDismissible: true,
-    builder: (context) => _SshApprovalSheet(request: request),
+    builder: (context) =>
+        _SshApprovalSheet(request: request, withdrawn: withdrawn),
   );
   return approved ?? false;
 }
 
-class _SshApprovalSheet extends StatelessWidget {
-  const _SshApprovalSheet({required this.request});
+class _SshApprovalSheet extends StatefulWidget {
+  const _SshApprovalSheet({required this.request, this.withdrawn});
 
   final SshApprovalRequest request;
+  final Future<bool>? withdrawn;
+
+  @override
+  State<_SshApprovalSheet> createState() => _SshApprovalSheetState();
+}
+
+class _SshApprovalSheetState extends State<_SshApprovalSheet> {
+  @override
+  void initState() {
+    super.initState();
+    // Answered elsewhere. When the user is the one answering, the sheet is
+    // already gone by the time this resolves, so `mounted` is the whole guard.
+    widget.withdrawn?.then((_) {
+      if (mounted) Navigator.of(context).pop(false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final named = request.destination.isNotEmpty;
+    final named = widget.request.destination.isNotEmpty;
 
     // Scrolls, because the sheet is sized by its contents and its contents are
     // sized by the system font and by names the computer chose. Past a certain
     // height a `Column` does not shrink -- it puts its last children below the
-    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
+    // bottom edge, and here those are "Aprovar" and "Recusar". A widget.request that
     // can be neither approved nor refused looks, from the computer, like a
     // phone that stopped answering.
     return SingleChildScrollView(
@@ -83,15 +106,15 @@ class _SshApprovalSheet extends StatelessWidget {
           ),
           const SizedBox(height: 18),
 
-          _Field(label: 'Computador', value: request.verifierName),
-          _Field(label: 'Entrar como', value: request.user, emphasis: true),
+          _Field(label: 'Computador', value: widget.request.verifierName),
+          _Field(label: 'Entrar como', value: widget.request.user, emphasis: true),
           _Field(
             label: 'Servidor',
             // The fingerprint, not a hostname: it is what the client can prove
             // and what `ssh` itself prints when it asks about an unknown host,
             // so the two can be compared.
             value: named
-                ? request.destination
+                ? widget.request.destination
                 : 'não informado por este computador',
             emphasis: named,
           ),

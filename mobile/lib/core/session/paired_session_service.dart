@@ -32,6 +32,25 @@ import 'phone_auth_core.dart';
 /// while the desktop still considers the previous session live.
 const Duration pairedSessionIdleTimeout = Duration(minutes: 4);
 
+/// The longest a session may spend waiting for the person to answer.
+///
+/// The protocol caps a request's validity at two minutes and the phone allows
+/// another thirty seconds of clock skew when one arrives, so past this the
+/// desktop has stopped waiting no matter what happens on the phone next.
+const Duration pairedSessionAnswerTimeout = Duration(minutes: 2, seconds: 30);
+
+/// Thrown when nobody answered inside the window the desktop gave.
+///
+/// Not a [TimeoutException]: an idle session that was never asked anything is
+/// ordinary and reconnects quietly, and this is a request that was asked and
+/// went unanswered — the sheets it raised have to come down with it.
+class PairedSessionAnswerExpired implements Exception {
+  const PairedSessionAnswerExpired();
+
+  @override
+  String toString() => 'O pedido expirou antes de ser respondido';
+}
+
 class PairedSessionService {
   PairedSessionService({
     required AuthTransport transport,
@@ -42,25 +61,42 @@ class PairedSessionService {
     SshApproval? sshApproval,
     SshSigner? sshSigner,
     LockerKeyGuardian? lockerGuardian,
+    Duration? answerTimeout,
     DateTime Function()? clock,
-  }) : _transport = transport,
+  }) : _answerTimeout = answerTimeout ?? pairedSessionAnswerTimeout,
+       _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
-       _vault = VaultService(repository: vaultStore, approval: vaultApproval),
-       _ssh = SshService(approval: sshApproval, signer: sshSigner),
+       _vaultStore = vaultStore,
+       _vaultApproval = vaultApproval,
+       _sshApproval = sshApproval,
+       _sshSigner = sshSigner,
        _lockerGuardian = lockerGuardian ?? const NativeLockerKeyGuardian(),
        _clock = clock;
 
   final AuthTransport _transport;
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
-  final VaultService _vault;
-  final SshService _ssh;
+  /// The parts of the vault and ssh services rather than the services.
+  ///
+  /// Both are built per session, because the approval they raise has to be
+  /// attributable to the session that raised it: a session that dies with a
+  /// sheet on screen must refuse that sheet and no other.
+  final VaultStore? _vaultStore;
+  final VaultApproval? _vaultApproval;
+  final SshApproval? _sshApproval;
+  final SshSigner? _sshSigner;
 
   /// Held rather than a built service, because a locker service is bound to one
   /// credential: the credential id goes into the wrapper's AAD, so the same key
   /// unwrapping for a different credential must not produce the same bytes.
   final LockerKeyGuardian _lockerGuardian;
+
+  /// How long one request may spend waiting for the person to answer.
+  ///
+  /// Injectable only so a test can watch the deadline pass without spending
+  /// the two and a half minutes it describes.
+  final Duration _answerTimeout;
   final DateTime Function()? _clock;
   // Keyed by credential: one loop dials each credential, so one session per
   // credential is live at a time. A desktop holding both a login and a vault
@@ -111,6 +147,11 @@ class PairedSessionService {
       // others alive after the lifecycle owner has stopped.
     }
   }
+
+  Future<T> _answered<T>(Future<T> work) => work.timeout(
+    _answerTimeout,
+    onTimeout: () => throw const PairedSessionAnswerExpired(),
+  );
 
   /// Connects, waits for one request, answers it, and closes.
   ///
@@ -163,6 +204,18 @@ class PairedSessionService {
     // dialling for up to the idle timeout.
     onEstablished?.call();
 
+    final vault = VaultService(
+      repository: _vaultStore,
+      approval: onRequestRaised == null
+          ? _vaultApproval
+          : _ScopedVaultApproval(_vaultApproval, onRequestRaised),
+    );
+    final ssh = SshService(
+      approval: onRequestRaised == null
+          ? _sshApproval
+          : _ScopedSshApproval(_sshApproval, onRequestRaised),
+      signer: _sshSigner,
+    );
     final core = PhoneAuthCore(
       authorizer: _authorizer,
       consent: onRequestRaised == null
@@ -221,8 +274,8 @@ class PairedSessionService {
         // opened for the vault cannot reach the SSH key by asking for
         // `ssh.sign`, and the other way round.
         final purpose = record.purpose;
-        final response = switch (purpose) {
-          CredentialPurpose.ssh => await _ssh.handle(
+        final serving = switch (purpose) {
+          CredentialPurpose.ssh => ssh.handle(
             frame,
             sessionBinding: outcome.session.sessionBinding,
             authorized: true,
@@ -230,20 +283,20 @@ class PairedSessionService {
           // The locker asks the Keystore for the gesture itself, naming the
           // file and the computer in the prompt, so there is no separate
           // `authorized` to pass: refusing the fingerprint is the refusal.
-          CredentialPurpose.fileLocker => await LockerService(
+          CredentialPurpose.fileLocker => LockerService(
             guardian: _lockerGuardian,
             credentialId: record.credentialId,
           ).handle(frame, sessionBinding: outcome.session.sessionBinding),
-          _ => await _vault.handle(
+          _ => vault.handle(
             frame,
             sessionBinding: outcome.session.sessionBinding,
             authorized: purpose == CredentialPurpose.vault,
           ),
         };
-        await outcome.session.send(response);
+        await outcome.session.send(await _answered(serving));
         return null;
       }
-      return await core.serveFrame(outcome.session, frame);
+      return await _answered(core.serveFrame(outcome.session, frame));
     } on TimeoutException {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
@@ -276,6 +329,51 @@ class _SessionScopedConsent implements AuthorizationConsent {
   ) {
     _onRaised(request.requestId);
     return _inner.confirm(request, transport);
+  }
+}
+
+/// Bounds the time one request may spend waiting for a person.
+///
+/// Every path below this line ends in a prompt or a sheet, and every one of
+/// them waited for it forever. A request nobody answers is not rare — the
+/// phone is in a pocket, the sheet is behind a game — and holding it kept that
+/// credential's loop on a session the desktop had already given up on, so the
+/// computer sat there looking connected to a phone that would never answer it.
+/// Whatever the answer eventually was, it went into a closed socket.
+/// The same seam as [_SessionScopedConsent], for the vault's sheet.
+///
+/// A sheet is raised by one session and answered by a person, and the two can
+/// be minutes apart -- long enough for the link to drop. Without this the
+/// service could not say which sheets belonged to the session that died, so
+/// none of them were withdrawn: the request stayed pending forever, and the
+/// desktop's retry of the same request id waited on that same dead answer.
+///
+/// A null inner approval stays null-shaped: [VaultService] turns that into a
+/// refusal, which is not this class's decision to pre-empt.
+class _ScopedVaultApproval implements VaultApproval {
+  _ScopedVaultApproval(this._inner, this._onRaised);
+
+  final VaultApproval? _inner;
+  final void Function(String requestId) _onRaised;
+
+  @override
+  Future<bool> confirm(VaultApprovalRequest request) {
+    _onRaised(request.id);
+    return (_inner ?? const DenyVaultApproval()).confirm(request);
+  }
+}
+
+/// The same, for the sheet that approves an SSH signature.
+class _ScopedSshApproval implements SshApproval {
+  _ScopedSshApproval(this._inner, this._onRaised);
+
+  final SshApproval? _inner;
+  final void Function(String requestId) _onRaised;
+
+  @override
+  Future<bool> confirm(SshApprovalRequest request) {
+    _onRaised(request.id);
+    return (_inner ?? const DenySshApproval()).confirm(request);
   }
 }
 

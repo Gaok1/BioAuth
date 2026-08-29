@@ -136,8 +136,9 @@ void main() {
     );
     bool? answer;
     unawaited(approval.confirm(request).then((value) => answer = value));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(approval.pendingRequestIds, contains('request-1'));
+    expect(find.text('Recusar'), findsOneWidget, reason: 'the sheet is up');
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
@@ -153,6 +154,19 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     await tester.pump();
     expect(answer, isFalse);
+
+    // And the sheet goes with the answer. Refusing behind a sheet that stays
+    // up leaves its buttons looking live: the user comes back, taps the button,
+    // passes the biometric, and has approved nothing — the request was refused
+    // while the phone was in their pocket and the session is long gone.
+    // The sheet is dismissed with the answer, and finishes going while the
+    // app is on screen: a hidden app runs no frames, so the exit animation
+    // waits for the user to come back — which is exactly when it matters that
+    // the sheet is not there to be tapped.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('Recusar'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);

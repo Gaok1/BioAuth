@@ -46,6 +46,7 @@ class PairedSessionRunner {
     InteractiveSshApproval? sshApproval,
     SshSigner? sshSigner,
     LockerKeyGuardian? lockerGuardian,
+    Duration? answerTimeout,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
@@ -59,6 +60,7 @@ class PairedSessionRunner {
          // runner that cannot sign.
          sshSigner: sshSigner ?? const NativeSshSigner(),
          lockerGuardian: lockerGuardian,
+         answerTimeout: answerTimeout,
          clock: clock,
        ),
        _consent = consent,
@@ -202,6 +204,12 @@ class PairedSessionRunner {
               : AuthorizationResult.denied,
         );
       }
+    } on PairedSessionAnswerExpired catch (error) {
+      // Nobody answered inside the window the desktop gave. The link is fine,
+      // so this is not a failure to back off from -- it is a session that did
+      // its job and found no one home. Take down what it put on screen and let
+      // the loop dial again straight away.
+      _withdraw(raised, error);
     } on Object catch (error) {
       // Anything left waiting on *this* session will never be answered.
       //
@@ -211,10 +219,23 @@ class PairedSessionRunner {
       // it carries one request and closes. Abandoning the whole set meant one
       // loop's routine reconnect cancelled the prompt the user was reading,
       // and the desktop that had actually asked was told the phone failed.
-      for (final requestId in raised) {
-        _consent.abandon(requestId, error);
-      }
+      _withdraw(raised, error);
       rethrow;
+    }
+  }
+
+  /// Refuses everything this session put in front of the user.
+  ///
+  /// The sheets as well as the prompts. A vault or ssh approval used to be
+  /// withdrawn only when the whole runner stopped, so one whose session ended
+  /// stayed pending for good -- and since a repeat of a request id waits on
+  /// the answer already pending for it, the desktop's retry after reconnecting
+  /// joined that dead wait instead of raising a sheet of its own.
+  void _withdraw(Set<String> raised, Object error) {
+    for (final requestId in raised) {
+      _consent.abandon(requestId, error);
+      _vaultApproval?.abandon(requestId);
+      _sshApproval?.settle(requestId, approved: false);
     }
   }
 }
