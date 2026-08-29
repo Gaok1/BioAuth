@@ -350,7 +350,7 @@ real, e ele é um só por sessão.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **379 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **392 testes aprovados** no Windows; um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -358,10 +358,10 @@ real, e ele é um só por sessão.
   aproximadamente 28 GiB; é evidência datada, não cobertura contínua.
 - Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
   Ubuntu; a verificação Windows apenas prova compilação cruzada.
-- `desktop/ui/npm test`: **11 testes aprovados**.
-- `flutter analyze`: limpo. A suíte mobile soma **216 testes Flutter**, o
+- `desktop/ui/npm test`: **35 testes aprovados**.
+- `flutter analyze`: limpo. A suíte mobile soma **231 testes Flutter**, o
   package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
-  **36 testes Kotlin**.
+  **53 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
   **7 testes instrumentados** são executados pelo job API 35, não contados como
   aprovados localmente sem emulador.
