@@ -7,26 +7,21 @@ import 'package:flutter/services.dart';
 import 'phone_auth_native_platform_interface.dart';
 
 abstract interface class SecureAuthenticator {
-  Future<DevicePublicKey> generateKey();
-
-  /// The SSH credential's public half, created on first use.
+  /// Creates, or returns, the key for one purpose.
   ///
-  /// A key of its own, under its own alias, because an SSH signature and an
-  /// authorization signature cover different bytes and must not come from the
-  /// same key: a server that accepts one would otherwise accept the other.
-  Future<DevicePublicKey> generateSshKey();
+  /// A key per purpose, not one key wearing several names: an SSH signature
+  /// and a `sudo` approval cover different bytes for different verifiers, and
+  /// one key for both would mean a signature made for one is a signature the
+  /// other accepts.
+  Future<DevicePublicKey> generateKey({String purpose = 'authorization'});
 
-  /// Signs an SSH userauth request. Raises the biometric prompt, like [sign].
-  Future<SignatureResult> signSsh({
-    required Uint8List payload,
-    required AuthenticationContext context,
-  });
+  Future<DevicePublicKey> getPublicKey({String purpose = 'authorization'});
 
-  Future<DevicePublicKey> getPublicKey();
-
+  /// Signs with the key for [purpose], behind the biometric prompt.
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
+    String purpose = 'authorization',
   });
 
   Future<bool> isHardwareBacked();
@@ -58,39 +53,18 @@ class PhoneAuthNative implements SecureAuthenticator, SessionIdentity {
   const PhoneAuthNative();
 
   @override
-  Future<DevicePublicKey> generateKey() =>
-      PhoneAuthNativePlatform.instance.generateKey();
+  Future<DevicePublicKey> generateKey({String purpose = 'authorization'}) =>
+      PhoneAuthNativePlatform.instance.generateKey(purpose: purpose);
 
   @override
-  Future<DevicePublicKey> getPublicKey() =>
-      PhoneAuthNativePlatform.instance.getPublicKey();
-
-  @override
-  Future<DevicePublicKey> generateSshKey() =>
-      PhoneAuthNativePlatform.instance.generateSshKey();
-
-  @override
-  Future<SignatureResult> signSsh({
-    required Uint8List payload,
-    required AuthenticationContext context,
-  }) {
-    if (payload.isEmpty || payload.length > 8192) {
-      throw ArgumentError.value(
-        payload.length,
-        'payload.length',
-        'O pedido SSH deve conter de 1 a 8192 bytes',
-      );
-    }
-    return PhoneAuthNativePlatform.instance.signSsh(
-      payload: Uint8List.fromList(payload),
-      context: context,
-    );
-  }
+  Future<DevicePublicKey> getPublicKey({String purpose = 'authorization'}) =>
+      PhoneAuthNativePlatform.instance.getPublicKey(purpose: purpose);
 
   @override
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
+    String purpose = 'authorization',
   }) {
     if (payload.isEmpty || payload.length > 8192) {
       throw ArgumentError.value(
@@ -102,6 +76,7 @@ class PhoneAuthNative implements SecureAuthenticator, SessionIdentity {
     return PhoneAuthNativePlatform.instance.sign(
       payload: Uint8List.fromList(payload),
       context: context,
+      purpose: purpose,
     );
   }
 

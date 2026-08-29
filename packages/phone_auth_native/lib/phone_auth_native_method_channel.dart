@@ -9,28 +9,20 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
   final methodChannel = const MethodChannel('phone_auth_native');
 
   @override
-  Future<DevicePublicKey> generateKey() async => _publicKey(
-    await methodChannel.invokeMapMethod<String, Object?>('generateKey'),
+  Future<DevicePublicKey> generateKey({
+    String purpose = 'authorization',
+  }) async => _publicKey(
+    await methodChannel.invokeMapMethod<String, Object?>('generateKey', {
+      'purpose': purpose,
+    }),
   );
 
   @override
-  Future<DevicePublicKey> getPublicKey() async => _publicKey(
-    await methodChannel.invokeMapMethod<String, Object?>('getPublicKey'),
-  );
-
-  @override
-  Future<DevicePublicKey> generateSshKey() async => _publicKey(
-    await methodChannel.invokeMapMethod<String, Object?>('generateSshKey'),
-  );
-
-  @override
-  Future<SignatureResult> signSsh({
-    required Uint8List payload,
-    required AuthenticationContext context,
-  }) async => _signature(
-    await methodChannel.invokeMapMethod<String, Object?>('signSsh', {
-      'payload': payload,
-      'context': context.toMap(),
+  Future<DevicePublicKey> getPublicKey({
+    String purpose = 'authorization',
+  }) async => _publicKey(
+    await methodChannel.invokeMapMethod<String, Object?>('getPublicKey', {
+      'purpose': purpose,
     }),
   );
 
@@ -52,10 +44,11 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
+    String purpose = 'authorization',
   }) async {
     final response = await methodChannel.invokeMapMethod<String, Object?>(
       'sign',
-      {'payload': payload, 'context': context.toMap()},
+      {'payload': payload, 'context': context.toMap(), 'purpose': purpose},
     );
     final signature = response?['signature'];
     final algorithm = response?['algorithm'];

@@ -11,6 +11,10 @@ abstract interface class BiometricAuthorizer {
   Future<AuthorizationProof> authorize({
     required AuthenticationRequest request,
     required Uint8List canonicalRequest,
+    // Which key signs. The credential the session was opened with decides it,
+    // never the request: a desktop asking with one credential must not be able
+    // to reach the key of another by naming it.
+    String purpose,
   });
 }
 
@@ -34,10 +38,15 @@ class VerifierPolicy {
     required this.verifierId,
     required this.credentialId,
     required this.permissions,
+    this.purpose = 'authorization',
   });
 
   final String verifierId;
   final String credentialId;
+
+  /// The credential's purpose, which is also the name of the key that signs
+  /// for it. Stored with the pairing, so a desktop cannot change it later.
+  final String purpose;
   final List<VerifierPermission> permissions;
 
   bool allows(AuthenticationRequest request) =>
@@ -128,6 +137,7 @@ class PhoneAuthCore {
       final proof = await authorizer.authorize(
         request: request,
         canonicalRequest: codec.encodeRequest(request),
+        purpose: policy.purpose,
       );
       return AuthResponse(
         protocolVersion: request.protocolVersion,

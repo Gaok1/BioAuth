@@ -16,6 +16,7 @@ class NativeBiometricAuthorizer implements BiometricAuthorizer {
   Future<AuthorizationProof> authorize({
     required AuthenticationRequest request,
     required Uint8List canonicalRequest,
+    String purpose = 'authorization',
   }) async {
     final capabilities = await _authenticator.getSecurityCapabilities();
     if (!capabilities.biometrics.strongBiometrics) {
@@ -23,6 +24,7 @@ class NativeBiometricAuthorizer implements BiometricAuthorizer {
     }
     final result = await _authenticator.sign(
       payload: canonicalRequest,
+      purpose: purpose,
       context: AuthenticationContext(
         title: request.verifierName,
         subtitle: '${request.service} • ${request.user}',

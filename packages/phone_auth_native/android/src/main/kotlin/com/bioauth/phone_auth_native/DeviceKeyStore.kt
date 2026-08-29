@@ -21,58 +21,41 @@ internal class DeviceKeyStore(
     private val keyStore: KeyStore
         get() = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
-    fun generateKey(): ByteArray {
-        publicKeyOrNull()?.let { return it }
+    fun generateKey(purpose: String = AUTHORIZATION): ByteArray {
+        val alias = aliasFor(purpose)
+        publicKeyOrNull(alias)?.let { return it }
 
         val strongBoxAvailable =
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
                 context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
         if (strongBoxAvailable) {
             try {
-                return createKey(KEY_ALIAS, useStrongBox = true)
+                return createKey(alias, useStrongBox = true)
             } catch (_: StrongBoxUnavailableException) {
-                keyStore.deleteEntry(KEY_ALIAS)
+                keyStore.deleteEntry(alias)
             }
         }
-        return createKey(KEY_ALIAS, useStrongBox = false)
+        return createKey(alias, useStrongBox = false)
     }
 
-    fun publicKey(): ByteArray =
-        publicKeyOrNull() ?: throw IllegalStateException("Device signing key does not exist")
+    fun publicKey(purpose: String = AUTHORIZATION): ByteArray =
+        publicKeyOrNull(aliasFor(purpose))
+            ?: throw IllegalStateException("Signing key does not exist")
 
-    fun initializedSignature(): Signature {
-        val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
-            ?: throw IllegalStateException("Device signing key does not exist")
+    fun initializedSignature(purpose: String = AUTHORIZATION): Signature {
+        val privateKey = keyStore.getKey(aliasFor(purpose), null) as? PrivateKey
+            ?: throw IllegalStateException("Signing key does not exist")
         return Signature.getInstance(SIGNATURE_ALGORITHM).apply { initSign(privateKey) }
     }
 
-    // The SSH credential, created on first use. Its own alias, not the
-    // authorization key: the two sign different bytes for different verifiers,
-    // and one key for both would mean a signature made to approve a `sudo` is
-    // a signature an SSH server would accept.
-    fun generateSshKey(): ByteArray {
-        sshPublicKeyOrNull()?.let { return it }
-
-        val strongBoxAvailable =
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-                context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-        if (strongBoxAvailable) {
-            try {
-                return createKey(SSH_ALIAS, useStrongBox = true)
-            } catch (_: StrongBoxUnavailableException) {
-                keyStore.deleteEntry(SSH_ALIAS)
-            }
-        }
-        return createKey(SSH_ALIAS, useStrongBox = false)
-    }
-
-    fun sshPublicKey(): ByteArray =
-        sshPublicKeyOrNull() ?: throw IllegalStateException("SSH key does not exist")
-
-    fun initializedSshSignature(): Signature {
-        val privateKey = keyStore.getKey(SSH_ALIAS, null) as? PrivateKey
-            ?: throw IllegalStateException("SSH key does not exist")
-        return Signature.getInstance(SIGNATURE_ALGORITHM).apply { initSign(privateKey) }
+    // One alias per purpose. Sharing a key across purposes would mean a
+    // signature made to approve a `sudo` is a signature an SSH server or a
+    // vault-holding desktop would also accept, which is the whole reason the
+    // purposes exist. An unknown name throws rather than falling back to the
+    // authorization key: a typo must not quietly become key reuse.
+    private fun aliasFor(purpose: String): String {
+        require(purpose in KNOWN_PURPOSES) { "unknown credential purpose" }
+        return if (purpose == AUTHORIZATION) KEY_ALIAS else "bioauth_${purpose}_v1"
     }
 
     fun generateSessionIdentityKey(): ByteArray {
@@ -130,9 +113,8 @@ internal class DeviceKeyStore(
         )
     }
 
-    private fun publicKeyOrNull(): ByteArray? = keyStore.getCertificate(KEY_ALIAS)?.publicKey?.encoded
-
-    private fun sshPublicKeyOrNull(): ByteArray? = keyStore.getCertificate(SSH_ALIAS)?.publicKey?.encoded
+    private fun publicKeyOrNull(alias: String = KEY_ALIAS): ByteArray? =
+        keyStore.getCertificate(alias)?.publicKey?.encoded
 
     private fun sessionIdentityPublicKeyOrNull(): ByteArray? =
         keyStore.getCertificate(SESSION_IDENTITY_ALIAS)?.publicKey?.encoded
@@ -188,8 +170,22 @@ internal class DeviceKeyStore(
         const val PUBLIC_KEY_ALGORITHM = "EC_P256_SPKI"
         const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val AUTHORIZATION = "authorization"
+
+        // The names the Dart side sends, which are the wire purposes. Kept as
+        // a set so an unrecognised one is a failure rather than a new alias.
+        private val KNOWN_PURPOSES = setOf(
+            AUTHORIZATION,
+            "diskUnlock",
+            "webAuthn",
+            "vault",
+            "fileLocker",
+            "ssh",
+        )
+
+        // Unchanged for authorization: a phone that paired before purposes had
+        // their own keys must keep answering with the key it enrolled.
         private const val KEY_ALIAS = "bioauth_authorization_v1"
-        private const val SSH_ALIAS = "bioauth_ssh_v1"
         private const val SESSION_IDENTITY_ALIAS = "bioauth_session_identity_v1"
         private const val EC_CURVE = "secp256r1"
     }

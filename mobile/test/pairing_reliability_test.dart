@@ -362,6 +362,7 @@ class _UnusedAuthorizer implements BiometricAuthorizer {
   Future<AuthorizationProof> authorize({
     required AuthenticationRequest request,
     required Uint8List canonicalRequest,
+    String purpose = 'authorization',
   }) => throw UnimplementedError();
 }
 

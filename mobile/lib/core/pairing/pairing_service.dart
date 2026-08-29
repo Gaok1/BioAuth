@@ -111,9 +111,9 @@ class NativeAuthorizationCredential implements AuthorizationCredential {
   Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe(
     CredentialPurpose purpose,
   ) async {
-    final key = purpose == CredentialPurpose.ssh
-        ? await _authenticator.generateSshKey()
-        : await _authenticator.generateKey();
+    // The purpose names the key. Sharing one across purposes would make a
+    // signature approving a `sudo` a signature an SSH server also accepts.
+    final key = await _authenticator.generateKey(purpose: purpose.name);
     final capabilities = await _authenticator.getSecurityCapabilities();
     // Reported honestly, including when it is bad news: the verifier uses this
     // only to withhold authority, never to grant more of it.

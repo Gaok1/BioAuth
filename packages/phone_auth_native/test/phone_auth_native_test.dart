@@ -10,11 +10,21 @@ class MockPhoneAuthNativePlatform
     with MockPlatformInterfaceMixin
     implements PhoneAuthNativePlatform {
   @override
-  Future<DevicePublicKey> generateKey() async =>
-      DevicePublicKey(bytes: Uint8List.fromList([1]), algorithm: 'test');
+  /// Records what the last call asked for, so a test can tell one key from
+  /// another — which is the only thing separating the credentials.
+  String? lastPurpose;
 
   @override
-  Future<DevicePublicKey> getPublicKey() => generateKey();
+  Future<DevicePublicKey> generateKey({
+    String purpose = 'authorization',
+  }) async {
+    lastPurpose = purpose;
+    return DevicePublicKey(bytes: Uint8List.fromList([1]), algorithm: 'test');
+  }
+
+  @override
+  Future<DevicePublicKey> getPublicKey({String purpose = 'authorization'}) =>
+      generateKey(purpose: purpose);
 
   @override
   Future<SecurityCapabilities> getSecurityCapabilities() async =>
@@ -32,10 +42,14 @@ class MockPhoneAuthNativePlatform
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
-  }) async => SignatureResult(
-    signature: Uint8List.fromList(payload.reversed.toList()),
-    algorithm: 'test',
-  );
+    String purpose = 'authorization',
+  }) async {
+    lastPurpose = purpose;
+    return SignatureResult(
+      signature: Uint8List.fromList(payload.reversed.toList()),
+      algorithm: 'test',
+    );
+  }
 
   @override
   Future<DevicePublicKey> generateSessionIdentityKey() => generateKey();
@@ -119,5 +133,42 @@ void main() {
       () => authenticator.signSessionIdentity(Uint8List(0)),
       throwsArgumentError,
     );
+  });
+
+  /// The purpose is what picks the key on the native side, so it has to
+  /// survive the facade. A facade that dropped it would send every credential
+  /// through the authorization key, silently.
+  test('the facade carries the purpose through to the platform', () async {
+    final platform = MockPhoneAuthNativePlatform();
+    PhoneAuthNativePlatform.instance = platform;
+    const native = PhoneAuthNative();
+
+    await native.generateKey(purpose: 'ssh');
+    expect(platform.lastPurpose, 'ssh');
+
+    await native.getPublicKey(purpose: 'vault');
+    expect(platform.lastPurpose, 'vault');
+
+    await native.sign(
+      payload: Uint8List.fromList([1, 2, 3]),
+      context: const AuthenticationContext(
+        title: 'a',
+        subtitle: 'b',
+        description: 'c',
+      ),
+      purpose: 'fileLocker',
+    );
+    expect(platform.lastPurpose, 'fileLocker');
+  });
+
+  /// And the default stays what every caller written before purposes had their
+  /// own keys meant, so an old pairing keeps reaching the key it enrolled.
+  test('the default purpose is authorization', () async {
+    final platform = MockPhoneAuthNativePlatform();
+    PhoneAuthNativePlatform.instance = platform;
+
+    await const PhoneAuthNative().generateKey();
+
+    expect(platform.lastPurpose, 'authorization');
   });
 }

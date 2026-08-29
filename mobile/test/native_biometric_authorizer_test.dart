@@ -11,6 +11,7 @@ class _RecordingAuthenticator implements SecureAuthenticator {
   final bool strongBiometrics;
   Uint8List? signedPayload;
   AuthenticationContext? displayedContext;
+  String? signedPurpose;
 
   @override
   Future<SecurityCapabilities> getSecurityCapabilities() async =>
@@ -27,22 +28,14 @@ class _RecordingAuthenticator implements SecureAuthenticator {
       );
 
   @override
-  Future<DevicePublicKey> generateSshKey() =>
-      throw UnimplementedError('not part of this test');
-
-  @override
-  Future<SignatureResult> signSsh({
-    required Uint8List payload,
-    required AuthenticationContext context,
-  }) => throw UnimplementedError('not part of this test');
-
-  @override
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
+    String purpose = 'authorization',
   }) async {
     signedPayload = Uint8List.fromList(payload);
     displayedContext = context;
+    signedPurpose = purpose;
     return SignatureResult(
       signature: Uint8List.fromList([1, 2, 3]),
       algorithm: 'test',
@@ -54,10 +47,12 @@ class _RecordingAuthenticator implements SecureAuthenticator {
       (await getSecurityCapabilities()).biometrics;
 
   @override
-  Future<DevicePublicKey> generateKey() => throw UnimplementedError();
+  Future<DevicePublicKey> generateKey({String purpose = 'authorization'}) =>
+      throw UnimplementedError();
 
   @override
-  Future<DevicePublicKey> getPublicKey() => throw UnimplementedError();
+  Future<DevicePublicKey> getPublicKey({String purpose = 'authorization'}) =>
+      throw UnimplementedError();
 
   @override
   Future<bool> isHardwareBacked() async => true;

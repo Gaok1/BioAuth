@@ -18,24 +18,17 @@ abstract class PhoneAuthNativePlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<DevicePublicKey> generateKey() =>
+  Future<DevicePublicKey> generateKey({String purpose = 'authorization'}) =>
       throw UnimplementedError('generateKey() has not been implemented.');
 
-  Future<DevicePublicKey> getPublicKey() =>
+  Future<DevicePublicKey> getPublicKey({String purpose = 'authorization'}) =>
       throw UnimplementedError('getPublicKey() has not been implemented.');
 
   Future<SignatureResult> sign({
     required Uint8List payload,
     required AuthenticationContext context,
+    String purpose = 'authorization',
   }) => throw UnimplementedError('sign() has not been implemented.');
-
-  Future<DevicePublicKey> generateSshKey() =>
-      throw UnimplementedError('generateSshKey() has not been implemented.');
-
-  Future<SignatureResult> signSsh({
-    required Uint8List payload,
-    required AuthenticationContext context,
-  }) => throw UnimplementedError('signSsh() has not been implemented.');
 
   Future<SecurityCapabilities> getSecurityCapabilities() =>
       throw UnimplementedError(

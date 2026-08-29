@@ -218,4 +218,5 @@ VerifierPolicy policyFor(PairingRecord record) => VerifierPolicy(
   verifierId: record.verifierId,
   credentialId: record.credentialId,
   permissions: const [VerifierPermission.any()],
+  purpose: record.purpose.name,
 );

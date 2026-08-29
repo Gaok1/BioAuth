@@ -68,8 +68,8 @@ class PhoneAuthNativePlugin :
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "generateKey" -> generateKey(result)
-            "getPublicKey" -> publicKey(result)
+            "generateKey" -> generateKey(call.arguments, result)
+            "getPublicKey" -> publicKey(call.arguments, result)
             "generateSessionIdentityKey" -> generateSessionIdentityKey(result)
             "getSessionIdentityPublicKey" -> sessionIdentityPublicKey(result)
             "signSessionIdentity" -> signSessionIdentity(call.arguments, result)
@@ -82,8 +82,6 @@ class PhoneAuthNativePlugin :
             "listPasskeys" -> listPasskeys(result)
             "deletePasskey" -> deletePasskey(call.arguments, result)
             "sign" -> sign(call.arguments, result)
-            "generateSshKey" -> generateSshKey(result)
-            "signSsh" -> signSsh(call.arguments, result)
             "lockerKeyStatus" -> lockerKeyStatus(result)
             "generateLockerKey" -> generateLockerKey(result)
             "lockerWrapKey" -> lockerWrapKey(call.arguments, result)
@@ -92,31 +90,27 @@ class PhoneAuthNativePlugin :
         }
     }
 
-    private fun generateKey(result: MethodChannel.Result) {
+    private fun generateKey(arguments: Any?, result: MethodChannel.Result) {
         if (strongBiometricStatus() != BiometricManager.BIOMETRIC_SUCCESS) {
             result.error("biometric_unavailable", "Strong biometric enrollment is required", null)
             return
         }
-        runCatching { keyStore.generateKey() }
+        runCatching { keyStore.generateKey(purposeOf(arguments)) }
             .onSuccess { result.success(publicKeyResponse(it)) }
             .onFailure { result.error("key_generation_failed", "Unable to generate device key", null) }
     }
 
-    private fun publicKey(result: MethodChannel.Result) {
-        runCatching { keyStore.publicKey() }
+    private fun publicKey(arguments: Any?, result: MethodChannel.Result) {
+        runCatching { keyStore.publicKey(purposeOf(arguments)) }
             .onSuccess { result.success(publicKeyResponse(it)) }
             .onFailure { result.error("key_not_found", "Device signing key does not exist", null) }
     }
 
-    private fun generateSshKey(result: MethodChannel.Result) {
-        if (strongBiometricStatus() != BiometricManager.BIOMETRIC_SUCCESS) {
-            result.error("biometric_unavailable", "Strong biometric enrollment is required", null)
-            return
-        }
-        runCatching { keyStore.generateSshKey() }
-            .onSuccess { result.success(publicKeyResponse(it)) }
-            .onFailure { result.error("key_generation_failed", "Unable to generate SSH key", null) }
-    }
+    // Absent means authorization, so every caller written before purposes had
+    // their own keys keeps reaching the key it enrolled. An unrecognised name
+    // is refused by the store rather than mapped to a new alias.
+    private fun purposeOf(arguments: Any?): String =
+        (arguments as? Map<*, *>)?.get("purpose") as? String ?: DeviceKeyStore.AUTHORIZATION
 
     private fun generateSessionIdentityKey(result: MethodChannel.Result) {
         runCatching { keyStore.generateSessionIdentityKey() }
@@ -159,20 +153,10 @@ class PhoneAuthNativePlugin :
             .onFailure { result.error("verification_failed", "Invalid session identity material", null) }
     }
 
-    private fun sign(arguments: Any?, result: MethodChannel.Result) =
-        signWith(arguments, result, keyStore::initializedSignature)
-
-    // The SSH key signs the same way through the same prompt, and differs only
-    // in which key the CryptoObject carries. Sharing the path is deliberate:
-    // a second copy is a second place for the prompt's guarantees to drift.
-    private fun signSsh(arguments: Any?, result: MethodChannel.Result) =
-        signWith(arguments, result, keyStore::initializedSshSignature)
-
-    private fun signWith(
-        arguments: Any?,
-        result: MethodChannel.Result,
-        signature: () -> Signature,
-    ) {
+    // Every purpose signs the same way through the same prompt, and differs
+    // only in which key the CryptoObject carries. One path on purpose: a
+    // second copy is a second place for the prompt's guarantees to drift.
+    private fun sign(arguments: Any?, result: MethodChannel.Result) {
         if (pendingResult != null) {
             result.error("operation_in_progress", "Another biometric operation is active", null)
             return
@@ -190,7 +174,9 @@ class PhoneAuthNativePlugin :
             result.error("invalid_arguments", it.message, null)
             return
         }
-        val initialized = runCatching(signature).getOrElse {
+        val initialized = runCatching {
+            keyStore.initializedSignature(purposeOf(arguments))
+        }.getOrElse {
             result.error("key_not_found", "Signing key does not exist", null)
             return
         }

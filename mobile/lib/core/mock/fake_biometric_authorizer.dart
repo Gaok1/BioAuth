@@ -22,6 +22,7 @@ class FakeBiometricAuthorizer implements BiometricAuthorizer {
   Future<AuthorizationProof> authorize({
     required AuthenticationRequest request,
     required Uint8List canonicalRequest,
+    String purpose = 'authorization',
   }) async {
     authorizationCount++;
     final signature = await Ed25519().sign(canonicalRequest, keyPair: _keyPair);

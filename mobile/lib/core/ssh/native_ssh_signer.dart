@@ -32,8 +32,9 @@ class NativeSshSigner implements SshSigner {
   Future<Uint8List?> sign(Uint8List data, {required String prompt}) async {
     final SignatureResult result;
     try {
-      result = await _authenticator.signSsh(
+      result = await _authenticator.sign(
         payload: data,
+        purpose: 'ssh',
         context: AuthenticationContext(
           title: 'Entrar por SSH',
           subtitle: prompt,
