@@ -52,9 +52,15 @@ class PairedSessionService {
   final VaultService _vault;
   final SshService _ssh;
   final DateTime Function()? _clock;
-  // Keyed by verifier: one loop dials each desktop, so one session per
-  // verifier is live at a time, and revoking has to reach exactly that one.
-  final Map<String, SecureTransportSession> _active = {};
+  // Keyed by credential: one loop dials each credential, so one session per
+  // credential is live at a time. A desktop holding both a login and a vault
+  // credential has two, and revoking the desktop has to reach both.
+  // Keyed by verifier *and* credential. Credential alone is not a key: it is
+  // chosen by the desktop, so two desktops can hand out the same id and the
+  // second session would evict the first — which is a revocation that closes
+  // nothing. Verifier alone is not a key either, since one computer can hold
+  // several credentials and each has its own session.
+  final Map<(String, String), SecureTransportSession> _active = {};
   final WebAuthnRelayHandler _webAuthn = const WebAuthnRelayHandler();
   final Set<String> _closed = {};
   bool _stopped = false;
@@ -74,12 +80,18 @@ class PairedSessionService {
   /// just said they no longer trust.
   Future<void> closeDevice(String verifierId) async {
     _closed.add(verifierId);
-    final session = _active.remove(verifierId);
-    if (session != null) await _close(session);
+    for (final entry in _active.entries.toList()) {
+      if (entry.key.$1 != verifierId) continue;
+      _active.remove(entry.key);
+      await _close(entry.value);
+    }
   }
 
   /// Lets a verifier be served again, after pairing with it afresh.
   void allowDevice(String verifierId) => _closed.remove(verifierId);
+
+  static (String, String) _key(PairingRecord record) =>
+      (record.verifierId, record.credentialId);
 
   Future<void> _close(SecureTransportSession session) async {
     try {
@@ -122,7 +134,7 @@ class PairedSessionService {
         'O computador respondeu como se nunca tivesse sido pareado',
       );
     }
-    _active[record.verifierId] = outcome.session;
+    _active[_key(record)] = outcome.session;
     // The channel is authenticated from here on. Reporting it now is what
     // separates "connected" from "has already answered something": waiting for
     // a request would leave an idle, working link looking like it is still
@@ -205,8 +217,8 @@ class PairedSessionService {
       return null;
     } finally {
       await frames.cancel();
-      if (identical(_active[record.verifierId], outcome.session)) {
-        _active.remove(record.verifierId);
+      if (identical(_active[_key(record)], outcome.session)) {
+        _active.remove(_key(record));
       }
       await _close(outcome.session);
     }

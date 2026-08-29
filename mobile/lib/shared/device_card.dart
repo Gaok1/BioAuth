@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/protocol/enrolment.dart';
 import '../domain/desktop_device.dart';
 import 'connection_status.dart';
 
@@ -37,6 +38,20 @@ class DeviceCard extends StatelessWidget {
                     'Visto ${_relativeTime(device.lastSeen)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  if (device.purposes.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    // What this computer was actually given. Two pairings with
+                    // the same desktop look identical otherwise, and the
+                    // difference between them is which key it can ask for.
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final purpose in device.purposes)
+                          _PurposeChip(purpose: purpose),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -87,5 +102,41 @@ class DeviceCard extends StatelessWidget {
     if (elapsed.inHours < 1) return 'há ${elapsed.inMinutes} min';
     if (elapsed.inDays < 1) return 'há ${elapsed.inHours} h';
     return 'há ${elapsed.inDays} d';
+  }
+}
+
+/// One credential this desktop holds, named for what it can ask for.
+class _PurposeChip extends StatelessWidget {
+  const _PurposeChip({required this.purpose});
+
+  final CredentialPurpose purpose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (icon, label) = switch (purpose) {
+      CredentialPurpose.authorization => (Icons.lock_outline, 'Login'),
+      CredentialPurpose.diskUnlock => (Icons.storage, 'Disco'),
+      CredentialPurpose.webAuthn => (Icons.password, 'Sites'),
+      CredentialPurpose.vault => (Icons.vpn_key_outlined, 'Cofre'),
+      CredentialPurpose.fileLocker => (Icons.folder_outlined, 'Arquivos'),
+      CredentialPurpose.ssh => (Icons.terminal, 'SSH'),
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 5),
+          Text(label, style: theme.textTheme.labelSmall),
+        ],
+      ),
+    );
   }
 }

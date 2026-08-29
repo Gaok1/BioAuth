@@ -74,25 +74,31 @@ class PairedSessionRunner {
   /// Reports connection state per verifier, for the devices list.
   final void Function(String verifierId, PairedSessionStatus status)? onStatus;
 
+  /// Keyed by credential, not by desktop: one computer can hold a login
+  /// credential and a vault one at the same time, and they are separate
+  /// sessions carrying separate keys. Keyed by verifier, the second one never
+  /// got a loop at all — it looked paired and answered nothing.
   final Map<String, _Loop> _loops = {};
 
   /// Starts a loop for every record, and stops loops for records that are gone.
   void sync(List<PairingRecord> records) {
-    final wanted = {for (final record in records) record.verifierId: record};
-    for (final verifierId in _loops.keys.toList()) {
-      if (!wanted.containsKey(verifierId)) _loops.remove(verifierId)?.stop();
+    final wanted = {for (final record in records) record.credentialId: record};
+    for (final credentialId in _loops.keys.toList()) {
+      if (!wanted.containsKey(credentialId)) {
+        _loops.remove(credentialId)?.stop();
+      }
     }
     for (final record in records) {
       // A record that is back after a revocation is a fresh pairing, so lift
       // the refusal the revocation installed.
       _service.allowDevice(record.verifierId);
-      final existing = _loops[record.verifierId];
+      final existing = _loops[record.credentialId];
       if (existing != null) {
         existing.record = record;
         continue;
       }
       final loop = _Loop(record: record, run: _serve);
-      _loops[record.verifierId] = loop;
+      _loops[record.credentialId] = loop;
       unawaited(loop.start());
     }
   }
@@ -117,7 +123,13 @@ class PairedSessionRunner {
   /// `serveOne` already blocked on the idle timeout would otherwise stay up
   /// for minutes after the user revoked the desktop.
   Future<void> stopDevice(String verifierId) async {
-    _loops.remove(verifierId)?.stop();
+    // Every credential of that desktop, because revoking a computer is not
+    // "except for the vault".
+    for (final entry in _loops.entries.toList()) {
+      if (entry.value.record.verifierId == verifierId) {
+        _loops.remove(entry.key)?.stop();
+      }
+    }
     await _service.closeDevice(verifierId);
   }
 

@@ -48,17 +48,31 @@ class AppController extends Notifier<AppState> {
   /// screen no matter what it sends.
   void syncPairedDevices(List<PairingRecord> records) {
     final existing = {for (final device in state.devices) device.id: device};
-    final devices = records
-        .map(
-          (record) =>
-              existing[record.verifierId] ??
-              DesktopDevice(
-                id: record.verifierId,
-                name: record.verifierId,
-                phase: ConnectionPhase.connecting,
-                lastSeen: record.pairedAt,
-              ),
-        )
+
+    // One entry per computer, not per credential. A desktop paired for logins
+    // and again for the vault is still one computer standing in the room, and
+    // two identical rows would be a list the user cannot act on — they say the
+    // same name and revoking either revokes both.
+    final byVerifier = <String, List<PairingRecord>>{};
+    for (final record in records) {
+      byVerifier.putIfAbsent(record.verifierId, () => []).add(record);
+    }
+
+    final devices = byVerifier.entries
+        .map((entry) {
+          final first = entry.value.first;
+          final purposes = entry.value
+              .map((record) => record.purpose)
+              .toList(growable: false);
+          return (existing[entry.key] ??
+                  DesktopDevice(
+                    id: entry.key,
+                    name: entry.key,
+                    phase: ConnectionPhase.connecting,
+                    lastSeen: first.pairedAt,
+                  ))
+              .withPurposes(purposes);
+        })
         .toList(growable: false);
 
     state = state.copyWith(

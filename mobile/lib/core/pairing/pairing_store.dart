@@ -73,14 +73,22 @@ class SharedPreferencesPairingStore implements PairingStore {
   @override
   Future<void> save(PairingRecord record) async {
     final preferences = await SharedPreferences.getInstance();
+    // Replaced by credential, not by desktop. One computer can hold several
+    // credentials — a login one and a vault one are different keys with
+    // different powers — and keying this by verifier meant pairing the second
+    // silently deleted the first, with nothing on screen to say so.
     final records =
         (await load())
-            .where((existing) => existing.verifierId != record.verifierId)
+            .where((existing) => existing.credentialId != record.credentialId)
             .toList()
           ..add(record);
     await _persist(preferences, records);
   }
 
+  /// Drops every credential belonging to one desktop.
+  ///
+  /// Revocation is about the computer, not about one of its keys: someone who
+  /// no longer trusts a desktop does not mean "except for the vault".
   @override
   Future<void> remove(String verifierId) async {
     final preferences = await SharedPreferences.getInstance();
@@ -187,7 +195,7 @@ class InMemoryPairingStore implements PairingStore {
   @override
   Future<void> save(PairingRecord record) async {
     _records
-      ..removeWhere((existing) => existing.verifierId == record.verifierId)
+      ..removeWhere((existing) => existing.credentialId == record.credentialId)
       ..add(record);
   }
 
