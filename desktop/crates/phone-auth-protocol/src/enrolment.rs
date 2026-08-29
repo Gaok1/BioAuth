@@ -55,6 +55,10 @@ pub enum CredentialPurpose {
     Vault = 3,
     /// File-locker key wrapping and release operations.
     FileLocker = 4,
+    /// SSH authentication. Its own credential so that a signature made for a
+    /// login is never one an SSH server would accept, and the other way
+    /// round: the two sign different things and must not share a key.
+    Ssh = 5,
 }
 
 impl CredentialPurpose {
@@ -65,6 +69,7 @@ impl CredentialPurpose {
             2 => Ok(Self::WebAuthn),
             3 => Ok(Self::Vault),
             4 => Ok(Self::FileLocker),
+            5 => Ok(Self::Ssh),
             other => Err(ProtocolError::InvalidPurpose(other)),
         }
     }

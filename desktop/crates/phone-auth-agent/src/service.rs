@@ -1635,6 +1635,7 @@ fn map_purpose(purpose: phone_auth_protocol::CredentialPurpose) -> CredentialPur
         phone_auth_protocol::CredentialPurpose::WebAuthn => CredentialPurpose::WebAuthn,
         phone_auth_protocol::CredentialPurpose::Vault => CredentialPurpose::Vault,
         phone_auth_protocol::CredentialPurpose::FileLocker => CredentialPurpose::FileLocker,
+        phone_auth_protocol::CredentialPurpose::Ssh => CredentialPurpose::Ssh,
     }
 }
 

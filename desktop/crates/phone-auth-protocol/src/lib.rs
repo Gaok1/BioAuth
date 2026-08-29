@@ -16,6 +16,7 @@ mod enrolment;
 pub mod locker;
 mod request;
 mod response;
+pub mod ssh;
 pub mod vault;
 
 pub use application::{
@@ -102,6 +103,14 @@ pub enum ProtocolError {
     /// A field reserved for a future version was not zero. Fails closed rather
     /// than ignoring a value this build does not understand.
     InvalidReservedField(u64),
+    /// A length-prefixed field claimed more bytes than the input holds.
+    ///
+    /// Distinct from [`Self::FrameSize`]: that one is a frame outside its
+    /// bounds, and this is a frame that ended mid-field. Reporting either as
+    /// the other sends whoever reads the log looking at the wrong thing.
+    UnexpectedEnd,
+    /// A field that must be UTF-8 was not.
+    InvalidText(&'static str),
 }
 
 impl fmt::Display for ProtocolError {
@@ -140,6 +149,8 @@ impl fmt::Display for ProtocolError {
                 write!(f, "invalid application error code: {value}")
             }
             Self::InvalidOperation => f.write_str("invalid application operation"),
+            Self::UnexpectedEnd => f.write_str("input ended inside a length-prefixed field"),
+            Self::InvalidText(field) => write!(f, "field `{field}` is not UTF-8"),
             Self::PayloadSize(size) => write!(f, "invalid application payload size: {size}"),
             Self::InvalidReservedField(value) => {
                 write!(f, "reserved field must be zero, got {value}")

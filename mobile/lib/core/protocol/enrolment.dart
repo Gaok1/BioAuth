@@ -57,6 +57,10 @@ enum CredentialPurpose {
 
   /// File-locker key wrapping and release operations.
   fileLocker,
+
+  /// SSH authentication. Its own credential so that a signature made for a
+  /// login is never one an SSH server would accept, and the other way round.
+  ssh,
 }
 
 class EnrolmentException implements Exception {

@@ -60,6 +60,10 @@ pub enum CredentialPurpose {
     Vault,
     /// File-locker key wrapping and release operations.
     FileLocker,
+    /// SSH authentication. Never the `sudo` credential and never the vault's:
+    /// an SSH signature is one a server accepts forever, and reusing a
+    /// credential across the two would make one authorization buy the other.
+    Ssh,
 }
 
 impl CredentialPurpose {
@@ -73,6 +77,7 @@ impl CredentialPurpose {
             "webauthn" => Self::WebAuthn,
             "vault" => Self::Vault,
             "locker" => Self::FileLocker,
+            "ssh" => Self::Ssh,
             _ => Self::Authorization,
         }
     }
