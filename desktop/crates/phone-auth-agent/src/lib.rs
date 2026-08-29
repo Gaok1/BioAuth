@@ -26,6 +26,7 @@ pub mod service;
 pub mod simulator;
 pub mod ssh_agent;
 pub mod ssh_policy;
+pub mod ssh_session;
 pub mod transport;
 pub mod vault;
 
