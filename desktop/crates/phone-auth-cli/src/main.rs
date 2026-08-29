@@ -528,10 +528,20 @@ fn locker(client: &mut AgentClient, cli: &Cli) -> u8 {
         eprintln!("phone-auth: locker needs an action and a file, e.g. `locker lock notes.txt`");
         return EXIT_USAGE;
     }
+    if let Some(warning) = locker_attribute_warning(cli, action) {
+        eprintln!("{warning}");
+    }
     if targets.len() > 1 {
         return locker_batch(client, cli, action, targets);
     }
     locker_one(client, cli, action, &targets[0])
+}
+
+fn locker_attribute_warning(cli: &Cli, action: &str) -> Option<&'static str> {
+    (action == "lock" && !cli.keep_original).then_some(
+        "WARNING: removing the original does not preserve ACLs, alternate data streams, \
+         extended attributes, ownership or creation time. Use --keep-original if these matter.\n",
+    )
 }
 
 /// Checks a batch and describes it, before anything connects or prompts.
@@ -1304,6 +1314,18 @@ fn print_history(value: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_lock_warns_about_attributes_the_container_does_not_store() {
+        let mut cli = blank_cli("locker".to_owned());
+        let warning = locker_attribute_warning(&cli, "lock").expect("destructive lock warns");
+        assert!(warning.contains("ACLs"));
+        assert!(warning.contains("--keep-original"));
+
+        cli.keep_original = true;
+        assert!(locker_attribute_warning(&cli, "lock").is_none());
+        assert!(locker_attribute_warning(&cli, "unlock").is_none());
+    }
 
     fn listing(items: Value) -> Value {
         json!({ "items": items, "deviceName": "phone", "development": false })

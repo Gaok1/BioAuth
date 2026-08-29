@@ -230,10 +230,9 @@ would survive under the other name, which makes the revocation imaginary.
 
 Two consequences worth stating plainly:
 
-- **Windows cannot count hard links** through the stable standard library, so a
-  second hard link is not detected there. Symlinks and junctions are reparse
-  points and *are* caught on every platform. Closing the remaining gap means a
-  `windows-sys` dependency and is not done.
+- Windows obtains the link count through `GetFileInformationByHandle`, because
+  the equivalent standard-library metadata field is still unstable. The same
+  destructive-operation rule is therefore enforced on Windows and Unix.
 - **Destination checks do not use `Path::exists`**, which follows links and
   answers "nothing there" for a dangling symlink — the one case where a rename
   would quietly consume something already on disk.
@@ -241,7 +240,8 @@ Two consequences worth stating plainly:
 Of the attributes a file carries, the container stores only the name, the Unix
 mode and the modification time. Windows ACLs, alternate data streams, extended
 attributes, ownership and creation time are **not** captured and are lost when
-a file is locked with its original removed. Nothing warns about this yet.
+a file is locked with its original removed. The CLI warns before the first
+phone prompt and points to `--keep-original` when those attributes matter.
 
 ## What this format does not do
 

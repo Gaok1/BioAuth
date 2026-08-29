@@ -775,6 +775,7 @@ dependencies = [
  "phone-auth-protocol",
  "proptest",
  "sha2",
+ "windows-sys",
  "zeroize",
 ]
 
@@ -794,6 +795,7 @@ dependencies = [
  "hkdf",
  "p256",
  "phone-auth-protocol",
+ "proptest",
  "sha2",
  "x25519-dalek",
 ]
