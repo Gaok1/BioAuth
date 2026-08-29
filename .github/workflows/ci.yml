@@ -132,6 +132,7 @@ jobs:
           PROPTEST_CASES: 4096
         run: |
           cargo test -p phone-auth-protocol --test decoder_properties
+          cargo test -p phone-auth-session decoder_properties
           cargo test -p phone-auth-agent --test framing_properties
           PROPTEST_CASES=256 cargo test -p phone-auth-locker --test container_properties
 
@@ -143,6 +144,29 @@ jobs:
         run: |
           cargo install cargo-deny --locked
           cargo deny check
+
+  desktop-windows:
+    name: Desktop (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      # This is a separate job rather than a matrix entry because Linux alone
+      # needs BlueZ headers. More importantly, it compiles and runs the code
+      # behind cfg(windows): DACLs, clipboard exclusions, hard-link counting
+      # and process-interruption atomicity.
+      - name: Rust checks on Windows
+        working-directory: desktop
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
 
   # Four ecosystems, four lockfiles, one scanner. Rust and npm each have their
   # own auditing tool and pub has none at all, so a per-ecosystem approach
