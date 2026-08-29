@@ -162,13 +162,20 @@ jobs:
         # Pinned to a real tag: this action publishes no moving `v2`, so the
         # major-version ref that reads as obviously correct resolves to nothing
         # and the job dies in "Set up job" before running a step.
+        #
+        # Three lockfiles, not four. `packages/phone_auth_native/pubspec.lock`
+        # was listed here and is in that package's own `.gitignore`, so it
+        # never exists in a fresh checkout and the scanner exited 127 —
+        # scanning nothing at all — every time this job ran. Dart is right to
+        # ignore it: a library package's lock is a resolution nobody installs,
+        # because the application resolves the graph again. What ships is
+        # `mobile/pubspec.lock`, which is committed and is scanned below.
         uses: google/osv-scanner-action/osv-scanner-action@v2.5.1
         with:
           scan-args: |-
             --lockfile=desktop/Cargo.lock
             --lockfile=desktop/ui/package-lock.json
             --lockfile=mobile/pubspec.lock
-            --lockfile=packages/phone_auth_native/pubspec.lock
 
       # Kept as a build artefact rather than only a log line: answering "was
       # this version affected" months later needs the list as it was then, not
