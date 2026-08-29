@@ -80,12 +80,23 @@ class PairedSessionRunner {
   /// got a loop at all — it looked paired and answered nothing.
   final Map<String, _Loop> _loops = {};
 
+  /// The latest status of each credential, keyed the way [_loops] is.
+  ///
+  /// The devices list has one row per computer, but a computer has one loop
+  /// per credential and they are never in step: one is answering a request
+  /// while the other is between sessions. Reported straight through, the last
+  /// loop to move decided what the row said, so a connected desktop flickered
+  /// to "conectando" every few minutes and a desktop whose vault credential
+  /// was never paired sat on "offline" while its login session worked.
+  final Map<String, PairedSessionStatus> _statuses = {};
+
   /// Starts a loop for every record, and stops loops for records that are gone.
   void sync(List<PairingRecord> records) {
     final wanted = {for (final record in records) record.credentialId: record};
     for (final credentialId in _loops.keys.toList()) {
       if (!wanted.containsKey(credentialId)) {
         _loops.remove(credentialId)?.stop();
+        _statuses.remove(credentialId);
       }
     }
     for (final record in records) {
@@ -128,10 +139,37 @@ class PairedSessionRunner {
     for (final entry in _loops.entries.toList()) {
       if (entry.value.record.verifierId == verifierId) {
         _loops.remove(entry.key)?.stop();
+        _statuses.remove(entry.key);
       }
     }
     await _service.closeDevice(verifierId);
   }
+
+  /// Records one credential's status and reports its computer's.
+  ///
+  /// A computer is reachable if any of its credentials has a live session --
+  /// the phone is talking to it, whatever the others are doing -- and offline
+  /// only once none of them can be. In between it is still connecting.
+  void _report(PairingRecord record, PairedSessionStatus status) {
+    _statuses[record.credentialId] = status;
+    // Starting from this credential's own status, so a loop reporting after
+    // the runner has been torn down still says something true about itself.
+    var union = status;
+    for (final loop in _loops.values) {
+      if (loop.record.verifierId != record.verifierId) continue;
+      // A credential whose loop has not reported yet is dialling.
+      final each =
+          _statuses[loop.record.credentialId] ?? PairedSessionStatus.connecting;
+      if (_reach(each) > _reach(union)) union = each;
+    }
+    onStatus?.call(record.verifierId, union);
+  }
+
+  static int _reach(PairedSessionStatus status) => switch (status) {
+    PairedSessionStatus.connected => 2,
+    PairedSessionStatus.connecting => 1,
+    PairedSessionStatus.unreachable => 0,
+  };
 
   Future<void> _serve(
     PairingRecord record, {
@@ -139,8 +177,8 @@ class PairedSessionRunner {
   }) async {
     // A blip is still "connecting" as far as the user is concerned. Only after
     // a few quick attempts have all failed is the desktop actually gone.
-    onStatus?.call(
-      record.verifierId,
+    _report(
+      record,
       consecutiveFailures >= _failuresBeforeUnreachable
           ? PairedSessionStatus.unreachable
           : PairedSessionStatus.connecting,
@@ -150,8 +188,7 @@ class PairedSessionRunner {
     try {
       final response = await _service.serveOne(
         record,
-        onEstablished: () =>
-            onStatus?.call(record.verifierId, PairedSessionStatus.connected),
+        onEstablished: () => _report(record, PairedSessionStatus.connected),
         onRequestRaised: raised.add,
       );
       if (response != null) {

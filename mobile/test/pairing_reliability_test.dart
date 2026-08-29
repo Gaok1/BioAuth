@@ -144,6 +144,40 @@ void main() {
     await runner.stop();
   });
 
+  // The devices list has one row per computer and the phone has one loop per
+  // credential, so a computer with two credentials has two loops writing the
+  // same row. Reported straight through, the row said whatever moved last.
+  test('a computer with a credential it cannot serve is still connected', () {
+    fakeAsync((async) {
+      final statuses = <PairedSessionStatus>[];
+      final runner = PairedSessionRunner(
+        transport: _OneSessionTransport(),
+        authorizer: _UnusedAuthorizer(),
+        consent: InteractiveAuthorizer(
+          onRequest: (_) => throw UnimplementedError(),
+        ),
+        onStatus: (verifierId, status) {
+          expect(verifierId, 'desktop-1');
+          statuses.add(status);
+        },
+      );
+      runner.sync([_record, _second]);
+
+      // Long enough for the second loop to fail well past the point where one
+      // loop on its own would give up and call the desktop offline.
+      async.elapse(const Duration(seconds: 40));
+
+      expect(statuses, contains(PairedSessionStatus.connected));
+      expect(
+        statuses.skipWhile((status) => status != PairedSessionStatus.connected),
+        everyElement(PairedSessionStatus.connected),
+        reason: 'one credential failing says nothing about the computer',
+      );
+      runner.stop();
+      async.flushMicrotasks();
+    });
+  });
+
   // A blip must not read as "offline". The desktop sleeping for a moment or
   // the Wi-Fi roaming used to cost a flat fifteen seconds and an offline badge
   // on the first failure.
@@ -388,6 +422,49 @@ class _FailingStore implements PairingStore {
 
 /// Mirrors `_failuresBeforeUnreachable` in the runner, which is private.
 const int _kFailuresBeforeOffline = 3;
+
+/// One credential of the same desktop as [_record], as a second pairing is.
+final _second = PairingRecord(
+  verifierId: _record.verifierId,
+  verifierIdentitySpki: _record.verifierIdentitySpki,
+  endpoint: _record.endpoint,
+  credentialId: 'credential-2',
+  keyKind: _record.keyKind,
+  purpose: CredentialPurpose.vault,
+  pairedAt: _record.pairedAt,
+);
+
+/// Answers the first dial and refuses every one after it.
+///
+/// Both credentials dial the same address with the same identity, so nothing
+/// in the peer tells them apart — which is the point: one loop gets a session
+/// and the other cannot, and the row has to describe the computer anyway.
+class _OneSessionTransport implements AuthTransport {
+  final session = _IdleSession();
+  bool _taken = false;
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Stream<TransportPeer> discoverPeers() => const Stream.empty();
+
+  @override
+  Future<SecureSessionOutcome> connect(
+    TransportPeer peer,
+    VerifierExpectation expectation,
+  ) async {
+    if (_taken) throw const SocketException('desktop is not answering');
+    _taken = true;
+    return _outcome(session, peer.displayName);
+  }
+}
 
 class _RefusingTransport implements AuthTransport {
   int attempts = 0;
