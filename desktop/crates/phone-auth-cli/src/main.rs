@@ -52,6 +52,11 @@ COMMANDS:
                                here, without the agent and without a phone.
     locker status <FILE>       Describe a container. Needs no key and no agent.
     locker rekey <FILE>        Bind a container to this phone's current key
+    locker <ACTION> <FILE>... --batch
+                               Act on several files. Prints how many and how
+                               large before the first prompt, and each file
+                               still needs its own approval on the phone. For
+                               `lock`, --recovery-out names a directory.
 
     vault list                 List what the phone's vault holds. Metadata
                                only: no secret leaves the phone and no prompt
@@ -76,6 +81,7 @@ OPTIONS:
     --clear-after <MS>         How long the clipboard entry lives
     --length <N>               Length of a generated password
     --no-symbols               Leave symbols out of a generated password
+    --batch                    Required to act on more than one file at once
     --json                     Emit raw JSON instead of formatted text
     -h, --help                 Show this message
 
@@ -103,6 +109,7 @@ struct Cli {
     clear_after: Option<u64>,
     length: Option<usize>,
     no_symbols: bool,
+    batch: bool,
     recovery_out: Option<String>,
     recovery_file: Option<String>,
     into: Option<String>,
@@ -113,10 +120,12 @@ struct Cli {
     help: bool,
 }
 
-fn parse() -> Result<Cli, String> {
-    let mut args = std::env::args().skip(1);
-    let command = args.next().unwrap_or_else(|| "help".to_owned());
-    let mut cli = Cli {
+/// A `Cli` with nothing set, before any flag is read.
+///
+/// Shared with the tests so they exercise the same defaults the real parser
+/// starts from rather than a second copy that can drift.
+fn blank_cli(command: String) -> Cli {
+    Cli {
         command,
         args: Vec::new(),
         root: None,
@@ -131,6 +140,7 @@ fn parse() -> Result<Cli, String> {
         clear_after: None,
         length: None,
         no_symbols: false,
+        batch: false,
         recovery_out: None,
         recovery_file: None,
         into: None,
@@ -139,7 +149,12 @@ fn parse() -> Result<Cli, String> {
         new_recovery_code: false,
         json: false,
         help: false,
-    };
+    }
+}
+
+fn parse() -> Result<Cli, String> {
+    let mut args = std::env::args().skip(1);
+    let mut cli = blank_cli(args.next().unwrap_or_else(|| "help".to_owned()));
 
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or(format!("`{flag}` needs a value"));
@@ -180,6 +195,7 @@ fn parse() -> Result<Cli, String> {
                 )
             }
             "--no-symbols" => cli.no_symbols = true,
+            "--batch" => cli.batch = true,
             "--recovery-out" => cli.recovery_out = Some(value()?),
             "--recovery-file" => cli.recovery_file = Some(value()?),
             "--into" => cli.into = Some(value()?),
@@ -216,8 +232,19 @@ fn run(cli: Cli) -> u8 {
     // container's header needs no key, and unlocking with a recovery code must
     // work on a machine where the agent is not running and the phone is gone —
     // that is the entire reason the recovery code exists.
+    // Only for a single target: `status` and a recovery unlock each address
+    // one container, and a batch of them still has to go through the batch
+    // path so the caps and the summary apply.
     if cli.command == "locker" {
-        if let Some(exit) = locker_without_the_agent(&cli) {
+        // Only for a single target: `status` and a recovery unlock each
+        // address one container, and a batch of them still goes through the
+        // batch path so the caps and the summary apply.
+        if cli.args.len() == 2 {
+            if let Some(exit) = locker_without_the_agent(&cli) {
+                return exit;
+            }
+        }
+        if let Err(exit) = locker_batch_plan(&cli) {
             return exit;
         }
     }
@@ -468,12 +495,172 @@ fn locker_recover(path: &std::path::Path, cli: &Cli) -> u8 {
     }
 }
 
+/// How many files one batch may touch.
+///
+/// Not a performance limit. A shell glob is the normal way somebody ends up
+/// naming more files than they meant to, and the difference between locking
+/// twelve files and locking a home directory is one character of typing.
+const MAX_BATCH_FILES: usize = 256;
+
+/// How many bytes one batch may touch, across all its files.
+const MAX_BATCH_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 /// The locker subcommands that need the phone.
 fn locker(client: &mut AgentClient, cli: &Cli) -> u8 {
-    let (Some(action), Some(target)) = (cli.args.first(), cli.args.get(1)) else {
+    let Some(action) = cli.args.first() else {
         eprintln!("phone-auth: locker needs an action and a file, e.g. `locker lock notes.txt`");
         return EXIT_USAGE;
     };
+    let targets = &cli.args[1..];
+    if targets.is_empty() {
+        eprintln!("phone-auth: locker needs an action and a file, e.g. `locker lock notes.txt`");
+        return EXIT_USAGE;
+    }
+    if targets.len() > 1 {
+        return locker_batch(client, cli, action, targets);
+    }
+    locker_one(client, cli, action, &targets[0])
+}
+
+/// Checks a batch and describes it, before anything connects or prompts.
+///
+/// Everything here is a usage error, and usage errors have to come first: a
+/// user told "the agent is not running" would go and start the agent, then
+/// discover the real problem was a glob that matched four hundred files.
+fn locker_batch_plan(cli: &Cli) -> Result<(), u8> {
+    if cli.args.len() <= 2 {
+        return Ok(());
+    }
+    let targets = &cli.args[1..];
+    let action = cli.args.first().map(String::as_str).unwrap_or("act on");
+
+    if !cli.batch {
+        eprintln!(
+            "phone-auth: {} files named. Pass --batch to act on more than one.\n\
+             phone-auth: a glob that matched more than you meant is the reason this asks.",
+            targets.len()
+        );
+        return Err(EXIT_USAGE);
+    }
+    if targets.len() > MAX_BATCH_FILES {
+        eprintln!(
+            "phone-auth: {} files is over the batch limit of {MAX_BATCH_FILES}",
+            targets.len()
+        );
+        return Err(EXIT_USAGE);
+    }
+
+    // Sizes are read before anything happens, so the summary describes the
+    // batch as it stands rather than as it looked after half of it ran.
+    let mut total = 0u64;
+    for target in targets {
+        match std::fs::metadata(target) {
+            Ok(meta) => total = total.saturating_add(meta.len()),
+            Err(error) => {
+                eprintln!("phone-auth: cannot read {target}: {error}");
+                return Err(EXIT_USAGE);
+            }
+        }
+    }
+    if total > MAX_BATCH_BYTES {
+        eprintln!(
+            "phone-auth: {} across {} files is over the batch limit of {} GiB",
+            human_bytes(total),
+            targets.len(),
+            MAX_BATCH_BYTES / (1024 * 1024 * 1024)
+        );
+        return Err(EXIT_USAGE);
+    }
+
+    eprintln!(
+        "phone-auth: {action} {} files, {} in total, from {}",
+        targets.len(),
+        human_bytes(total),
+        common_parent(targets)
+    );
+    eprintln!("phone-auth: each one needs its own approval on the phone.\n");
+    Ok(())
+}
+
+/// Runs one action over many files, after saying what that means.
+///
+/// Every file still costs its own approval on the phone: the wrap request
+/// names one file and one size, so there is no honest way to ask once for
+/// twenty. What a batch adds is the part that was missing — the user is told
+/// how many files and how many bytes *before* the first prompt, rather than
+/// discovering it twenty fingerprints later.
+fn locker_batch(client: &mut AgentClient, cli: &Cli, action: &str, targets: &[String]) -> u8 {
+    let mut failed = 0usize;
+    for (index, target) in targets.iter().enumerate() {
+        eprintln!("[{}/{}] {target}", index + 1, targets.len());
+        let exit = locker_one(client, cli, action, target);
+        if exit == EXIT_GRANTED {
+            continue;
+        }
+        failed += 1;
+        // A refusal is the user saying no, and carrying on would ask them
+        // again for the next file. Every other failure is about that one
+        // file, so the rest of the batch still deserves to run.
+        if exit == EXIT_DENIED {
+            eprintln!(
+                "\nphone-auth: stopped after a refusal. {} of {} done.",
+                index + 1 - failed,
+                targets.len()
+            );
+            return EXIT_DENIED;
+        }
+    }
+
+    eprintln!(
+        "\nphone-auth: {} of {} succeeded",
+        targets.len() - failed,
+        targets.len()
+    );
+    if failed == 0 {
+        EXIT_GRANTED
+    } else {
+        EXIT_UNAVAILABLE
+    }
+}
+
+/// Where a batch's files come from, for the line the user reads before
+/// approving anything. Their common directory, or a count of directories when
+/// there is no single one — either way it answers "these files, from where?"
+fn common_parent(targets: &[String]) -> String {
+    let mut parents: Vec<String> = targets
+        .iter()
+        .map(|target| {
+            std::path::Path::new(target)
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned())
+                .filter(|parent| !parent.is_empty())
+                .unwrap_or_else(|| ".".to_owned())
+        })
+        .collect();
+    parents.sort();
+    parents.dedup();
+    match parents.as_slice() {
+        [only] => only.clone(),
+        several => format!("{} different directories", several.len()),
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn locker_one(client: &mut AgentClient, cli: &Cli, action: &str, target: &str) -> u8 {
     let path = match absolute(target) {
         Ok(path) => path,
         Err(error) => {
@@ -482,7 +669,7 @@ fn locker(client: &mut AgentClient, cli: &Cli) -> u8 {
         }
     };
 
-    let (method, params) = match action.as_str() {
+    let (method, params) = match action {
         "lock" => {
             let Some(recovery_out) = &cli.recovery_out else {
                 eprintln!(
@@ -492,7 +679,24 @@ fn locker(client: &mut AgentClient, cli: &Cli) -> u8 {
                 );
                 return EXIT_USAGE;
             };
-            let recovery_out = match absolute(recovery_out) {
+            // In a batch `--recovery-out` names a directory: one recovery code
+            // per container, because a code is the only way into the file it
+            // belongs to and one file cannot hold twenty of them without the
+            // user having to work out which line opens which container.
+            let recovery_out = if cli.batch {
+                let stem = std::path::Path::new(target)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "container".to_owned());
+                let per_file = std::path::Path::new(recovery_out)
+                    .join(format!("{stem}.recovery"))
+                    .to_string_lossy()
+                    .into_owned();
+                absolute(&per_file)
+            } else {
+                absolute(recovery_out)
+            };
+            let recovery_out = match recovery_out {
                 Ok(path) => path,
                 Err(error) => {
                     eprintln!("phone-auth: {error}");
@@ -1122,5 +1326,123 @@ mod tests {
             EXIT_USAGE,
             "a rejected --clear-after is a typo, not an outage"
         );
+    }
+
+    /// Builds a `Cli` naming `files`, the way the argument parser would.
+    fn batch_cli(files: Vec<String>, batch: bool) -> Cli {
+        let mut cli = blank_cli("locker".to_owned());
+        cli.args = std::iter::once("lock".to_owned()).chain(files).collect();
+        cli.batch = batch;
+        cli
+    }
+
+    /// A glob that matched more than the user meant is the normal way a batch
+    /// gets out of hand: the difference between twelve files and a home
+    /// directory is one character of typing.
+    #[test]
+    fn more_than_one_file_needs_the_batch_flag() {
+        let files = vec!["a.txt".to_owned(), "b.txt".to_owned()];
+
+        assert_eq!(locker_batch_plan(&batch_cli(files, false)), Err(EXIT_USAGE));
+    }
+
+    /// One file is the ordinary case and must not need a flag.
+    #[test]
+    fn a_single_file_is_not_a_batch() {
+        assert_eq!(
+            locker_batch_plan(&batch_cli(vec!["a.txt".to_owned()], false)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_batch_over_the_file_limit_is_refused() {
+        let files = (0..=MAX_BATCH_FILES).map(|i| format!("f{i}.txt")).collect();
+
+        assert_eq!(locker_batch_plan(&batch_cli(files, true)), Err(EXIT_USAGE));
+    }
+
+    /// A file that is not there is refused before the phone is asked for
+    /// anything, rather than half way through a batch.
+    #[test]
+    fn a_batch_naming_a_missing_file_is_refused_up_front() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-batch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("sandbox");
+        let present = dir.join("here.txt");
+        std::fs::write(&present, b"x").expect("write");
+
+        let files = vec![
+            present.to_string_lossy().into_owned(),
+            dir.join("gone.txt").to_string_lossy().into_owned(),
+        ];
+
+        assert_eq!(locker_batch_plan(&batch_cli(files, true)), Err(EXIT_USAGE));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_batch_within_its_limits_is_allowed() {
+        let dir = std::env::temp_dir().join(format!("phoneauth-batch-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("sandbox");
+        let files = (0..3)
+            .map(|index| {
+                let path = dir.join(format!("f{index}.txt"));
+                std::fs::write(&path, vec![b'x'; 16]).expect("write");
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+
+        assert_eq!(locker_batch_plan(&batch_cli(files, true)), Ok(()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The summary the user reads before the first prompt has to answer
+    /// "these files, from where?" — one directory when there is one, and an
+    /// honest count when there is not.
+    #[test]
+    fn a_batch_says_where_its_files_came_from() {
+        let same = [
+            format!("{0}docs{0}a.txt", std::path::MAIN_SEPARATOR),
+            format!("{0}docs{0}b.txt", std::path::MAIN_SEPARATOR),
+        ];
+        assert_eq!(
+            common_parent(&same),
+            format!("{0}docs", std::path::MAIN_SEPARATOR)
+        );
+
+        let spread = [
+            format!("{0}docs{0}a.txt", std::path::MAIN_SEPARATOR),
+            format!("{0}photos{0}b.txt", std::path::MAIN_SEPARATOR),
+            format!("{0}music{0}c.txt", std::path::MAIN_SEPARATOR),
+        ];
+        assert_eq!(common_parent(&spread), "3 different directories");
+    }
+
+    /// A bare filename has no directory, and the summary must still say
+    /// something rather than an empty string.
+    #[test]
+    fn a_batch_of_bare_names_still_names_a_place() {
+        assert_eq!(
+            common_parent(&["a.txt".to_owned(), "b.txt".to_owned()]),
+            "."
+        );
+    }
+
+    /// The size in the summary is what the user weighs the batch by, so the
+    /// units have to be the ones they think in.
+    #[test]
+    fn sizes_are_reported_in_units_a_person_reads() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1024), "1.0 KiB");
+        assert_eq!(human_bytes(1536), "1.5 KiB");
+        assert_eq!(human_bytes(3 * 1024 * 1024), "3.0 MiB");
+        assert_eq!(human_bytes(2 * 1024 * 1024 * 1024), "2.0 GiB");
+        // Past the largest unit it keeps counting rather than wrapping.
+        assert_eq!(human_bytes(10 * 1024 * 1024 * 1024), "10.0 GiB");
     }
 }
