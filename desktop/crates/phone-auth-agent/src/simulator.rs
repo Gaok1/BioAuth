@@ -42,6 +42,20 @@ pub const DEVICE_ID: &str = "dev-simulator-phone";
 pub const DEVICE_NAME: &str = "Simulated phone (development)";
 pub const CREDENTIAL_ID: &str = "dev-simulator-authorization-v1";
 
+/// Mirrors the phone's `${verifierId}-${purpose}-v1`, so two purposes from one
+/// simulated phone are two credentials rather than one overwriting the other.
+pub fn credential_id_for(purpose: CredentialPurpose) -> String {
+    let name = match purpose {
+        CredentialPurpose::Authorization => return CREDENTIAL_ID.to_owned(),
+        CredentialPurpose::DiskUnlock => "diskUnlock",
+        CredentialPurpose::WebAuthn => "webAuthn",
+        CredentialPurpose::Vault => "vault",
+        CredentialPurpose::FileLocker => "fileLocker",
+        CredentialPurpose::Ssh => "ssh",
+    };
+    format!("dev-simulator-{name}-v1")
+}
+
 /// A software phone.
 pub struct SimulatedPhone {
     /// Signs authorization requests. On a real phone this sits behind a
@@ -72,18 +86,28 @@ impl SimulatedPhone {
             .to_vec()
     }
 
-    /// What this phone offers at pairing.
-    pub fn enrolment(&self) -> Enrolment {
+    /// What this phone offers at pairing, for the purpose the code asked for.
+    ///
+    /// Takes the purpose rather than always claiming authorization, because
+    /// the desktop refuses an enrolment that answers a different purpose than
+    /// the one it put in the code — a real phone reads it from the scan, and a
+    /// simulator that ignored it could only ever pair for logins.
+    pub fn enrolment_for(&self, purpose: CredentialPurpose) -> Enrolment {
         Enrolment {
             protocol_version: phone_auth_protocol::PROTOCOL_VERSION,
             device_name: DEVICE_NAME.to_owned(),
-            credential_id: CREDENTIAL_ID.to_owned(),
+            credential_id: credential_id_for(purpose),
             algorithm: PUBLIC_KEY_EC_P256_SPKI.to_owned(),
             public_key: self.credential_spki(),
             // Truthful, and the reason this can never unlock a disk.
             key_kind: KeyKind::Software,
-            purpose: CredentialPurpose::Authorization,
+            purpose,
         }
+    }
+
+    /// The authorization enrolment, which is what most callers want.
+    pub fn enrolment(&self) -> Enrolment {
+        self.enrolment_for(CredentialPurpose::Authorization)
     }
 
     pub fn identity_spki(&self) -> Vec<u8> {
@@ -98,7 +122,7 @@ impl SimulatedPhone {
             bootstrap,
             DEVICE_ID,
             &self.identity,
-            &self.enrolment(),
+            &self.enrolment_for(bootstrap.purpose),
             now_ms,
         )?;
         let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -218,6 +242,50 @@ mod tests {
         );
         assert_eq!(enrolment.purpose, CredentialPurpose::Authorization);
         assert_eq!(enrolment.validate(), Ok(()));
+    }
+
+    /// The desktop refuses an enrolment that answers a different purpose than
+    /// the code asked for, so a simulator stuck on authorization could only
+    /// ever pair for logins — and the vault and SSH paths would have no way to
+    /// be exercised without a real phone.
+    #[test]
+    fn it_enrols_for_the_purpose_the_code_asked_for() {
+        let phone = SimulatedPhone::new();
+
+        for purpose in [
+            CredentialPurpose::Authorization,
+            CredentialPurpose::Vault,
+            CredentialPurpose::FileLocker,
+            CredentialPurpose::Ssh,
+        ] {
+            let enrolment = phone.enrolment_for(purpose);
+            assert_eq!(enrolment.purpose, purpose);
+            assert_eq!(enrolment.validate(), Ok(()));
+        }
+    }
+
+    /// Two purposes are two credentials. Sharing one id would make the second
+    /// pairing replace the first, which is the bug the ids exist to avoid.
+    #[test]
+    fn each_purpose_has_its_own_credential_id() {
+        let ids: std::collections::BTreeSet<String> = [
+            CredentialPurpose::Authorization,
+            CredentialPurpose::DiskUnlock,
+            CredentialPurpose::WebAuthn,
+            CredentialPurpose::Vault,
+            CredentialPurpose::FileLocker,
+            CredentialPurpose::Ssh,
+        ]
+        .into_iter()
+        .map(credential_id_for)
+        .collect();
+
+        assert_eq!(ids.len(), 6);
+        // The authorization one keeps the name the tray and the dev flow use.
+        assert_eq!(
+            credential_id_for(CredentialPurpose::Authorization),
+            CREDENTIAL_ID
+        );
     }
 
     #[test]
