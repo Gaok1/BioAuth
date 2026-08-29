@@ -620,8 +620,11 @@ impl Service {
             ));
         }
 
-        let (device_id, credential_id) =
-            self.select_service_credential("webauthn", "passkey relay", params.credential_id.as_deref())?;
+        let (device_id, credential_id) = self.select_service_credential(
+            "webauthn",
+            "passkey relay",
+            params.credential_id.as_deref(),
+        )?;
         let mut session = self
             .transports
             .connect(&device_id, &credential_id)
