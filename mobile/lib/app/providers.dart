@@ -14,7 +14,9 @@ import 'app_controller.dart';
 import 'navigation.dart';
 
 import '../core/auth/interactive_authorizer.dart';
+import '../core/ssh/ssh_service.dart';
 import '../core/vault/vault_approval.dart';
+import '../features/ssh/ssh_approval_sheet.dart';
 import '../features/vault/vault_approval_sheet.dart';
 import '../core/auth/native_biometric_authorizer.dart';
 import '../core/bluetooth/ble_transport.dart';
@@ -159,6 +161,30 @@ final vaultApprovalProvider = Provider<InteractiveVaultApproval>((ref) {
   return approval;
 });
 
+/// The bridge between a desktop's SSH sign request and the sheet that names it.
+///
+/// Separate from the vault's approval rather than one generic sheet: what is
+/// being approved differs in kind. A copied password is spent when it is
+/// pasted; an SSH signature opens a session that outlives the tap. A sheet
+/// that said the same thing about both would be wrong about one of them.
+final sshApprovalProvider = Provider<InteractiveSshApproval>((ref) {
+  late final InteractiveSshApproval approval;
+  approval = InteractiveSshApproval(
+    onRequest: (request) async {
+      final context = rootNavigatorKey.currentContext;
+      if (context == null) {
+        approval.settle(request.id, approved: false);
+        return;
+      }
+      approval.settle(
+        request.id,
+        approved: await showSshApprovalSheet(context, request),
+      );
+    },
+  );
+  return approval;
+});
+
 /// Holds a connection to every paired desktop while the foreground service is
 /// available. The cached engine keeps this provider watched without an activity.
 final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
@@ -173,6 +199,7 @@ final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
     authorizer: ref.watch(biometricAuthorizerProvider),
     consent: ref.watch(interactiveAuthorizerProvider),
     vaultApproval: ref.watch(vaultApprovalProvider),
+    sshApproval: ref.watch(sshApprovalProvider),
     // Without this the devices list had no source of truth for connection
     // state at all, so every paired desktop sat on `connecting` forever.
     //

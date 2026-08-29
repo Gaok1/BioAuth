@@ -12,6 +12,7 @@ import '../auth/interactive_authorizer.dart';
 import '../auth/phone_authenticator.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
+import '../ssh/ssh_service.dart';
 import '../transport/auth_transport.dart';
 import '../vault/vault_approval.dart';
 import 'paired_session_service.dart';
@@ -40,6 +41,7 @@ class PairedSessionRunner {
     required BiometricAuthorizer authorizer,
     required InteractiveAuthorizer consent,
     InteractiveVaultApproval? vaultApproval,
+    InteractiveSshApproval? sshApproval,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
@@ -47,10 +49,12 @@ class PairedSessionRunner {
          authorizer: authorizer,
          consent: consent,
          vaultApproval: vaultApproval,
+         sshApproval: sshApproval,
          clock: clock,
        ),
        _consent = consent,
-       _vaultApproval = vaultApproval;
+       _vaultApproval = vaultApproval,
+       _sshApproval = sshApproval;
 
   final PairedSessionService _service;
   final InteractiveAuthorizer _consent;
@@ -59,6 +63,7 @@ class PairedSessionRunner {
   /// session that is gone cannot be answered, and leaving the sheet tappable
   /// would let a later tap approve a request that no longer has a session.
   final InteractiveVaultApproval? _vaultApproval;
+  final InteractiveSshApproval? _sshApproval;
 
   /// Reports connection state per verifier, for the devices list.
   final void Function(String verifierId, PairedSessionStatus status)? onStatus;
@@ -96,6 +101,7 @@ class PairedSessionRunner {
       _consent.abandon(requestId, StateError('Conexão encerrada'));
     }
     _vaultApproval?.abandonAll();
+    _sshApproval?.abandonAll();
   }
 
   /// Drops one verifier now, without waiting for the next [sync].

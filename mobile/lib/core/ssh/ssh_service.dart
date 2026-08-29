@@ -16,6 +16,8 @@
 ///      key with `sudo` would make one approval buy the other.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import '../protocol/application_frame.dart';
@@ -167,4 +169,49 @@ class SshService {
     }
     return true;
   }
+}
+
+/// Bridges an arriving sign request to the sheet the user taps.
+///
+/// The same shape as `InteractiveVaultApproval`, and separate from it for the
+/// same reason the sheets are separate: one of them approves something that is
+/// spent immediately and the other approves a session.
+class InteractiveSshApproval implements SshApproval {
+  InteractiveSshApproval({required this.onRequest});
+
+  /// Called when a validated request needs a decision, to put it on screen.
+  final void Function(SshApprovalRequest request) onRequest;
+
+  final Map<String, Completer<bool>> _pending = {};
+
+  @override
+  Future<bool> confirm(SshApprovalRequest request) {
+    // A retry of a request already on screen waits on the same answer rather
+    // than stacking a second sheet: one login must not cost two approvals, and
+    // two sheets is how a user approves the one they were not reading.
+    final existing = _pending[request.id];
+    if (existing != null) return existing.future;
+
+    final completer = Completer<bool>();
+    _pending[request.id] = completer;
+    onRequest(request);
+    return completer.future;
+  }
+
+  void settle(String requestId, {required bool approved}) {
+    final completer = _pending.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(approved);
+    }
+  }
+
+  /// Refuses everything outstanding. A sheet the user can no longer see must
+  /// not stay answerable.
+  void abandonAll() {
+    for (final id in _pending.keys.toList()) {
+      settle(id, approved: false);
+    }
+  }
+
+  Iterable<String> get pendingRequestIds => _pending.keys;
 }
