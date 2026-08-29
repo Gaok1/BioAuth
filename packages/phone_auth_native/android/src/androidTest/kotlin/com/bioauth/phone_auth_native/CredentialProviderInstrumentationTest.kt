@@ -81,12 +81,25 @@ class CredentialProviderInstrumentationTest {
             ),
         )
 
+        // The setting is written by `@Before`; the system server adopts it from
+        // a settings observer, so this is a wait rather than a read. Every test
+        // in this class writes and restores the same key, so the server is
+        // rebuilding its provider list around all of them and the window has to
+        // cover the slowest of those rebuilds, not the median one.
         val platform = context.getSystemService(android.credentials.CredentialManager::class.java)
-        val deadline = SystemClock.uptimeMillis() + 5000
+        val deadline = SystemClock.uptimeMillis() + ADOPTION_WINDOW_MS
         while (!platform.isEnabledCredentialProviderService(component) && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(100)
         }
-        assertTrue(platform.isEnabledCredentialProviderService(component))
+        // Named, because a bare `assertTrue` here reports `java.lang.AssertionError`
+        // and nothing else -- and on CI this runs on an emulator nobody can open
+        // afterwards, so whatever the failure does not say is not knowable.
+        assertTrue(
+            "the system did not adopt this provider within ${ADOPTION_WINDOW_MS}ms; " +
+                "$CREDENTIAL_SERVICE holds <${readProviders()}> and this component is " +
+                "<${component.flattenToString()}>",
+            platform.isEnabledCredentialProviderService(component),
+        )
         assertTrue(CredentialManager.create(context).createSettingsPendingIntent().isActivity)
     }
 
@@ -294,6 +307,13 @@ class CredentialProviderInstrumentationTest {
 
     companion object {
         private const val CREDENTIAL_SERVICE = "credential_service"
+
+        /**
+         * How long the system server gets to pick up a written provider list.
+         *
+         * Only ever spent in full on the way to a failure, so it is generous.
+         */
+        private const val ADOPTION_WINDOW_MS = 15000L
         private const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
     }
 }
