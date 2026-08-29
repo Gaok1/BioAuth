@@ -103,9 +103,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
+      # Electron 44 declares `node >= 22.12.0`. npm only warns about an
+      # engine mismatch by default, so a 20 here does not fail the install
+      # outright — it fails later, somewhere less obvious.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       # No `npm ci`: the main-process modules under test require only Node
       # built-ins, which is what makes them testable without Electron at all.
       - name: Tray tests

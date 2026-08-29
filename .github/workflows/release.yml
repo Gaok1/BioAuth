@@ -299,7 +299,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: desktop/ui/package-lock.json
 
@@ -394,7 +394,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # No `npm ci`: the packager uses only Node built-ins on purpose, so this
       # step cannot pull code from the network into a signed artefact.
@@ -451,7 +451,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: desktop/ui/package-lock.json
 
@@ -542,7 +542,20 @@ jobs:
   release:
     name: Publish release
     needs: [gate, android, windows, linux, nix, extension]
-    if: needs.gate.outputs.publish == 'true'
+    # A stable release is all or nothing: one missing platform makes it a
+    # broken release rather than a partial one. A debug prerelease is the
+    # opposite — its only job is getting builds into someone's hands, and
+    # holding four good packages back because a fifth failed is not caution.
+    # That is not hypothetical: `nix` failing once left a working APK and a
+    # working Windows installer unpublished.
+    #
+    # `!cancelled()` rather than `always()`, because a run somebody cancelled
+    # should stay cancelled instead of publishing half of itself.
+    if: >-
+      !cancelled()
+      && needs.gate.outputs.publish == 'true'
+      && (needs.gate.outputs.channel == 'debug'
+          || !contains(needs.*.result, 'failure'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -592,6 +605,14 @@ jobs:
             done
           fi
 
+          # Every build failing leaves only the SBOM behind, and a release
+          # holding nothing but its own dependency list is an empty box with
+          # a bow on it.
+          if [ -z "$(find . -type f ! -name 'sbom.cyclonedx.json' -print -quit)" ]; then
+            echo "::error::every build failed, so there is nothing to publish"
+            exit 1
+          fi
+
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
@@ -604,6 +625,34 @@ jobs:
       # issued to this workflow run and logged publicly, so `gh attestation
       # verify` can say which commit and which workflow produced a file. No
       # key exists for the project to hold, lose, or have taken.
+      # A debug prerelease that quietly lacks the APK is a trap of the
+      # same family as an unsigned file with a trustworthy name: what is
+      # missing has to be legible on the page, not inferred by noticing
+      # that the file list is shorter than usual.
+      - name: Note any target that did not build
+        id: missing
+        env:
+          RESULTS: |
+            Android APK:${{ needs.android.result }}
+            Windows installer:${{ needs.windows.result }}
+            Linux packages:${{ needs.linux.result }}
+            NixOS package:${{ needs.nix.result }}
+            Browser extensions:${{ needs.extension.result }}
+        run: |
+          absent=$(echo "$RESULTS" | awk -F: '
+            NF == 2 && $2 != "success" { print "> - **" $1 "** — " $2 }')
+          {
+            echo 'note<<NOTE_EOF'
+            if [ -n "$absent" ]; then
+              echo '> [!WARNING]'
+              echo '> **This build is incomplete.** These targets produced'
+              echo '> no artifacts, so what follows is only part of the set:'
+              echo '>'
+              echo "$absent"
+            fi
+            echo NOTE_EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -680,6 +729,8 @@ jobs:
           prerelease: true
           generate_release_notes: true
           body: |
+            ${{ steps.missing.outputs.note }}
+
             ## Unsigned debug build — for testing, not for use
 
             Nothing in this release is signed, and every filename carries
