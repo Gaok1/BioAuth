@@ -185,8 +185,9 @@ T _decode<T>(Uint8List payload, T Function() read) {
   }
 
   if (string() == null) return null; // session identifier
-  if (position >= data.length || data[position] != _userauthRequest)
+  if (position >= data.length || data[position] != _userauthRequest) {
     return null;
+  }
   position += 1;
 
   final user = text();

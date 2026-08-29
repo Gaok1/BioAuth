@@ -15,6 +15,7 @@ import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/enrolment.dart';
 import '../protocol/webauthn_relay.dart';
+import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
 import '../vault/vault_service.dart';
 import '../../features/vault/vault_store.dart';
@@ -35,17 +36,21 @@ class PairedSessionService {
     required AuthorizationConsent consent,
     VaultStore? vaultStore,
     VaultApproval? vaultApproval,
+    SshApproval? sshApproval,
+    SshSigner? sshSigner,
     DateTime Function()? clock,
   }) : _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
        _vault = VaultService(repository: vaultStore, approval: vaultApproval),
+       _ssh = SshService(approval: sshApproval, signer: sshSigner),
        _clock = clock;
 
   final AuthTransport _transport;
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
   final VaultService _vault;
+  final SshService _ssh;
   final DateTime Function()? _clock;
   // Keyed by verifier: one loop dials each desktop, so one session per
   // verifier is live at a time, and revoking has to reach exactly that one.
@@ -175,11 +180,22 @@ class PairedSessionService {
         return null;
       }
       if (ApplicationFrame.recognizes(frame)) {
-        final response = await _vault.handle(
-          frame,
-          sessionBinding: outcome.session.sessionBinding,
-          authorized: record.purpose == CredentialPurpose.vault,
-        );
+        // Which handler serves a frame is decided by the credential this
+        // session was opened with, not by the operation name in it. A session
+        // opened for the vault cannot reach the SSH key by asking for
+        // `ssh.sign`, and the other way round.
+        final purpose = record.purpose;
+        final response = purpose == CredentialPurpose.ssh
+            ? await _ssh.handle(
+                frame,
+                sessionBinding: outcome.session.sessionBinding,
+                authorized: true,
+              )
+            : await _vault.handle(
+                frame,
+                sessionBinding: outcome.session.sessionBinding,
+                authorized: purpose == CredentialPurpose.vault,
+              );
         await outcome.session.send(response);
         return null;
       }

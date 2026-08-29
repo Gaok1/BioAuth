@@ -50,7 +50,7 @@ enum ApplicationErrorCode {
   }
 }
 
-/// Versioned `vault.*`/`locker.*` envelope inside the secure channel.
+/// Versioned `vault.*`/`locker.*`/`ssh.*` envelope inside the secure channel.
 ///
 /// It is deliberately separate from the biometric-signed authorization frame.
 /// Do not add a `toString` that could place [payload] in logs.
@@ -185,6 +185,8 @@ class ApplicationFrame {
       suffix = value.substring(6);
     } else if (value.startsWith('locker.')) {
       suffix = value.substring(7);
+    } else if (value.startsWith('ssh.')) {
+      suffix = value.substring(4);
     } else {
       return false;
     }
