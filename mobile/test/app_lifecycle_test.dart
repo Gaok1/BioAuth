@@ -11,6 +11,7 @@ import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/transport/auth_transport.dart';
 import 'package:phone_auth/core/transport/secure_session_establisher.dart';
+import 'package:phone_auth/core/vault/vault_approval.dart';
 
 final _record = PairingRecord(
   verifierId: 'desktop-1',
@@ -92,6 +93,69 @@ void main() {
     expect(session.closed, isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+
+  // The same distinction, for the answer rather than the connection. This is
+  // the one the user feels: a desktop asks for a password, the sheet appears,
+  // the user taps approve, and approving raises the biometric prompt — which
+  // costs the app focus. Refusing on `inactive` refused the request the person
+  // was in the middle of saying yes to, and the desktop reported a denial
+  // nobody made.
+  testWidgets('the biometric prompt does not refuse the request it is for', (
+    tester,
+  ) async {
+    final session = _IdleSession();
+    final transport = _LifecycleTransport(session);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    late InteractiveVaultApproval approval;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appConfigProvider.overrideWithValue(const AppConfig.production()),
+          pairedVerifiersProvider.overrideWith((ref) async => [_record]),
+          backgroundSessionsReadyProvider.overrideWith((ref) async => true),
+          transportProvider.overrideWith((ref) async => transport),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            approval = ref.watch(vaultApprovalProvider);
+            return const PhoneAuthApp();
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    const request = VaultApprovalRequest(
+      id: 'request-1',
+      verifierName: 'desktop-1',
+      operation: VaultOperation.read,
+      itemName: 'example.com',
+    );
+    bool? answer;
+    unawaited(approval.confirm(request).then((value) => answer = value));
+    await tester.pump();
+    expect(approval.pendingRequestIds, contains('request-1'));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(
+      answer,
+      isNull,
+      reason: 'raising the biometric prompt is not an answer',
+    );
+    expect(approval.pendingRequestIds, contains('request-1'));
+
+    // Actually leaving still refuses: a sheet nobody can see must not stay
+    // answerable.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(answer, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   });
 }

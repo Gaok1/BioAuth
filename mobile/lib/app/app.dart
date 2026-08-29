@@ -60,16 +60,30 @@ class _SessionHostState extends ConsumerState<_SessionHost>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      ref.invalidate(backgroundSessionsReadyProvider);
-      return;
-    }
-    // A vault sheet the user can no longer see must not stay answerable. The
-    // app going to the background is not an answer, so it becomes a refusal —
-    // otherwise a tap landing on the sheet as the phone comes back would
-    // approve a request the user never read.
-    if (!ref.read(appConfigProvider).mockEnabled) {
-      ref.read(vaultApprovalProvider).abandonAll();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        ref.invalidate(backgroundSessionsReadyProvider);
+
+      // Focus lost while the app is still on screen: the biometric prompt,
+      // the notification shade, a permission dialog. Approving a vault
+      // request *raises* the biometric prompt, so refusing here refused the
+      // request the user was in the middle of approving — the desktop was
+      // told no by a person who was saying yes, and the phone looked broken
+      // rather than strict. The transport already draws this distinction;
+      // this handler did not.
+      case AppLifecycleState.inactive:
+        break;
+
+      // A sheet the user can no longer see must not stay answerable. Leaving
+      // is not an answer, so it becomes a refusal — otherwise a tap landing
+      // on the sheet as the phone comes back would approve a request nobody
+      // read.
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        if (!ref.read(appConfigProvider).mockEnabled) {
+          ref.read(vaultApprovalProvider).abandonAll();
+        }
     }
   }
 

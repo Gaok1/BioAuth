@@ -46,10 +46,46 @@ void main() {
     expect(find.text('hunter2'), findsOneWidget);
     expect(store.fetches, 1);
 
+    // Losing focus covers the contents without forgetting them. This test
+    // used to assert the opposite, which is how the bug survived: raising the
+    // biometric prompt costs the app focus, so locking on `inactive` meant
+    // every unlock and every reveal locked the vault behind itself.
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
-    expect(controller.locked, isTrue);
+    expect(controller.locked, isFalse);
     expect(find.byType(ColoredBox), findsWidgets);
+    expect(find.text('hunter2'), findsNothing);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(find.text('Example'), findsOneWidget);
+  });
+
+  testWidgets('leaving the foreground locks the vault', (tester) async {
+    final store = _ScreenStore();
+    final controller = VaultController(store: store, copy: (_) async {});
+    await tester.pumpWidget(
+      MaterialApp(home: VaultScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Desbloquear'));
+    await tester.pumpAndSettle();
+    expect(find.text('Example'), findsOneWidget);
+
+    // The real sequence, which Flutter asserts on: focus goes first, then the
+    // views are hidden, and coming back passes through `inactive` again —
+    // there is no `hidden` straight to `resumed`. That is also why locking on
+    // `inactive` could never be narrowed to "only on the way out": the same
+    // event fires on the way back in.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(controller.locked, isFalse, reason: 'losing focus is not leaving');
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(controller.locked, isTrue);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(find.text('O cofre está bloqueado'), findsOneWidget);

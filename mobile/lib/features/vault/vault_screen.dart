@@ -27,13 +27,31 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
     controller.addListener(_changed);
   }
 
+  /// Two different events, and treating them alike locked the vault every
+  /// time it was opened.
+  ///
+  /// `inactive` means the app lost focus while staying on screen: the
+  /// biometric prompt, the notification shade, a permission dialog. Raising
+  /// the biometric prompt *is* how the vault unlocks, so locking here meant
+  /// tapping "Desbloquear" locked the vault, and the user authenticated their
+  /// way back to "O cofre está bloqueado". Same for revealing an item. The
+  /// contents are still covered, because iOS takes its app-switcher snapshot
+  /// during `inactive` — but covering and forgetting are not the same act.
+  ///
+  /// `hidden`, `paused` and `detached` mean the app is actually leaving the
+  /// foreground, which is when the vault must forget everything it holds.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      setState(() => _shielded = false);
-    } else {
-      controller.lock();
-      setState(() => _shielded = true);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        setState(() => _shielded = false);
+      case AppLifecycleState.inactive:
+        setState(() => _shielded = true);
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        controller.lock();
+        setState(() => _shielded = true);
     }
   }
 
