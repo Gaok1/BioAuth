@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../../domain/authentication_request.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
@@ -107,9 +108,13 @@ class PairedSessionService {
   /// Returns the response that was sent, or null when the desktop asked for
   /// nothing before the timeout. A null is not an error: the caller simply
   /// dials again.
+  /// [onRequestRaised] fires with the id of every request this session puts in
+  /// front of the user, so a caller cleaning up after a broken session can
+  /// name what *this* session left pending instead of everything pending.
   Future<AuthResponse?> serveOne(
     PairingRecord record, {
     void Function()? onEstablished,
+    void Function(String requestId)? onRequestRaised,
   }) async {
     if (_stopped) throw StateError('Serviço de sessões encerrado');
     if (_closed.contains(record.verifierId)) {
@@ -143,7 +148,9 @@ class PairedSessionService {
 
     final core = PhoneAuthCore(
       authorizer: _authorizer,
-      consent: _consent,
+      consent: onRequestRaised == null
+          ? _consent
+          : _SessionScopedConsent(_consent, onRequestRaised),
       policy: policyFor(record),
       clock: _clock,
     );
@@ -222,6 +229,28 @@ class PairedSessionService {
       }
       await _close(outcome.session);
     }
+  }
+}
+
+/// Reports each request a single session raises, then defers to the real one.
+///
+/// Consent is process-wide: one screen, one queue, whichever session filled it.
+/// That is right for showing the prompt and wrong for cleaning up after a
+/// broken link, which needs to name only its own. This is the seam between the
+/// two — it observes, it decides nothing.
+class _SessionScopedConsent implements AuthorizationConsent {
+  _SessionScopedConsent(this._inner, this._onRaised);
+
+  final AuthorizationConsent _inner;
+  final void Function(String requestId) _onRaised;
+
+  @override
+  Future<bool> confirm(
+    AuthenticationRequest request,
+    TransportSecurityProperties transport,
+  ) {
+    _onRaised(request.requestId);
+    return _inner.confirm(request, transport);
   }
 }
 

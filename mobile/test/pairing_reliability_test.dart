@@ -12,6 +12,7 @@ import 'package:phone_auth/core/auth/interactive_authorizer.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/core/protocol/protocol_codec.dart';
 import 'package:phone_auth/core/session/paired_session_runner.dart';
 import 'package:phone_auth/core/session/paired_session_service.dart';
 import 'package:phone_auth/core/session/phone_auth_core.dart';
@@ -204,6 +205,127 @@ void main() {
     expect(devices, hasLength(1), reason: 'the pairing is still real');
     expect(devices.single.phase, ConnectionPhase.error);
   });
+
+  // One desktop, two credentials, so two loops. A session ending is ordinary:
+  // it carries one request and closes, and the phone dials again. When that
+  // unwinding abandoned everything pending rather than what the session itself
+  // had raised, the healthy loop's prompt was cancelled by the other loop's
+  // perfectly normal reconnect -- the sheet vanished mid-tap and the desktop
+  // that had asked was told the phone failed.
+  test(
+    'one session ending does not cancel another session\'s prompt',
+    () async {
+      final now = DateTime.utc(2026, 8, 27, 12);
+      final transport = _OneAsksOneBreaksTransport();
+      final consent = InteractiveAuthorizer(onRequest: (_) {});
+      final runner = PairedSessionRunner(
+        transport: transport,
+        authorizer: _UnusedAuthorizer(),
+        consent: consent,
+        clock: () => now,
+      );
+      addTearDown(runner.stop);
+
+      runner.sync([_record, _vaultRecord]);
+      await transport.asking.listening.future;
+      transport.asking.ask(
+        AuthenticationRequest(
+          requestId: 'request-1',
+          verifierId: 'desktop-1',
+          verifierName: 'Desktop-NixOS',
+          credentialId: _record.credentialId,
+          challenge: Uint8List.fromList(List<int>.generate(32, (i) => i)),
+          origin: 'replaced by session',
+          service: 'sudo',
+          action: 'nixos-rebuild switch',
+          resource: 'Desktop-NixOS',
+          user: 'alice',
+          issuedAt: now,
+          expiresAt: now.add(const Duration(minutes: 1)),
+          sessionBinding: Uint8List(32),
+        ),
+      );
+      await _until(() => consent.pendingRequestIds.contains('request-1'));
+
+      // Only now let the other credential's session end, so the failure lands
+      // while there is a prompt on screen to destroy.
+      transport.releaseBreak();
+      await _until(() => transport.broken?.closed ?? false);
+      await pumpEventQueue();
+
+      expect(
+        consent.pendingRequestIds,
+        contains('request-1'),
+        reason: 'the prompt belongs to the session that is still up',
+      );
+    },
+  );
+}
+
+/// Waits for [ready], failing the test rather than hanging if it never comes.
+Future<void> _until(bool Function() ready) async {
+  for (var i = 0; i < 100 && !ready(); i++) {
+    await pumpEventQueue(times: 5);
+  }
+  expect(ready(), isTrue, reason: 'the precondition never happened');
+}
+
+/// The same desktop's second credential. Two records, two loops, one computer.
+final _vaultRecord = PairingRecord(
+  verifierId: _record.verifierId,
+  verifierIdentitySpki: _record.verifierIdentitySpki,
+  endpoint: _record.endpoint,
+  credentialId: 'credential-2',
+  keyKind: _record.keyKind,
+  purpose: CredentialPurpose.vault,
+  pairedAt: _record.pairedAt,
+);
+
+/// First caller gets a session that asks for something and then waits; the
+/// next gets one that ends, on the test's cue.
+class _OneAsksOneBreaksTransport implements AuthTransport {
+  final _AskingSession asking = _AskingSession();
+  final _break = Completer<void>();
+  _EndedSession? broken;
+  var _connects = 0;
+
+  void releaseBreak() => _break.complete();
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Stream<TransportPeer> discoverPeers() => const Stream.empty();
+
+  @override
+  Future<SecureSessionOutcome> connect(
+    TransportPeer peer,
+    VerifierExpectation expectation,
+  ) async {
+    if (_connects++ == 0) return _outcome(asking, peer.displayName);
+    await _break.future;
+    return _outcome(broken = _EndedSession(), peer.displayName);
+  }
+}
+
+/// Carries one request and then stays open, the way a session waiting on an
+/// unanswered prompt does.
+class _AskingSession extends _IdleSession {
+  void ask(AuthenticationRequest request) =>
+      _incoming.add(const PhoneAuthProtocolCodec().encodeRequest(request));
+}
+
+/// A desktop that hung up: the frame stream is already done.
+class _EndedSession extends _IdleSession {
+  _EndedSession() {
+    unawaited(_incoming.close());
+  }
 }
 
 extension on PairingRecord {
@@ -315,15 +437,17 @@ class _PerDeviceTransport implements AuthTransport {
   ) async => _outcome(sessions[peer.displayName]!, peer.displayName);
 }
 
-SecureSessionOutcome _outcome(_IdleSession session, String verifierId) =>
-    SecureSessionOutcome(
-      session: session,
-      verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
-      verifierId: verifierId,
-      sessionId: 'session-1',
-      verificationCode: '123456',
-      wasPairing: false,
-    );
+SecureSessionOutcome _outcome(
+  SecureTransportSession session,
+  String verifierId,
+) => SecureSessionOutcome(
+  session: session,
+  verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
+  verifierId: verifierId,
+  sessionId: 'session-1',
+  verificationCode: '123456',
+  wasPairing: false,
+);
 
 class _IdleSession implements SecureTransportSession {
   _IdleSession() {
@@ -353,7 +477,12 @@ class _IdleSession implements SecureTransportSession {
   Future<void> close() async {
     if (closed) return;
     closed = true;
-    await _incoming.close();
+    // Not awaited. A real session close tears the socket down; it does not
+    // wait for the peer's reader to drain. Awaiting it here deadlocked any
+    // test whose session was parked mid-request, because `StreamIterator`
+    // pauses its subscription between `moveNext` calls and a paused listener
+    // never receives the done event.
+    unawaited(_incoming.close());
   }
 }
 

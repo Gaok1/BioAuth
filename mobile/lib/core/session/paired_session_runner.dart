@@ -145,11 +145,14 @@ class PairedSessionRunner {
           ? PairedSessionStatus.unreachable
           : PairedSessionStatus.connecting,
     );
+    // What this session put on screen, so the failure path below can name it.
+    final raised = <String>{};
     try {
       final response = await _service.serveOne(
         record,
         onEstablished: () =>
             onStatus?.call(record.verifierId, PairedSessionStatus.connected),
+        onRequestRaised: raised.add,
       );
       if (response != null) {
         _consent.settle(
@@ -160,8 +163,15 @@ class PairedSessionRunner {
         );
       }
     } on Object catch (error) {
-      // Anything left waiting on this session will never be answered.
-      for (final requestId in _consent.pendingRequestIds.toList()) {
+      // Anything left waiting on *this* session will never be answered.
+      //
+      // Not everything pending. There is one loop per credential and a desktop
+      // can hold several, so the process-wide pending set names prompts raised
+      // by other, still-healthy sessions -- and a session ending is ordinary:
+      // it carries one request and closes. Abandoning the whole set meant one
+      // loop's routine reconnect cancelled the prompt the user was reading,
+      // and the desktop that had actually asked was told the phone failed.
+      for (final requestId in raised) {
         _consent.abandon(requestId, error);
       }
       rethrow;

@@ -41,7 +41,6 @@ class InteractiveAuthorizer
       return Future.value(false);
     }
     final completer = _consent.putIfAbsent(request.id, Completer<bool>.new);
-    _outcome.putIfAbsent(request.id, Completer<AuthorizationResult>.new);
     onRequest(request);
     return completer.future;
   }
@@ -57,14 +56,22 @@ class InteractiveAuthorizer
     required void Function(ConnectionPhase phase) onPhase,
   }) {
     final consent = _consent.remove(request.id);
-    final outcome = _outcome[request.id];
-    if (consent == null || outcome == null) {
+    if (consent == null) {
       // The session that carried this request is gone: it timed out, or the
       // desktop hung up. Nothing to sign against.
       return Future.error(
         StateError('Esta solicitação não está mais conectada'),
       );
     }
+    // Created here rather than in [confirm], because this is the first moment
+    // anyone waits on it. Creating it when the sheet went up meant a request
+    // the user never answered still had a completer, and [abandon] failed it
+    // into nothing — an unhandled asynchronous error every time a session
+    // ended with an untouched prompt on screen, which is a routine event.
+    final outcome = _outcome.putIfAbsent(
+      request.id,
+      Completer<AuthorizationResult>.new,
+    );
     onPhase(ConnectionPhase.awaitingBiometric);
     consent.complete(true);
     return outcome.future;
