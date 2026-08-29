@@ -432,6 +432,46 @@ stale, or the user dismissed the prompt. That is `protocol-application.md`'s
 coarse taxonomy surfacing at the IPC edge, and it is why `vault.copy` cannot be
 used to discover which item IDs exist.
 
+### Browser autofill, and the plaintext
+
+One method on this surface answers with a secret: `vault.fill`. Everything
+else exists so a password reaches the clipboard without passing through a
+renderer, and autofill cannot work that way — **filling a form field is
+handing the page's process the plaintext.** There is no version of this
+feature where the browser does not receive the password, so the honest thing
+is to say so and make the opening as small as it goes.
+
+```text
+vault.fill
+  params: { origin, credentialId? }
+  result: { password, username }
+```
+
+What bounds it:
+
+- **Not on the tray's allow-list.** The only caller is the native messaging
+  host. The tray has a Copy button and no business here.
+- **The origin comes from the browser, not the page.** The service worker
+  reads it from `sender.url`; a compromised content script can put anything in
+  a message body, and that check is what stops one page's fill from being
+  another page's password.
+- **The host is matched exactly.** No widening to the registrable domain:
+  `login.bank.example` and `blog.bank.example` share one and are not the same
+  place to type a password, and that widening is the most common way autofill
+  hands over the wrong credential. Userinfo is discarded rather than parsed, so
+  `https://bank.example@evil.example` matches `evil.example`.
+- **`https` only.** A password typed over plain HTTP is a password on the
+  wire; filling one automatically would make that the agent's doing.
+- **Two matching accounts refuse rather than choose.** Signing somebody into
+  the wrong one of their own accounts is silent, and the tray's Copy button
+  shows them the list.
+- **The phone still approves it**, with the same sheet as every other release.
+
+The extension half enforces its own rules before asking at all: a cross-origin
+iframe is never filled, nothing fires on load or on focus, and a fill starts
+from the extension's action or context menu — a page can synthesise a click,
+and it cannot reach `chrome.action.onClicked`.
+
 ### From the tray
 
 The Cofre tab lists the vault, filters it locally, and copies one item at a

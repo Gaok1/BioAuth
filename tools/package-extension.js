@@ -31,6 +31,7 @@ const INCLUDED = [
   'service-worker.js',
   'content-bridge.js',
   'page-bridge.js',
+  'autofill-bridge.js',
 ];
 
 /**

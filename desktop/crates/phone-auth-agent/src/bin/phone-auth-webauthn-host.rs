@@ -50,6 +50,39 @@ fn handle(message: Value) -> Value {
             Err(error) => json!({"ok": false, "error": error.to_string()}),
         };
     }
+    // Password autofill. Kept as its own arm rather than folded into the
+    // passkey path below, because what crosses here is different in kind: a
+    // passkey assertion is a signature the page cannot reuse, and this is a
+    // password the page keeps. `VLT-09` accepts that the browser receives the
+    // plaintext — it is what autofill is — and the narrowness is the mitigation:
+    // one origin in, at most one secret out, and the phone approves it with
+    // the full context sheet before anything is released.
+    if operation == Some("vault-fill") {
+        let Some(origin) = message
+            .get("origin")
+            .and_then(Value::as_str)
+            .filter(|origin| origin.starts_with("https://") && origin.len() <= 255)
+        else {
+            return json!({"ok": false, "error": "invalid browser origin"});
+        };
+        let mut client = match AgentClient::connect(&Paths::resolve(None)) {
+            Ok(client) => client,
+            Err(error) => return json!({"ok": false, "error": error.to_string()}),
+        };
+        return match client.call("vault.fill", json!({"origin": origin})) {
+            Ok(value) => json!({
+                "ok": true,
+                "password": value.get("password"),
+                "username": value.get("username"),
+            }),
+            // Deliberately the agent's message and nothing more. Whether the
+            // vault is locked, empty, or simply has nothing for this site are
+            // one answer, or any page that can raise a fill learns what the
+            // vault holds by asking.
+            Err(error) => json!({"ok": false, "error": error.to_string()}),
+        };
+    }
+
     let origin = message.get("origin").and_then(Value::as_str);
     let options = message.get("options").filter(|value| value.is_object());
     if !matches!(operation, Some("create" | "get"))

@@ -315,6 +315,41 @@ pub struct VaultCopyParams {
     pub clear_after_ms: Option<u64>,
 }
 
+/// Release one site's password to the browser, for autofill.
+///
+/// The one call in this surface that answers with a secret. Everything else
+/// exists so that a password reaches the clipboard without passing through a
+/// renderer; autofill cannot work that way, because filling a field *is*
+/// handing the page's process the plaintext. `VLT-09` accepts that, so what is
+/// left is to make the opening as small as it can be:
+///
+/// - one origin in, and it comes from the browser rather than from the page;
+/// - at most one secret out, and only when exactly one item matches;
+/// - the phone still approves it, with the sheet that names the site.
+///
+/// Not on the tray's allow-list. The tray has a Copy button and no business
+/// with this.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultFillParams {
+    /// The page's origin, exactly as the browser reported it.
+    pub origin: String,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+/// The secret being handed to a browser, and the account it belongs to.
+///
+/// Unlike [`VaultCopyResult`], this type has the field. That is the whole
+/// difference between the two paths and the reason they are separate types
+/// rather than one with an option.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultFillResult {
+    pub password: String,
+    pub username: String,
+}
+
 /// Generate a password and put it straight on the clipboard.
 ///
 /// Every field is optional and falls back to the generator's own default, so a

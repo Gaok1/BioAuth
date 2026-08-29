@@ -27,7 +27,8 @@ use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
     PairingBootstrap, PermissionSummary, StatusPayload, VaultCopyParams, VaultCopyResult,
-    VaultItem, VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
+    VaultFillParams, VaultFillResult, VaultItem, VaultListParams, VaultListResult, WebAuthnParams,
+    WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::clipboard;
@@ -1011,6 +1012,101 @@ impl Service {
         }
     }
 
+    /// Hands one site's password to the browser, for autofill.
+    ///
+    /// The exception to the rule the rest of this file keeps: the secret is in
+    /// the reply. Filling a form field is handing the page's process the
+    /// plaintext, so there is no version of autofill where it is not, and
+    /// `VLT-09` accepts that. What is controllable is the size of the opening.
+    ///
+    /// Matching is exact on the host. No widening to the registrable domain —
+    /// `login.bank.example` and `blog.bank.example` share one and are not the
+    /// same place to type a password, and that widening is the single most
+    /// common way autofill hands over the wrong credential.
+    ///
+    /// Two matches refuse rather than choose. Signing somebody into the wrong
+    /// one of their own accounts is silent, and the tray's Copy button is a
+    /// working path that shows them the list.
+    pub fn vault_fill(
+        &mut self,
+        params: &VaultFillParams,
+    ) -> Result<VaultFillResult, ServiceError> {
+        let host = origin_host(&params.origin)
+            .ok_or_else(|| ServiceError::new("bad-params", "origin is not an https origin"))?;
+
+        let (device_id, _credential_id) =
+            self.select_vault_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+
+        let mut vault = PhoneVault::new(&mut session, self.config.verifier_name.clone());
+        let listed = vault.list();
+        let matched = match listed {
+            Ok(items) => items
+                .into_iter()
+                .filter(|item| {
+                    matches!(item.kind, phone_auth_protocol::vault::ItemKind::Login)
+                        && origin_host(&item.uri).as_deref() == Some(host.as_str())
+                })
+                .collect::<Vec<_>>(),
+            Err(error) => {
+                let _ = session.close();
+                let error = vault_error(error);
+                self.record_vault("", "fill", &device_name, development, Err(&error));
+                return Err(error);
+            }
+        };
+
+        // Nothing for this site and several for it are one answer to the
+        // browser, which is `not-found` either way at the host. Here they are
+        // told apart only because "copy it from the tray" is advice the second
+        // case can act on.
+        let item = match matched.as_slice() {
+            [only] => only.clone(),
+            [] => {
+                let _ = session.close();
+                let error = ServiceError::new("not-found", "no vault item for this site");
+                self.record_vault("", "fill", &device_name, development, Err(&error));
+                return Err(error);
+            }
+            several => {
+                let _ = session.close();
+                let error = ServiceError::new(
+                    "ambiguous",
+                    format!(
+                        "{} accounts for this site; copy the one you want from the tray",
+                        several.len()
+                    ),
+                );
+                self.record_vault("", "fill", &device_name, development, Err(&error));
+                return Err(error);
+            }
+        };
+
+        let fetched =
+            PhoneVault::new(&mut session, self.config.verifier_name.clone()).fetch(&item.id);
+        let _ = session.close();
+
+        match fetched {
+            Ok(fetched) => {
+                self.record_vault(&item.id, "fill", &device_name, development, Ok(()));
+                Ok(VaultFillResult {
+                    password: fetched.secret.clone(),
+                    username: item.username,
+                })
+            }
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_vault(&item.id, "fill", &device_name, development, Err(&error));
+                Err(error)
+            }
+        }
+    }
+
     /// Puts one stored secret on the clipboard, after the user approves it on
     /// the phone.
     ///
@@ -1390,6 +1486,29 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
 /// [`Declined`](VaultError::Declined) and all leave as `declined`, so a caller
 /// that is not entitled to a secret cannot use the error to learn which item
 /// IDs exist.
+/// The host of an https origin or URI, lowercased, or None.
+///
+/// Written by hand rather than pulled from a URL crate because the rules
+/// wanted here are narrower than a general parser's: only `https`, a
+/// scheme-less string is not an origin, a port is not part of a host, and
+/// userinfo — the classic way to make a host read as one thing and resolve as
+/// another — is discarded rather than parsed.
+fn origin_host(value: &str) -> Option<String> {
+    let rest = value.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or_default()
+        .split(':')
+        .next()
+        .unwrap_or_default();
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(host.to_ascii_lowercase())
+}
+
 fn vault_error(error: VaultError) -> ServiceError {
     let code = match &error {
         VaultError::Declined => "declined",
@@ -1751,5 +1870,55 @@ mod subscriber_tests {
             }
         }
         assert_eq!(service.subscriber_count_for_test(), 2);
+    }
+
+    /// The exact-host rule that decides which password autofill may release.
+    ///
+    /// `login.bank.example` and `blog.bank.example` share a registrable domain
+    /// and are not the same place to type a password into. Widening to eTLD+1
+    /// is the single most common way autofill hands over the wrong credential,
+    /// so the comparison is on the whole host and nothing else.
+    #[test]
+    fn an_origin_matches_only_its_own_host() {
+        assert_eq!(
+            origin_host("https://login.bank.example"),
+            Some("login.bank.example".to_owned())
+        );
+        assert_ne!(
+            origin_host("https://blog.bank.example"),
+            origin_host("https://login.bank.example")
+        );
+        // A stored URI with a path and a port still resolves to the same host
+        // the browser reports, or an ordinary saved login would never match.
+        assert_eq!(
+            origin_host("https://bank.example:8443/login?next=/"),
+            Some("bank.example".to_owned())
+        );
+        assert_eq!(
+            origin_host("https://BANK.example/"),
+            Some("bank.example".to_owned())
+        );
+    }
+
+    /// Userinfo is the classic way to make a host read as one thing and
+    /// resolve as another. `https://bank.example@evil.example` is a page on
+    /// `evil.example`, and it must match the vault item for `evil.example`.
+    #[test]
+    fn userinfo_never_disguises_the_host() {
+        assert_eq!(
+            origin_host("https://bank.example@evil.example/"),
+            Some("evil.example".to_owned())
+        );
+    }
+
+    /// Only https. A password typed over plain HTTP is a password on the wire,
+    /// and filling one automatically would make that this agent's doing.
+    #[test]
+    fn a_non_https_origin_has_no_host_to_match() {
+        assert_eq!(origin_host("http://bank.example"), None);
+        assert_eq!(origin_host("file:///etc/passwd"), None);
+        assert_eq!(origin_host("bank.example"), None);
+        assert_eq!(origin_host("https://"), None);
+        assert_eq!(origin_host(""), None);
     }
 }

@@ -118,10 +118,20 @@ test('page bridge handles abort, timeout, iframe policy, and native fallback', a
 });
 
 test('service worker returns native-host errors and rejects invalid origins', async () => {
-  let listener;
+  // Every registered listener, not just the last one. Chrome runs them all
+  // and takes the first that claims the message; keeping one variable made
+  // this test pass only while the worker had a single listener.
+  const listeners = [];
+  const listener = (message, sender, sendResponse) => {
+    for (const candidate of listeners) {
+      const claimed = candidate(message, sender, sendResponse);
+      if (claimed !== undefined) return claimed;
+    }
+    return undefined;
+  };
   const nativeMessages = [];
   const runtime = {
-    onMessage: { addListener: (value) => { listener = value; } },
+    onMessage: { addListener: (value) => { listeners.push(value); } },
     sendNativeMessage: async (_host, payload) => {
       nativeMessages.push(payload);
       throw new Error('host unavailable');

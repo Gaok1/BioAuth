@@ -25,8 +25,8 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
-    SetPermissionsParams, VaultCopyParams, VaultCopyResult, VaultGenerateCopyParams,
-    VaultListParams, WebAuthnParams,
+    SetPermissionsParams, VaultCopyParams, VaultCopyResult, VaultFillParams,
+    VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
 use crate::password::{self, Policy};
@@ -375,6 +375,24 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         "vault.copy" => match parse::<VaultCopyParams>(call) {
             Ok(params) => {
                 let result = service.lock().expect("service mutex").vault_copy(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // The one method whose reply carries a secret.
+        //
+        // Reachable only from the native messaging host, because it is the
+        // only caller that has anywhere to put one: filling a form field is
+        // handing the page's process the plaintext, which is what autofill is.
+        // Deliberately absent from the tray's allow-list in `main.js` — the
+        // tray has a Copy button and no business with this.
+        "vault.fill" => match parse::<VaultFillParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").vault_fill(&params);
                 match result {
                     Ok(result) => to_reply(id, &result),
                     Err(error) => Reply::err(id, error.code, error.message),

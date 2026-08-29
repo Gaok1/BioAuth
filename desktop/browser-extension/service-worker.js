@@ -66,3 +66,74 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
   );
   return true;
 });
+
+// --- password autofill ------------------------------------------------------
+//
+// A separate listener, a separate host operation, and a separate entry point.
+// The passkey path above relays a signature the page cannot reuse; this one
+// hands the page a password it keeps. Keeping them apart is what stops a bug
+// in the second from reaching the first.
+//
+// A fill starts from the extension's own action or context menu — never from
+// the page. That is the trusted gesture: a page can synthesise a click, and it
+// cannot reach `chrome.action.onClicked`.
+
+const AUTOFILL_MENU = "bioauth-autofill";
+
+const startFill = (tabId, frameId) => {
+  if (typeof tabId !== "number") return;
+  // Addressed to the frame the user was actually in. Sending to the tab would
+  // deliver to every frame, and the one that answered first would win.
+  runtime.sendMessage
+    ? chrome.tabs.sendMessage(
+        tabId,
+        { type: "bioauth-autofill-fill" },
+        typeof frameId === "number" ? { frameId } : undefined,
+      )
+    : undefined;
+};
+
+if (globalThis.chrome?.action?.onClicked) {
+  chrome.action.onClicked.addListener((tab) => startFill(tab?.id));
+}
+
+if (globalThis.chrome?.contextMenus) {
+  chrome.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus.create({
+      id: AUTOFILL_MENU,
+      title: "Preencher senha do cofre",
+      contexts: ["editable"],
+      documentUrlPatterns: ["https://*/*"],
+    });
+  });
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info?.menuItemId !== AUTOFILL_MENU) return;
+    startFill(tab?.id, info.frameId);
+  });
+}
+
+// The content script asking the vault for one origin's password.
+//
+// The origin is taken from `sender.url`, which the browser sets, and never
+// from the message body — a compromised content script could put anything in
+// the body, and this is the check that keeps one page's fill from being
+// another page's password.
+runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "bioauth-autofill") return undefined;
+
+  let origin;
+  try {
+    const url = new URL(sender.url);
+    if (url.protocol !== "https:") throw new Error("HTTPS is required");
+    origin = url.origin;
+  } catch {
+    sendResponse({ ok: false, error: "Invalid browser origin" });
+    return true;
+  }
+
+  sendToHost({ operation: "vault-fill", origin }).then(
+    (response) => sendResponse(response ?? { ok: false, error: "PhoneAuth host sent no answer" }),
+    (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }),
+  );
+  return true;
+});
