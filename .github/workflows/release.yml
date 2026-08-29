@@ -120,6 +120,21 @@ jobs:
             echo "channel=$4" >> "$GITHUB_OUTPUT"
           }
 
+          # Branch on the event before the ref. A dispatch is almost always
+          # launched from main, so a `case` on the ref alone routes every
+          # manual run into the main-push arm and the dispatch arm never runs —
+          # which is exactly what happened the first time somebody used it.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # Builds the whole set either way; publishes only when asked, and
+            # then on a tag that cannot collide with the stable one.
+            if [ "$DISPATCH_PUBLISH" = "true" ]; then
+              emit "v$VERSION-debug.$GITHUB_RUN_NUMBER" true true debug
+            else
+              emit "v$VERSION" true false debug
+            fi
+            exit 0
+          fi
+
           case "$GITHUB_REF" in
             refs/tags/v*)
               # Cut by hand. Build and publish exactly this tag.
@@ -142,13 +157,8 @@ jobs:
               fi
               ;;
             *)
-              # Manual dispatch. Builds the whole set either way; publishes only
-              # when asked, and then on a tag that cannot collide with stable.
-              if [ "$DISPATCH_PUBLISH" = "true" ]; then
-                emit "v$VERSION-debug.$GITHUB_RUN_NUMBER" true true debug
-              else
-                emit "v$VERSION" true false debug
-              fi
+              # A push to any other branch. Prove the build still works.
+              emit "v$VERSION" true false debug
               ;;
           esac
   # ---------------------------------------------------------------- Android --

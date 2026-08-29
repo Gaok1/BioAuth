@@ -67,10 +67,16 @@ jobs:
           channel: stable
           cache: true
       - uses: gradle/actions/setup-gradle@v4
+      # `flutter pub get` writes the plugin registrant, but the Gradle
+      # wrapper is in Flutter's own .gitignore and so is never in a fresh
+      # checkout. `flutter build` generates it; chmod'ing it first cannot work.
       - name: Resolve Flutter plugins
         working-directory: mobile
         run: |
           flutter pub get
+          flutter build apk --config-only --flavor dev --target lib/main_dev.dart
+          test -f android/gradlew || {
+            echo "::error::the Gradle wrapper was not generated"; exit 1; }
           chmod +x android/gradlew
       - name: Android 15 credential-provider instrumentation
         uses: reactivecircus/android-emulator-runner@v2
@@ -150,7 +156,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Known vulnerabilities across every lockfile
-        uses: google/osv-scanner-action/osv-scanner-action@v2
+        # Pinned to a real tag: this action publishes no moving `v2`, so the
+        # major-version ref that reads as obviously correct resolves to nothing
+        # and the job dies in "Set up job" before running a step.
+        uses: google/osv-scanner-action/osv-scanner-action@v2.5.1
         with:
           scan-args: |-
             --lockfile=desktop/Cargo.lock
