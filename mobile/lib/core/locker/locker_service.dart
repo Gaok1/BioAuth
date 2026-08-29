@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:phone_auth_native/phone_auth_native.dart';
 
+import '../protocol/application_idempotency.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/locker_payloads.dart';
 
@@ -81,6 +82,7 @@ class LockerService {
 
   final LockerKeyGuardian _guardian;
   final String _credentialId;
+  final ApplicationIdempotency _idempotency = ApplicationIdempotency();
 
   /// Processa um frame e devolve a resposta a enviar de volta.
   ///
@@ -101,18 +103,31 @@ class LockerService {
       throw const FormatException('Frame de locker fora desta sessão');
     }
 
+    Future<ApplicationOutcome> execute() async {
+      try {
+        final payload = switch (request.operation) {
+          lockerCreateOperation => await _wrap(request),
+          lockerUnlockOperation => await _unwrap(request, rekeying: false),
+          lockerRekeyOperation => await _unwrap(request, rekeying: true),
+          _ => throw const FormatException('Operação de locker desconhecida'),
+        };
+        return ApplicationOutcome(ApplicationFrameKind.response, payload);
+      } on Object {
+        // Refusal, cancellation and malformed payload stay indistinguishable.
+        return ApplicationOutcome(ApplicationFrameKind.error, Uint8List(0));
+      }
+    }
+
     try {
-      final payload = switch (request.operation) {
-        lockerCreateOperation => await _wrap(request),
-        lockerUnlockOperation => await _unwrap(request, rekeying: false),
-        lockerRekeyOperation => await _unwrap(request, rekeying: true),
-        _ => throw const FormatException('Operação de locker desconhecida'),
-      };
-      return _reply(request, ApplicationFrameKind.response, payload);
+      final outcome = request.operation == lockerCreateOperation
+          ? await _idempotency.run(
+              scope: _credentialId,
+              request: request,
+              operation: execute,
+            )
+          : await execute();
+      return _reply(request, outcome.kind, outcome.payload);
     } on Object {
-      // Recusa, cancelamento e payload inválido saem iguais na rede: qual dos
-      // três foi não é informação que o computador precisa, e é informação que
-      // um atacante usaria.
       return _reply(request, ApplicationFrameKind.error, Uint8List(0));
     }
   }

@@ -318,8 +318,9 @@ cancel wins, creation never runs; when creation wins, a late cancel cannot
 reclassify the committed credential as cancelled and the response is delivered
 once. Coordinator tests force both orders. An uncatchable process death after
 the claim can still leave a credential visible in passkey management for
-explicit deletion. Application-protocol operations still need operation-
-specific idempotency before `FND-08` can be considered complete globally.
+explicit deletion. Application-protocol mutations independently coalesce
+retries by scoped request ID, operation, and keyed payload fingerprint; their
+responses are rebound to the retry's live session without repeating a commit.
 
 ## Deliberately out of scope
 

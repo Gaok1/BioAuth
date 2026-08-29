@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../features/vault/vault_store.dart' as store;
+import '../protocol/application_idempotency.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/vault_payloads.dart' as wire;
 import 'vault_approval.dart';
@@ -17,11 +18,13 @@ class VaultService {
 
   final store.VaultStore _store;
   final VaultApproval _approval;
+  final ApplicationIdempotency _idempotency = ApplicationIdempotency();
 
   Future<Uint8List> handle(
     Uint8List frame, {
     required Uint8List sessionBinding,
     required bool authorized,
+    String replayScope = 'local',
     DateTime? now,
   }) async {
     final request = ApplicationFrame.decode(frame);
@@ -60,27 +63,61 @@ class VaultService {
       return _error(request, ApplicationErrorCode.invalidRequest);
     }
 
-    try {
-      // Listing is the one operation that needs no approval: it releases no
-      // secret, and a sheet on every list would train the user to dismiss the
-      // one that matters.
-      if (decoded is wire.VaultListRequest) {
-        return _reply(request, await _list(decoded));
+    Future<ApplicationOutcome> execute() async {
+      try {
+        // Listing is the one operation that needs no approval: it releases no
+        // secret, and a sheet on every list would train the user to dismiss the
+        // one that matters.
+        if (decoded is wire.VaultListRequest) {
+          return ApplicationOutcome(
+            ApplicationFrameKind.response,
+            await _list(decoded),
+          );
+        }
+
+        final approved = await _approval.confirm(
+          await _describe(request.requestId, decoded),
+        );
+        if (!approved) {
+          return ApplicationOutcome(
+            ApplicationFrameKind.error,
+            ApplicationErrorCode.rejected.encode(),
+          );
+        }
+
+        return ApplicationOutcome(
+          ApplicationFrameKind.response,
+          await _run(decoded),
+        );
+      } on PlatformException {
+        return ApplicationOutcome(
+          ApplicationFrameKind.error,
+          ApplicationErrorCode.rejected.encode(),
+        );
+      } on Object {
+        return ApplicationOutcome(
+          ApplicationFrameKind.error,
+          ApplicationErrorCode.unavailable.encode(),
+          cacheable: false,
+        );
       }
+    }
 
-      final approved = await _approval.confirm(
-        await _describe(request.requestId, decoded),
-      );
-      // The same code a missing item gets. Whether the user said no, the item
-      // was never there, or the revision had moved on is not something the
-      // desktop is told — see `protocol-application.md`.
-      if (!approved) return _error(request, ApplicationErrorCode.rejected);
-
-      return _reply(request, await _run(decoded));
-    } on PlatformException {
-      // not_found, revision_conflict and biometric refusal are intentionally
-      // indistinguishable on the wire.
-      return _error(request, ApplicationErrorCode.rejected);
+    final mutates =
+        decoded is wire.VaultCreateRequest ||
+        decoded is wire.VaultUpdateRequest ||
+        decoded is wire.VaultDeleteRequest;
+    try {
+      final outcome = mutates
+          ? await _idempotency.run(
+              scope: replayScope,
+              request: request,
+              operation: execute,
+            )
+          : await execute();
+      return _frame(request, outcome.kind, outcome.payload);
+    } on FormatException {
+      return _error(request, ApplicationErrorCode.invalidRequest);
     } on Object {
       return _error(request, ApplicationErrorCode.unavailable);
     }
@@ -242,9 +279,6 @@ class VaultService {
       secret: secret,
     );
   }
-
-  Uint8List _reply(ApplicationFrame request, Uint8List payload) =>
-      _frame(request, ApplicationFrameKind.response, payload);
 
   Uint8List _error(ApplicationFrame request, ApplicationErrorCode code) =>
       _frame(request, ApplicationFrameKind.error, code.encode());

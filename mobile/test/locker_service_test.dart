@@ -11,6 +11,7 @@ import 'package:phone_auth/core/protocol/locker_payloads.dart';
 /// sim quem o serviço deixa entrar e o que ele devolve.
 class FakeGuardian implements LockerKeyGuardian {
   bool refuse = false;
+  int wraps = 0;
   String? lastCredentialId;
   String? lastFileName;
   bool? lastRekeying;
@@ -24,6 +25,7 @@ class FakeGuardian implements LockerKeyGuardian {
     required String verifierName,
   }) async {
     if (refuse) throw StateError('usuário cancelou');
+    wraps++;
     lastCredentialId = credentialId;
     lastFileName = fileName;
     return Uint8List.fromList([
@@ -58,17 +60,21 @@ final _containerBinding = Uint8List.fromList(
 );
 final _now = DateTime.fromMillisecondsSinceEpoch(1787745600000, isUtc: true);
 
-Uint8List _request(String operation, Uint8List payload, {Uint8List? binding}) =>
-    ApplicationFrame(
-      protocolVersion: 1,
-      kind: ApplicationFrameKind.request,
-      requestId: 'request-1',
-      sessionBinding: binding ?? _sessionBinding,
-      operation: operation,
-      issuedAt: _now,
-      expiresAt: _now.add(const Duration(seconds: 60)),
-      payload: payload,
-    ).encode();
+Uint8List _request(
+  String operation,
+  Uint8List payload, {
+  Uint8List? binding,
+  String requestId = 'request-1',
+}) => ApplicationFrame(
+  protocolVersion: 1,
+  kind: ApplicationFrameKind.request,
+  requestId: requestId,
+  sessionBinding: binding ?? _sessionBinding,
+  operation: operation,
+  issuedAt: _now,
+  expiresAt: _now.add(const Duration(seconds: 60)),
+  payload: payload,
+).encode();
 
 Uint8List _wrapPayload() => LockerWrapRequest(
   verifierName: 'Workstation',
@@ -130,6 +136,56 @@ void main() {
       now: _now,
     );
     expect(guardian.lastRekeying, isTrue);
+  });
+
+  test(
+    'um retry de locker.create reutiliza o wrapper sem novo gesto',
+    () async {
+      final first = ApplicationFrame.decode(
+        await service.handle(
+          _request(lockerCreateOperation, _wrapPayload()),
+          sessionBinding: _sessionBinding,
+          now: _now,
+        ),
+      );
+      final nextBinding = Uint8List.fromList(List<int>.filled(32, 4));
+      final retry = ApplicationFrame.decode(
+        await service.handle(
+          _request(lockerCreateOperation, _wrapPayload(), binding: nextBinding),
+          sessionBinding: nextBinding,
+          now: _now,
+        ),
+      );
+
+      expect(retry.payload, first.payload);
+      expect(retry.sessionBinding, nextBinding);
+      expect(guardian.wraps, 1);
+    },
+  );
+
+  test('o mesmo requestId não aceita outro locker.create', () async {
+    await service.handle(
+      _request(lockerCreateOperation, _wrapPayload()),
+      sessionBinding: _sessionBinding,
+      now: _now,
+    );
+    final changed = LockerWrapRequest(
+      verifierName: 'Workstation',
+      fileName: 'other.pdf',
+      plaintextLength: 100000,
+      containerBinding: _containerBinding,
+      dataKey: List<int>.filled(32, 7),
+    ).encode();
+    final answer = ApplicationFrame.decode(
+      await service.handle(
+        _request(lockerCreateOperation, changed),
+        sessionBinding: _sessionBinding,
+        now: _now,
+      ),
+    );
+
+    expect(answer.kind, ApplicationFrameKind.error);
+    expect(guardian.wraps, 1);
   });
 
   test(
