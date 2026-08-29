@@ -2,6 +2,13 @@ import 'package:flutter/services.dart';
 
 const _channel = MethodChannel('bioauth/vault_store');
 
+/// The most items one vault holds.
+///
+/// Enforced by the native store on a restore, because the vault is one blob
+/// decrypted into memory on every operation: a vault that will not fit is not
+/// a slow vault, it is a vault that stops opening.
+const int maxVaultItems = 4096;
+
 enum VaultItemKind {
   login,
   note,
@@ -106,6 +113,16 @@ abstract class VaultStore {
 
   Future<VaultPage> listPage([String? cursor]);
 
+  /// Reads every page, refusing a store that will not finish handing them out.
+  ///
+  /// The bound is on items, because the number of items is what the vault has
+  /// a limit on. It used to be `seen.length > 32` — thirty-two *cursors*,
+  /// which is the page size wearing a page count's clothes. A page holds
+  /// thirty-two items, so a vault past about a thousand of them threw here on
+  /// every unlock, and the screen reported the generic failure: a vault
+  /// restored from a large export was a vault that had stopped opening. The
+  /// limit that matters is [maxVaultItems], the same ceiling the native
+  /// store enforces on a restore.
   Future<List<VaultItemSummary>> listAll() async {
     final result = <VaultItemSummary>[];
     String? cursor;
@@ -114,7 +131,12 @@ abstract class VaultStore {
       final page = await listPage(cursor);
       result.addAll(page.items);
       cursor = page.nextCursor;
-      if (cursor != null && (!seen.add(cursor) || seen.length > 32)) {
+      // A repeated cursor is a cycle, and an empty page that still asks to be
+      // followed is a store making no progress — either one loops forever.
+      if (cursor != null &&
+          (!seen.add(cursor) ||
+              page.items.isEmpty ||
+              result.length > maxVaultItems)) {
         throw const FormatException('Paginação inválida do cofre');
       }
     } while (cursor != null);

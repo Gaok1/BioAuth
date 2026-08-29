@@ -31,13 +31,17 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_secs(90);
 /// How long a vault request stays valid, matching the envelope's ceiling.
 const VALIDITY_MS: i64 = 120_000;
 
-/// How many pages one listing may walk before the agent gives up.
+/// How many items one listing may carry before the agent gives up.
 ///
 /// The cursor is chosen by the phone, so without a ceiling a buggy or hostile
-/// peer could keep the desktop paging forever. Thirty-two pages of
-/// `MAX_PAGE_ITEMS` is over a thousand items, which is a larger vault than the
-/// schema was designed for.
-const MAX_PAGES: usize = 32;
+/// peer could keep the desktop paging forever. The ceiling used to be
+/// thirty-two *pages*, described here as "over a thousand items, a larger
+/// vault than the schema was designed for" -- but the phone lets a vault hold
+/// four thousand and lets a restore fill it, so a vault of any real size read
+/// back on the desktop stopped at "the vault listing did not end". This is
+/// the number the phone's own store enforces, counted the way the phone
+/// counts it: in items, not in pages of them.
+const MAX_ITEMS: usize = 4096;
 
 /// Why a vault exchange did not produce an answer.
 ///
@@ -104,10 +108,10 @@ impl<'a> PhoneVault<'a> {
         let mut cursor = String::new();
         // The phone picks the cursors, so a repeat is how an endless walk
         // starts. Refusing on the second sighting stops it a page early
-        // instead of after `MAX_PAGES` round trips.
+        // instead of after `MAX_ITEMS` have been read.
         let mut seen: HashSet<String> = HashSet::new();
 
-        for _ in 0..MAX_PAGES {
+        loop {
             let request = ListRequest {
                 verifier_name: self.verifier_name.clone(),
                 cursor,
@@ -120,6 +124,7 @@ impl<'a> PhoneVault<'a> {
             let page = ListResponse::decode(&answer)
                 .map_err(|error| VaultError::protocol(error.to_string()))?;
 
+            let carried = page.items.len();
             items.extend(page.items);
             if page.next_cursor.is_empty() {
                 return Ok(items);
@@ -127,10 +132,13 @@ impl<'a> PhoneVault<'a> {
             if !seen.insert(page.next_cursor.clone()) {
                 return Err(VaultError::protocol("the phone repeated a page cursor"));
             }
+            // A page that carried nothing and still asks for another walks
+            // forever without ever reaching the item ceiling below.
+            if carried == 0 || items.len() > MAX_ITEMS {
+                return Err(VaultError::protocol("the vault listing did not end"));
+            }
             cursor = page.next_cursor;
         }
-
-        Err(VaultError::protocol("the vault listing did not end"))
     }
 
     /// One item's secret, after the user approves it on the phone.
@@ -367,8 +375,46 @@ mod tests {
         assert!(matches!(error, VaultError::Protocol(_)));
     }
 
+    /// A full vault is four thousand items and the phone hands them out
+    /// thirty-two at a time, so the walk is a hundred and twenty-eight pages
+    /// long. Bounded by pages instead, the desktop gave up on page
+    /// thirty-three and the user's answer was that the vault would not open.
     #[test]
-    fn a_listing_that_never_ends_stops_at_the_page_ceiling() {
+    fn a_vault_as_large_as_the_phone_allows_is_listed_whole() {
+        let mut transport = session(true, |request| {
+            let asked = ListRequest::decode(&request.payload).expect("payload decodes");
+            let offset: usize = if asked.cursor.is_empty() {
+                0
+            } else {
+                asked.cursor.parse().expect("the cursor is the offset")
+            };
+            let next = offset + MAX_PAGE_ITEMS;
+            reply(
+                request,
+                ListResponse {
+                    items: (offset..next)
+                        .map(|index| summary(&index.to_string()))
+                        .collect(),
+                    next_cursor: if next < MAX_ITEMS {
+                        next.to_string()
+                    } else {
+                        String::new()
+                    },
+                }
+                .encode(),
+            )
+        });
+
+        let items = PhoneVault::new(&mut transport, "Workstation")
+            .list()
+            .expect("the listing completes");
+
+        assert_eq!(items.len(), MAX_ITEMS);
+        assert_eq!(items[MAX_ITEMS - 1].id, (MAX_ITEMS - 1).to_string());
+    }
+
+    #[test]
+    fn a_listing_that_never_ends_stops_at_the_item_ceiling() {
         let mut page = 0usize;
         let mut transport = session(true, move |request| {
             page += 1;

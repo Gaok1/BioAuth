@@ -42,8 +42,9 @@ const int _nonceLength = 12;
 const String _kdfInfo = 'bioauth-vault-export-v1';
 
 /// A vault big enough to be this file is a vault that was not exported, and
-/// refusing is better than an out-of-memory on a phone.
-const int maxExportItems = 4096;
+/// refusing is better than an out-of-memory on a phone. The store's own
+/// ceiling, so anything that fits in a vault fits in a backup of it.
+const int maxExportItems = maxVaultItems;
 
 class VaultExportException implements Exception {
   const VaultExportException(this.message);
