@@ -154,15 +154,22 @@ class VaultController extends ChangeNotifier {
     if (fetched.revision != item.revision) {
       throw StateError('Item alterado; atualize o cofre');
     }
+    // Whatever was open before is closed here, ticker included. There is one
+    // revealed code for the whole vault and it is read by whichever item is
+    // currently revealed, so a ticker left running from a TOTP item kept
+    // writing into the row that had replaced it: revealing a password after
+    // an authenticator showed the password's row counting down somebody
+    // else's six digits, and the seed went on being derived from until the
+    // vault was locked.
+    _clearTotp();
+    _revealedSecret = null;
     _revealedId = item.id;
     if (item.kind == VaultItemKind.totp) {
       // The seed itself never reaches the screen. What is shown is the code
       // derived from it, and it keeps deriving while the item is open so the
       // digits on screen are the digits the site will accept.
       _totpSecret = TotpSecret.parse(fetched.secret);
-      _revealedSecret = null;
       await _tickTotp();
-      _totpTicker?.cancel();
       _totpTicker = Timer.periodic(
         const Duration(seconds: 1),
         (_) => _tickTotp(),

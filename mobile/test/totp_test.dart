@@ -5,8 +5,10 @@
 /// are the only thing that settles it, so they are the first test here.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/vault/totp.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
@@ -189,16 +191,6 @@ void main() {
   });
 
   group('a TOTP item in the vault', () {
-    VaultItemSummary totpItem() => VaultItemSummary(
-      id: 'one',
-      revision: 1,
-      kind: VaultItemKind.totp,
-      name: 'Banco',
-      username: 'alice',
-      uri: 'https://banco.example.com',
-      updatedAt: DateTime.utc(2026),
-    );
-
     /// The stored secret of a TOTP item is the seed. Showing that where the
     /// user expects six digits would put the one value that must never be
     /// screenshotted on screen.
@@ -210,7 +202,7 @@ void main() {
       addTearDown(controller.dispose);
       await controller.unlock();
 
-      await controller.reveal(totpItem());
+      await controller.reveal(_totpItem());
 
       expect(controller.secretFor('one'), isNull, reason: 'the seed leaked');
       final code = controller.totpFor('one');
@@ -230,7 +222,7 @@ void main() {
       addTearDown(controller.dispose);
       await controller.unlock();
 
-      await controller.copy(totpItem());
+      await controller.copy(_totpItem());
 
       expect(copied, hasLength(6));
       expect(copied, isNot(_seed));
@@ -246,10 +238,43 @@ void main() {
       addTearDown(controller.dispose);
       await controller.unlock();
 
-      await controller.reveal(totpItem());
+      await controller.reveal(_totpItem());
 
       expect(controller.totpFor('one'), isNull);
       expect(controller.error, contains('TOTP'));
+    });
+
+    /// There is one revealed code for the whole vault, and whichever item is
+    /// revealed is the one that reads it. A ticker left running from the item
+    /// before therefore writes into the row that replaced it.
+    test('revealing a password stops the authenticator it replaced', () {
+      fakeAsync((async) {
+        final controller = VaultController(
+          store: _SeedStore(),
+          copy: (_) async {},
+        );
+        addTearDown(controller.dispose);
+        unawaited(controller.unlock());
+        async.flushMicrotasks();
+        unawaited(controller.reveal(_totpItem()));
+        async.flushMicrotasks();
+        expect(controller.totpFor('one'), isNotNull);
+
+        unawaited(controller.reveal(_loginItem()));
+        async.flushMicrotasks();
+
+        expect(controller.secretFor('two'), _password);
+        expect(
+          controller.totpFor('two'),
+          isNull,
+          reason: 'the password row showed six digits it never had',
+        );
+        // And it stays gone. A ticker still running would put them back a
+        // second later, and go on deriving from a seed nobody is looking at.
+        async.elapse(const Duration(seconds: 3));
+        expect(controller.totpFor('two'), isNull);
+        expect(controller.secretFor('two'), _password);
+      });
     });
 
     /// Locking has to stop the ticker as well as clear the code, or a locked
@@ -261,7 +286,7 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.unlock();
-      await controller.reveal(totpItem());
+      await controller.reveal(_totpItem());
       expect(controller.totpFor('one'), isNotNull);
 
       controller.lock();
@@ -272,6 +297,27 @@ void main() {
 }
 
 const _seed = 'JBSWY3DPEHPK3PXP';
+const _password = 'hunter2';
+
+VaultItemSummary _totpItem() => VaultItemSummary(
+  id: 'one',
+  revision: 1,
+  kind: VaultItemKind.totp,
+  name: 'Banco',
+  username: 'alice',
+  uri: 'https://banco.example.com',
+  updatedAt: DateTime.utc(2026),
+);
+
+VaultItemSummary _loginItem() => VaultItemSummary(
+  id: 'two',
+  revision: 1,
+  kind: VaultItemKind.login,
+  name: 'Correio',
+  username: 'alice',
+  uri: 'https://correio.example.com',
+  updatedAt: DateTime.utc(2026),
+);
 
 class _SeedStore extends VaultStore {
   _SeedStore({this.seed = _seed});
@@ -279,23 +325,12 @@ class _SeedStore extends VaultStore {
   final String seed;
 
   @override
-  Future<VaultPage> listPage([String? cursor]) async => VaultPage(
-    items: [
-      VaultItemSummary(
-        id: 'one',
-        revision: 1,
-        kind: VaultItemKind.totp,
-        name: 'Banco',
-        username: 'alice',
-        uri: 'https://banco.example.com',
-        updatedAt: DateTime.utc(2026),
-      ),
-    ],
-  );
+  Future<VaultPage> listPage([String? cursor]) async =>
+      VaultPage(items: [_totpItem(), _loginItem()]);
 
   @override
   Future<VaultSecret> fetch(String id) async =>
-      VaultSecret(id: id, revision: 1, secret: seed);
+      VaultSecret(id: id, revision: 1, secret: id == 'one' ? seed : _password);
 
   @override
   Future<VaultWrite> create(VaultItemInput item) async =>
