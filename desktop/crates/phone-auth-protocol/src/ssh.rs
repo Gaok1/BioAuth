@@ -341,3 +341,203 @@ pub fn point_from_spki(spki: &[u8]) -> Result<Vec<u8>> {
     }
     Ok(point.to_vec())
 }
+
+// --- the operation the phone serves -----------------------------------------
+//
+// Signing goes over the same `ApplicationFrame` the vault and locker use. What
+// crosses is the SSH blob itself, because a server accepts a signature over
+// exactly those bytes and nothing else.
+//
+// That makes this the most powerful operation in the protocol: a request to
+// sign bytes the desktop chose. Three things bound it, and all three matter.
+//
+//   1. It uses a credential whose purpose is `Ssh` and no other. A signature
+//      made here is never one the `sudo` or vault path would produce.
+//   2. **The phone re-parses the blob itself.** The desktop's reading is used
+//      to draw a prompt; the phone's reading is what decides. Without that,
+//      a compromised desktop has a blind signing oracle for a key it cannot
+//      otherwise reach.
+//   3. What it signs must be a `publickey` userauth request. Anything else is
+//      refused, so the oracle cannot be pointed at arbitrary bytes.
+
+use crate::cbor::{Reader, Writer};
+use crate::MAX_APPLICATION_PAYLOAD_BYTES;
+
+/// `ssh.sign`: the phone signs one SSH authentication request.
+pub const OPERATION_SIGN: &str = "ssh.sign";
+
+/// This module's own schema number, versioned separately from the vault's.
+pub const SSH_SCHEMA: u64 = 1;
+
+const SIGN_REQUEST_FIELDS: u64 = 4;
+const SIGN_RESPONSE_FIELDS: u64 = 2;
+
+/// A signature over an SSH authentication request is 64 raw bytes.
+pub const SIGNATURE_LEN: usize = 64;
+
+/// The largest blob worth signing.
+///
+/// A userauth request is a few hundred bytes. A cap well above that and well
+/// below the frame limit means an oversized one is refused as nonsense rather
+/// than carried to the phone to be refused there.
+pub const MAX_SIGN_DATA_BYTES: usize = 2048;
+
+/// `ssh.sign`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignRequest {
+    /// The computer asking, shown on the phone.
+    pub verifier_name: String,
+    /// What the phone should show as the destination: an OpenSSH-style
+    /// fingerprint, or empty when the client did not name one.
+    ///
+    /// Advisory, and the phone treats it as such. It is the desktop's claim
+    /// about where a connection is going, and the phone cannot check it — so
+    /// it is displayed as what the computer said, never as a fact.
+    pub destination: String,
+    /// The exact bytes to sign.
+    pub data: Vec<u8>,
+}
+
+impl SignRequest {
+    pub fn validate(&self) -> Result<()> {
+        check_name(&self.verifier_name)?;
+        if self.destination.len() > 128 {
+            return Err(ProtocolError::FieldTooLong {
+                field: "destination",
+                max: 128,
+                actual: self.destination.len(),
+            });
+        }
+        if self.data.is_empty() || self.data.len() > MAX_SIGN_DATA_BYTES {
+            return Err(ProtocolError::PayloadSize(self.data.len()));
+        }
+        Ok(())
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.array(SIGN_REQUEST_FIELDS);
+        writer.uint(SSH_SCHEMA);
+        writer.text(&self.verifier_name);
+        writer.text(&self.destination);
+        writer.bytes(&self.data);
+        writer.into_bytes()
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        let mut reader = open_ssh(payload, SIGN_REQUEST_FIELDS)?;
+        let decoded = Self {
+            verifier_name: reader.text()?.to_owned(),
+            destination: reader.text()?.to_owned(),
+            data: reader.bytes()?.to_vec(),
+        };
+        finish_ssh(reader, &decoded.encode(), payload)?;
+        decoded.validate()?;
+        Ok(decoded)
+    }
+}
+
+/// The phone's answer: a raw ECDSA signature, for the desktop to wrap in
+/// SSH's own encoding.
+///
+/// Raw rather than pre-wrapped so that the encoding lives in one place. Two
+/// implementations of the `mpint` rule would be one implementation too many.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignResponse {
+    pub signature: Vec<u8>,
+}
+
+impl SignResponse {
+    pub fn validate(&self) -> Result<()> {
+        if self.signature.len() != SIGNATURE_LEN {
+            return Err(ProtocolError::FieldLength {
+                field: "signature",
+                expected: SIGNATURE_LEN,
+                actual: self.signature.len(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.array(SIGN_RESPONSE_FIELDS);
+        writer.uint(SSH_SCHEMA);
+        writer.bytes(&self.signature);
+        writer.into_bytes()
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self> {
+        let mut reader = open_ssh(payload, SIGN_RESPONSE_FIELDS)?;
+        let decoded = Self {
+            signature: reader.bytes()?.to_vec(),
+        };
+        finish_ssh(reader, &decoded.encode(), payload)?;
+        decoded.validate()?;
+        Ok(decoded)
+    }
+}
+
+/// The account an SSH authentication request is for, read from the blob.
+///
+/// The phone runs this on the bytes it is about to sign, which is the check
+/// that keeps `ssh.sign` from being a blind signing oracle: a blob that is not
+/// a `publickey` userauth request has no account to show and is not signed.
+pub fn account_in_request(data: &[u8]) -> Option<(String, String)> {
+    let mut reader = SshReader::new(data);
+    let _session_id = reader.string().ok()?;
+    // SSH_MSG_USERAUTH_REQUEST.
+    if reader.u8().ok()? != 50 {
+        return None;
+    }
+    let user = reader.text().ok()?.to_owned();
+    let service = reader.text().ok()?.to_owned();
+    if reader.text().ok()? != "publickey" {
+        return None;
+    }
+    Some((user, service))
+}
+
+fn check_name(value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(ProtocolError::FieldEmpty("verifierName"));
+    }
+    if value.chars().count() > 64 {
+        return Err(ProtocolError::FieldTooLong {
+            field: "verifierName",
+            max: 64,
+            actual: value.chars().count(),
+        });
+    }
+    Ok(())
+}
+
+fn open_ssh(payload: &[u8], fields: u64) -> Result<Reader<'_>> {
+    if payload.is_empty() || payload.len() > MAX_APPLICATION_PAYLOAD_BYTES {
+        return Err(ProtocolError::PayloadSize(payload.len()));
+    }
+    let mut reader = Reader::new(payload);
+    let len = reader.array()?;
+    if len != fields {
+        return Err(ProtocolError::FrameShape {
+            expected: fields,
+            actual: len,
+        });
+    }
+    let schema = reader.uint()?;
+    if schema != SSH_SCHEMA {
+        return Err(ProtocolError::UnsupportedVersion(schema));
+    }
+    Ok(reader)
+}
+
+/// The canonical-encoding check every payload in this project performs: two
+/// byte strings that mean the same thing would be two requests one approval
+/// covers.
+fn finish_ssh(reader: Reader<'_>, reencoded: &[u8], payload: &[u8]) -> Result<()> {
+    reader.finish()?;
+    if reencoded != payload {
+        return Err(ProtocolError::NotCanonical);
+    }
+    Ok(())
+}

@@ -202,9 +202,13 @@ impl ApplicationFrame {
 }
 
 fn valid_operation(value: &str) -> bool {
+    // An allow-list of prefixes rather than a general shape check. The
+    // operation string picks which handler runs, and a namespace nobody
+    // implements is a namespace somebody will implement by accident.
     let suffix = value
         .strip_prefix("vault.")
-        .or_else(|| value.strip_prefix("locker."));
+        .or_else(|| value.strip_prefix("locker."))
+        .or_else(|| value.strip_prefix("ssh."));
     matches!(suffix, Some(suffix) if !suffix.is_empty()
         && value.len() <= 64
         && !suffix.contains("..")
