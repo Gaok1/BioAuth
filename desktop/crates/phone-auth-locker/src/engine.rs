@@ -643,8 +643,17 @@ impl AtomicFile {
         })
     }
 
+    #[cfg(not(test))]
     fn file(&mut self) -> &mut File {
         self.file.as_mut().expect("file is open until commit")
+    }
+
+    #[cfg(test)]
+    fn file(&mut self) -> TestWriter<'_> {
+        TestWriter {
+            file: self.file.as_mut().expect("file is open until commit"),
+            remaining: FAIL_WRITES_AFTER.with(std::cell::Cell::take),
+        }
     }
 
     fn commit(mut self) -> Result<()> {
@@ -710,6 +719,36 @@ fn sync_directory(destination: &Path) {
 #[cfg(not(unix))]
 fn sync_directory(_destination: &Path) {}
 
+#[cfg(test)]
+std::thread_local! {
+    static FAIL_WRITES_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+struct TestWriter<'a> {
+    file: &'a mut File,
+    remaining: Option<usize>,
+}
+
+#[cfg(test)]
+impl Write for TestWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let Some(remaining) = &mut self.remaining else {
+            return self.file.write(bytes);
+        };
+        if *remaining == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
+        }
+        let written = self.file.write(&bytes[..bytes.len().min(*remaining)])?;
+        *remaining -= written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
 #[cfg(unix)]
 fn mode_of(metadata: &std::fs::Metadata) -> u32 {
     use std::os::unix::fs::MetadataExt;
@@ -754,4 +793,55 @@ fn suffixed(path: &Path, suffix: &str) -> Result<PathBuf> {
     let mut name = path.as_os_str().to_owned();
     name.push(format!(".{suffix}"));
     Ok(PathBuf::from(name))
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    struct Phone;
+
+    impl KeyCustodian for Phone {
+        fn wrap(&mut self, request: &WrapRequest<'_>) -> Result<Wrapper> {
+            Ok(Wrapper {
+                kind: WrapperKind::Phone,
+                id: "test-phone".to_owned(),
+                salt: Vec::new(),
+                nonce: Vec::new(),
+                ciphertext: request.dek.expose().to_vec(),
+            })
+        }
+
+        fn unwrap(&mut self, _request: &UnwrapRequest<'_>) -> Result<Dek> {
+            Err(LockerError::Denied("not used".to_owned()))
+        }
+    }
+
+    #[test]
+    fn a_full_disk_keeps_the_original_and_publishes_no_partial_container() {
+        let directory =
+            std::env::temp_dir().join(format!("phoneauth-locker-full-disk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).expect("sandbox");
+        let source = directory.join("archive.bin");
+        let original = vec![7u8; crate::format::CHUNK_SIZE as usize * 2];
+        std::fs::write(&source, &original).expect("source");
+
+        // Past the header and into the encrypted body, so this is the same
+        // partial-write shape an exhausted filesystem produces.
+        FAIL_WRITES_AFTER.with(|limit| limit.set(Some(70_000)));
+        let error = match lock_file(&source, &LockPlan::default(), &mut Phone) {
+            Ok(_) => panic!("disk full must fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            LockerError::Io(ref io) if io.kind() == std::io::ErrorKind::StorageFull
+        ));
+        assert_eq!(std::fs::read(&source).expect("original survives"), original);
+        assert!(!directory.join("archive.bin.balock").exists());
+        assert_eq!(std::fs::read_dir(&directory).expect("list").count(), 1);
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
 }
