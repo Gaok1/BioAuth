@@ -77,6 +77,7 @@ class PairedSessionService {
   final AuthTransport _transport;
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
+
   /// The parts of the vault and ssh services rather than the services.
   ///
   /// Both are built per session, because the approval they raise has to be

@@ -70,7 +70,7 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
     // Scrolls, because the sheet is sized by its contents and its contents are
     // sized by the system font and by names the computer chose. Past a certain
     // height a `Column` does not shrink -- it puts its last children below the
-    // bottom edge, and here those are "Aprovar" and "Recusar". A widget.request that
+    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
     // can be neither approved nor refused looks, from the computer, like a
     // phone that stopped answering.
     return SingleChildScrollView(
@@ -107,7 +107,11 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
           const SizedBox(height: 18),
 
           _Field(label: 'Computador', value: widget.request.verifierName),
-          _Field(label: 'Entrar como', value: widget.request.user, emphasis: true),
+          _Field(
+            label: 'Entrar como',
+            value: widget.request.user,
+            emphasis: true,
+          ),
           _Field(
             label: 'Servidor',
             // The fingerprint, not a hostname: it is what the client can prove
