@@ -366,7 +366,6 @@ mod tests {
     #[test]
     fn a_planted_symlink_is_not_followed() {
         let dir = sandbox("symlink");
-        let path = dir.join("endpoint.json");
         let elsewhere = dir.join("elsewhere");
         fs::write(&elsewhere, b"do not overwrite me").expect("write");
 
