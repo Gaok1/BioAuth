@@ -111,7 +111,7 @@ implementações de segurança divergentes.
 | FND-03 | P0 | 🧪 | Validar background em Pixel/Samsung/Motorola/Xiaomi, tela bloqueada, Doze, activity removida e processo recriado. Force-stop deve ser comunicado como indisponível, nunca como conectado. |
 | FND-04 | P0 | ✅ | `security_screen.dart` consulta `SecurityCapabilities` real e o estado do foreground service, exibindo Keystore/hardware/StrongBox, `BIOMETRIC_STRONG` e sessões em background; coberto por widget test. |
 | FND-05 | P0 | ✅ | Frames CBOR v1 separados de `AuthRequest` para `vault.*`/`locker.*` existem em Rust e Dart, com kind request/response/cancel/error, request ID, binding de 32 bytes, operação, limite de 6144 bytes e expiração; `isReplyTo` falha fechado e o payload não implementa debug/toString. Golden vector compartilhado e especificação em `docs/protocol-application.md`. |
-| FND-06 | P0 | ✅ | `CredentialPurpose` ganhou valores wire estáveis e aliases distintos para `Vault` e `FileLocker`. O verifier deriva o propósito dos serviços reservados `vault`/`locker` (também `luks`/`webauthn`), sem aceitar override por IPC; teste cobre todos os propósitos estrangeiros mesmo quando a permissão de serviço foi concedida. |
+| FND-06 | P0 | ✅ | `CredentialPurpose` ganhou valores wire estáveis e aliases distintos para `Vault` e `FileLocker`. O verifier deriva o propósito dos serviços reservados `vault`/`locker` (também `luks`/`webauthn`), sem aceitar override por IPC; teste cobre todos os propósitos estrangeiros mesmo quando a permissão de serviço foi concedida. **Agora o propósito também é alcançável de ponta a ponta**, o que até então não era: todo pareamento matriculava `authorization`, então credencial de cofre ou SSH não existia fora de teste e o `authorized:` do cofre nunca era verdade em uso real. O QR carrega o propósito (desktop decide via `pair --service`/bandeja; escrito só quando não é o padrão, então código de login continua escaneável em telefone anterior ao campo, e qualquer outro é recusado lá em vez de matriculado errado). O desktop recusa matrícula com propósito diferente do que pediu. **Uma chave por propósito no Keystore** — antes só o SSH tinha alias próprio e cofre/locker/webauthn assinavam com a chave de autorização, que é exatamente o reuso que os propósitos existem para impedir; qual chave assina é decidido pela credencial com que a sessão foi aberta, nunca pelo pedido, e nome de propósito desconhecido lança em vez de cair na chave de autorização. **Vários credenciais por computador**: os dois lados chaveavam por dispositivo, então parear o cofre apagava o pareamento de login — no telefone silenciosamente, no desktop levando junto as permissões concedidas. Sessão é chaveada por verificador *e* credencial (credencial sozinha não serve: o id é escolhido pelo desktop; verificador sozinho também não). Revogação continua levando o computador inteiro. Lista mostra uma linha por computador com um chip por credencial. As duas telas dizem para que serve antes do toque, porque os seis dígitos respondem *qual* computador e não *para quê*. Teste ponta a ponta com telefone simulado contra listener real cobre as quatro etapas de uma vez. |
 | FND-07 | P0 | 🧪 | Pareamentos e passkeys usam envelopes v2 com migração, snapshot anterior, rollback reportado e recusa de versão futura. O locker usa container v1 estrito e publicação atômica; o store do cofre ainda não existe. |
 | FND-08 | P0 | 🧪 | Passkeys agora carregam o mesmo request ID browser→host→agent→Android. Abort, timeout de browser, timeout do agent e desconexão enviam/cumprem cancelamento; notificação e `BiometricPrompt` são removidos, conclusão é once-only e testes cobrem bridge, registry Rust, frame Dart e coordinator Kotlin. Idempotência específica de vault/locker e o race de create WebAuthn já commitado ainda impedem ✅ global. |
 | FND-09 | P1 | ✅ | iOS foi removido da matriz do primeiro release e está explicitamente marcado como não suportado; a implementação futura permanece em `SYS-03`/`WEB-13`. |
@@ -350,7 +350,8 @@ real, e ele é um só por sessão.
 ## Evidência desta auditoria
 
 <!-- Contagens atualizadas pelos gates após o merge. -->
-- `cargo test --workspace`: **464 testes aprovados** no Windows; um teste
+- `cargo test --workspace`: **466 testes aprovados** no Windows (**476** com
+  `--features dev-simulator`, que habilita o pareamento por propósito ponta a ponta); um teste
   multi-GB permanece ignorado por padrão. `cargo fmt --all -- --check` e
   `cargo clippy --workspace --all-targets -- -D warnings`: limpos.
 - O teste multi-GB de `FLK-10` rodou no Windows antes do merge: round-trip de
@@ -358,9 +359,9 @@ real, e ele é um só por sessão.
   aproximadamente 28 GiB; é evidência datada, não cobertura contínua.
 - Os quatro testes de link do `FLK-08` são `cfg(unix)` e ficam a cargo do CI
   Ubuntu; a verificação Windows apenas prova compilação cruzada.
-- `desktop/ui/npm test`: **35 testes aprovados**.
-- `flutter analyze`: limpo. A suíte mobile soma **300 testes Flutter**, o
-  package nativo soma **10**, e `:phone_auth_native:testDebugUnitTest` soma
+- `desktop/ui/npm test`: **40 testes aprovados**.
+- `flutter analyze`: limpo. A suíte mobile soma **313 testes Flutter**, o
+  package nativo soma **12**, e `:phone_auth_native:testDebugUnitTest` soma
   **53 testes Kotlin**.
 - `:phone_auth_native:lintDebug` e `assembleDebugAndroidTest`: limpos; os
   **7 testes instrumentados** são executados pelo job API 35, não contados como
