@@ -9,9 +9,12 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 class MockPhoneAuthNativePlatform
     with MockPlatformInterfaceMixin
     implements PhoneAuthNativePlatform {
-  @override
   /// Records what the last call asked for, so a test can tell one key from
   /// another — which is the only thing separating the credentials.
+  ///
+  /// No `@override`: this is the mock's own bookkeeping, not part of
+  /// `PhoneAuthNativePlatform`, and annotating it made `flutter analyze`
+  /// fail the plugin package.
   String? lastPurpose;
 
   @override

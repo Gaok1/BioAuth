@@ -56,17 +56,26 @@ fn create(path: &Path) -> io::Result<IdentityKey> {
 mod tests {
     use super::*;
 
+    /// A key path inside a directory belonging to this test alone.
+    ///
+    /// Not `temp_dir()` itself. `write_private` narrows the *parent* of what
+    /// it writes, and the parent would be `/tmp` — root-owned and sticky, so
+    /// the chmod is `EPERM` for anyone but root and every test that writes a
+    /// key fails on Linux while passing on Windows, where `temp_dir()` is
+    /// per-user. Production never writes a key into a shared root either:
+    /// every path in `paths.rs` sits inside a `phone-auth` directory the
+    /// agent created and owns.
     fn temp_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "phoneauth-identity-{}-{name}.pkcs8",
-            std::process::id()
-        ))
+        let dir =
+            std::env::temp_dir().join(format!("phoneauth-identity-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("sandbox");
+        dir.join("identity.pkcs8")
     }
 
     #[test]
     fn first_run_creates_a_key_and_later_runs_reuse_it() {
         let path = temp_path("stable");
-        let _ = fs::remove_file(&path);
 
         let first = load_or_create(&path).expect("create");
         let second = load_or_create(&path).expect("reload");
@@ -82,8 +91,6 @@ mod tests {
     #[test]
     fn two_agents_do_not_share_an_identity() {
         let (a, b) = (temp_path("a"), temp_path("b"));
-        let _ = fs::remove_file(&a);
-        let _ = fs::remove_file(&b);
 
         assert_ne!(
             load_or_create(&a)
@@ -128,10 +135,17 @@ mod tests {
     #[test]
     fn no_temporary_file_survives_a_successful_create() {
         let path = temp_path("clean");
-        let _ = fs::remove_file(&path);
         load_or_create(&path).expect("create");
 
-        assert!(!path.with_extension("pkcs8.tmp").exists());
-        fs::remove_file(&path).ok();
+        // This used to assert on `identity.pkcs8.tmp`, a name
+        // `temporary_beside` has never produced — so it held whatever was
+        // left behind. Listing the directory is the assertion it meant, and
+        // it only became possible once the test had a directory of its own.
+        let mut left: Vec<_> = fs::read_dir(path.parent().expect("parent"))
+            .expect("read_dir")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec![path.file_name().expect("name").to_owned()]);
     }
 }
