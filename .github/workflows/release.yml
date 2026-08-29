@@ -5,7 +5,8 @@ name: Release
 #
 #   push to main   bump the workspace version and the release cuts itself
 #   push of a tag  release that exact tag, for anything cut by hand
-#   dispatch       build the whole set without publishing, to test this file
+#   dispatch       build the whole set; publish only if asked, and then only
+#                  as an unsigned debug prerelease
 #
 # The tag is created by the release step rather than pushed by an earlier job,
 # because a tag pushed with GITHUB_TOKEN does not trigger workflows — GitHub
@@ -18,6 +19,15 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Publish an unsigned debug prerelease, so the build can be downloaded
+          from the releases page instead of dug out of a run's artifact list.
+          Every file is renamed with a -debug marker and the release is flagged
+          as a prerelease. This door cannot produce a stable release.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -42,6 +52,19 @@ jobs:
       tag: ${{ steps.decide.outputs.tag }}
       build: ${{ steps.decide.outputs.build }}
       publish: ${{ steps.decide.outputs.publish }}
+      # `stable` is the released product and must be signed with the project
+      # keys. `debug` is explicitly unsigned, named so on every file, and can
+      # only ever come out as a prerelease.
+      channel: ${{ steps.decide.outputs.channel }}
+    # Read here only to answer "could this run sign at all?" before spending
+    # four parallel builds on a stable release that would fail at the last step.
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,32 +103,52 @@ jobs:
         id: decide
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          DISPATCH_PUBLISH: ${{ inputs.publish }}
         run: |
+          # Six secrets, all or nothing. Asking now costs ten seconds and turns
+          # a guaranteed forty-minute failure into an explanation. It lowers no
+          # bar: a run that cannot sign still publishes nothing as stable.
+          signable=true
+          for value in             "$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD"             "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"             "$WINDOWS_CERT_BASE64" "$WINDOWS_CERT_PASSWORD"; do
+            [ -n "$value" ] || signable=false
+          done
+
+          emit() {
+            echo "tag=$1" >> "$GITHUB_OUTPUT"
+            echo "build=$2" >> "$GITHUB_OUTPUT"
+            echo "publish=$3" >> "$GITHUB_OUTPUT"
+            echo "channel=$4" >> "$GITHUB_OUTPUT"
+          }
+
           case "$GITHUB_REF" in
             refs/tags/v*)
               # Cut by hand. Build and publish exactly this tag.
-              echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-              echo "build=true" >> "$GITHUB_OUTPUT"
-              echo "publish=true" >> "$GITHUB_OUTPUT"
+              emit "${GITHUB_REF#refs/tags/}" true true stable
               ;;
             refs/heads/main)
               tag="v$VERSION"
               if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
                 echo "$tag already exists — nothing to release."
-                echo "build=false" >> "$GITHUB_OUTPUT"
-                echo "publish=false" >> "$GITHUB_OUTPUT"
+                emit "$tag" false false stable
+              elif [ "$signable" = false ]; then
+                # Refuse early and say which door does produce something
+                # installable, instead of failing four builds deep with a
+                # message about a secret.
+                echo "::warning::$tag is unreleased, but signing is not configured, so no stable release can come from this commit. Run this workflow manually with publish=true for an unsigned debug prerelease."
+                emit "$tag" false false stable
               else
                 echo "version bumped to $VERSION — releasing $tag."
-                echo "tag=$tag" >> "$GITHUB_OUTPUT"
-                echo "build=true" >> "$GITHUB_OUTPUT"
-                echo "publish=true" >> "$GITHUB_OUTPUT"
+                emit "$tag" true true stable
               fi
               ;;
             *)
-              # Manual dispatch: prove the workflow still works, publish nothing.
-              echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-              echo "build=true" >> "$GITHUB_OUTPUT"
-              echo "publish=false" >> "$GITHUB_OUTPUT"
+              # Manual dispatch. Builds the whole set either way; publishes only
+              # when asked, and then on a tag that cannot collide with stable.
+              if [ "$DISPATCH_PUBLISH" = "true" ]; then
+                emit "v$VERSION-debug.$GITHUB_RUN_NUMBER" true true debug
+              else
+                emit "v$VERSION" true false debug
+              fi
               ;;
           esac
   # ---------------------------------------------------------------- Android --
@@ -153,13 +196,13 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
-      # A published release must be signed with the project key. A manual
-      # dispatch without secrets may still produce an explicitly named debug
-      # artifact for workflow testing, but it can never reach a release.
+      # A stable release must be signed with the project key. Without the
+      # secrets the build still happens, but only as an explicitly named debug
+      # artifact — which can reach a prerelease and never a stable release.
       - name: Validate and decode signing material
         id: signing
         env:
-          PUBLISH: ${{ needs.gate.outputs.publish }}
+          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
           configured=0
           for value in \
@@ -174,8 +217,8 @@ jobs:
             echo "::error::Android release signing is only partially configured"
             exit 1
           fi
-          if [ "$PUBLISH" = true ] && [ "$configured" -ne 4 ]; then
-            echo "::error::Published releases require all four Android signing secrets"
+          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 4 ]; then
+            echo "::error::A stable release requires all four Android signing secrets"
             exit 1
           fi
           if [ "$configured" -eq 0 ]; then
@@ -273,13 +316,13 @@ jobs:
       # which teaches users to click through exactly the warning that would
       # tell them about a substituted installer.
       #
-      # Same shape as the Android rule: a dispatch may build unsigned to prove
-      # the workflow works, a publish may not.
+      # Same shape as the Android rule: an unsigned installer may ship as a
+      # debug prerelease that says so in its filename, never as stable.
       - name: Sign the installer
         id: authenticode
         shell: bash
         env:
-          PUBLISH: ${{ needs.gate.outputs.publish }}
+          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
           configured=0
           [ -n "$WINDOWS_CERT_BASE64" ] && configured=$((configured + 1))
@@ -289,12 +332,12 @@ jobs:
             echo "::error::Windows signing is only half configured"
             exit 1
           fi
-          if [ "$PUBLISH" = true ] && [ "$configured" -ne 2 ]; then
-            echo "::error::Published releases require both Windows signing secrets"
+          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 2 ]; then
+            echo "::error::A stable release requires both Windows signing secrets"
             exit 1
           fi
           if [ "$configured" -eq 0 ]; then
-            echo "::warning::Building an unsigned installer; this run cannot publish"
+            echo "::warning::Building an unsigned installer; it can only ship as a debug prerelease"
             exit 0
           fi
 
@@ -515,10 +558,30 @@ jobs:
           upload-artifact: false
 
       - name: Flatten and checksum
+        env:
+          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
           mkdir -p release
           find incoming -type f ! -name 'npm-deps-hash.txt' -exec cp {} release/ \;
           cd release
+
+          # On the debug channel the file has to say what it is by its own
+          # name. A download is separated from the page that called it a
+          # prerelease the moment it lands in ~/Downloads, and an unsigned
+          # build that looks like the real one is the entire risk here.
+          # Checksums are computed after the rename, so the list describes the
+          # files that actually ship.
+          if [ "$CHANNEL" = debug ]; then
+            for f in *; do
+              case "$f" in
+                sbom.cyclonedx.json|*-debug|*-debug.*) continue ;;
+                *.tar.gz) mv -- "$f" "${f%.tar.gz}-debug.tar.gz" ;;
+                *.*)      mv -- "$f" "${f%.*}-debug.${f##*.}" ;;
+                *)        mv -- "$f" "$f-debug" ;;
+              esac
+            done
+          fi
+
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
@@ -539,7 +602,9 @@ jobs:
       # `tag_name` is explicit because on a push to main the ref is a branch.
       # The action creates the tag at this commit as part of creating the
       # release, so the tag only ever exists for a build that got this far.
-      - uses: softprops/action-gh-release@v2
+      - name: Publish stable release
+        if: needs.gate.outputs.channel == 'stable'
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.gate.outputs.tag }}
           target_commitish: ${{ github.sha }}
@@ -583,6 +648,69 @@ jobs:
             The extension zips are **store uploads, not installable files**.
             Chrome, Edge and Firefox each sign on their side. To install one
             without a store, see the enterprise channel in `docs/webauthn.md`.
+
+            ## Pairing
+
+            Install the desktop side, open PhoneAuth, choose **Pair a phone…**,
+            and scan the code with the app. Both screens then show six digits —
+            they must match before you confirm. The code on screen authenticates
+            the desktop to the phone; the six digits close the other direction.
+
+      # The debug channel. Same artifacts, none of them signed, every filename
+      # saying so, and `prerelease: true` so it never becomes what a plain
+      # visitor to the releases page downloads by default.
+      - name: Publish debug prerelease
+        if: needs.gate.outputs.channel == 'debug'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.gate.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ needs.gate.outputs.tag }} — unsigned debug build
+          files: release/*
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            ## Unsigned debug build — for testing, not for use
+
+            Nothing in this release is signed, and every filename carries
+            `-debug` so a file that has left this page still says what it is.
+
+            "Debug" means different things per artifact, and the difference
+            matters:
+
+            - **The Android APK is a real debug build** signed with the
+              throwaway debug key.
+            - **The desktop binaries are release-optimised**, just unsigned.
+              Windows will call the publisher unknown and SmartScreen will warn
+              until the download is common, which it never will be.
+
+            Two things to know before installing:
+
+            - **The APK cannot be upgraded in place** to a signed build later.
+              Android refuses an update whose signing key changed, so moving to
+              a real release means uninstalling first — and uninstalling takes
+              the pairings, passkeys and vault entries created while testing.
+              Treat anything you set up here as disposable.
+            - **Provenance still works**, because it needs no project key:
+
+              ```
+              gh attestation verify <file> --repo ${{ github.repository }}
+              ```
+
+              That says which commit and which workflow run produced the file,
+              which is the half of the signing story that is not missing here.
+
+            | Platform | File |
+            |---|---|
+            | Android | `PhoneAuth-android-debug.apk` |
+            | Windows 11 x64 | `PhoneAuth-Setup-*-debug.exe` |
+            | Linux x64 (portable) | `PhoneAuth-*-debug.AppImage` |
+            | Debian / Ubuntu x64 | `*-debug.deb` |
+            | Headless Linux x64 | `phone-auth-linux-x86_64-debug.tar.gz` |
+            | Browser extension | `phoneauth-passkeys-*-debug.zip` |
+
+            The extension zips are store uploads, not installable files — load
+            one unpacked to try it.
 
             ## Pairing
 
