@@ -312,9 +312,13 @@ activity from reopening the prompt, and completes each request only once. A
 disconnect also cancels the native ceremony. The phone's generic denial remains
 bound to the original request ID and contains no credential material.
 
-Cancellation cannot undo a passkey creation that committed immediately before
-the cancel won the race; such a credential remains visible in passkey management
-for explicit deletion. Application-protocol operations still need operation-
+Passkey creation claims the pending request before touching the Keystore or
+metadata. Claim and cancellation remove the same map entry atomically: when
+cancel wins, creation never runs; when creation wins, a late cancel cannot
+reclassify the committed credential as cancelled and the response is delivered
+once. Coordinator tests force both orders. An uncatchable process death after
+the claim can still leave a credential visible in passkey management for
+explicit deletion. Application-protocol operations still need operation-
 specific idempotency before `FND-08` can be considered complete globally.
 
 ## Deliberately out of scope
