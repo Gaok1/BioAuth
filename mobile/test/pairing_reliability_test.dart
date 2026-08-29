@@ -11,6 +11,7 @@ import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/auth/interactive_authorizer.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
+import 'package:phone_auth/core/protocol/cbor.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
 import 'package:phone_auth/core/session/paired_session_runner.dart';
@@ -61,6 +62,32 @@ void main() {
       await expectLater(serving, throwsA(anything));
     },
   );
+
+  // The desktop parks one session per credential and picks the one matching
+  // the request it is about to send. It can only do that if the phone says
+  // which credential the session carries, and it has to be the first thing on
+  // the channel: the desktop reads it before parking.
+  test('a session says which credential it carries, first', () async {
+    final session = _IdleSession();
+    final service = PairedSessionService(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: _UnusedConsent(),
+    );
+
+    final serving = service.serveOne(_record);
+    await session.listening.future;
+
+    expect(session.sent, hasLength(1), reason: 'nothing else may precede it');
+    final reader = CborReader(session.sent.single);
+    expect(reader.array(), 4);
+    expect(reader.uint(), 5, reason: 'the session-attach message type');
+    expect(reader.uint(), 1);
+    expect(reader.text(), _record.credentialId);
+
+    await service.stop();
+    await expectLater(serving, throwsA(anything));
+  });
 
   test('closing one device leaves the others connected', () async {
     final wanted = _IdleSession();
@@ -470,8 +497,11 @@ class _IdleSession implements SecureTransportSession {
   @override
   Stream<Uint8List> get incomingFrames => _incoming.stream;
 
+  /// Every frame the phone put on the channel, in order.
+  final List<Uint8List> sent = [];
+
   @override
-  Future<void> send(Uint8List frame) async {}
+  Future<void> send(Uint8List frame) async => sent.add(frame);
 
   @override
   Future<void> close() async {

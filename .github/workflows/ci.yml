@@ -118,8 +118,12 @@ jobs:
         working-directory: desktop
         run: |
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          # `--all-features`: `dev-simulator` is off by default, and the tests
+          # that drive a phone over a real socket are gated on it. Without it
+          # they compile to nothing and report "0 passed", which reads exactly
+          # like passing.
+          cargo test --workspace --all-features
       # The property suites run at proptest's default of 256 cases in a normal
       # `cargo test`, so a local run stays quick. Here they get a budget worth
       # having: these are the decoders that read bytes nobody has authenticated

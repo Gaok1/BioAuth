@@ -326,6 +326,37 @@ that supports more than one purpose must enrol distinct keystore aliases.
 A freshly enrolled credential authorizes nothing until the user grants
 permissions.
 
+## Session attach
+
+Sent by the phone immediately after a *non-pairing* handshake, inside the
+encrypted channel, before anything else. A CBOR array of 4 elements.
+
+```text
+[5, 1, credential_id, 0]
+```
+
+| # | Type | Notes |
+|---|---|---|
+| 0 | uint | message type, always `5` |
+| 1 | uint | protocol version, always `1` |
+| 2 | text | credential id, 1-64 characters |
+| 3 | uint | reserved, must be `0` |
+
+A paired phone runs one connection per credential, because the credential a
+session was opened with decides which key signs on it: a request naming a
+different credential is refused rather than served from another key. The
+verifier parks idle sessions and picks one when it needs to ask something, so
+it has to know which session is which. Without this frame it picked whichever
+had arrived last, and a vault request went out over the login session about as
+often as not, coming back as a denial nobody made.
+
+It is a routing hint and carries no authority. A phone that names a credential
+it does not hold has only arranged to be sent requests it will refuse.
+
+A verifier waits a short window for it and, if nothing arrives, parks the
+session as an answer to any credential -- which is what every session was
+before this frame existed.
+
 ## Failure rules
 
 Everything fails closed:

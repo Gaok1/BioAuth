@@ -24,7 +24,7 @@ use phone_auth_protocol::cbor::{Reader, Writer};
 use phone_auth_protocol::locker;
 use phone_auth_protocol::vault;
 use phone_auth_protocol::{
-    ApplicationFrame, ApplicationFrameKind, AuthRequest, AuthResponse, Enrolment,
+    ApplicationFrame, ApplicationFrameKind, AuthRequest, AuthResponse, Enrolment, MAX_VALIDITY_MS,
 };
 use proptest::prelude::*;
 
@@ -268,7 +268,10 @@ fn auth_request_bytes() -> impl Strategy<Value = Vec<u8>> {
         any::<[u8; 32]>(),
         any::<[u8; 32]>(),
         0i64..4_000_000_000_000,
-        1i64..300_000,
+        // Within the protocol's own ceiling. Beyond it the frame is refused,
+        // and spending most of the budget building frames that get filtered
+        // out means the property explores far less than the case count says.
+        1i64..=MAX_VALIDITY_MS,
     )
         .prop_map(
             |(
@@ -374,7 +377,11 @@ fn locker_wrap_bytes() -> impl Strategy<Value = Vec<u8>> {
         short_text(),
         any::<u32>(),
         any::<[u8; 32]>(),
-        prop::collection::vec(any::<u8>(), 1..64),
+        // Exactly the one accepted length. Drawing 1..64 and filtering the rest
+        // away left 1 case in 63 usable, which at the budget CI runs is not a
+        // slow test but an impossible one: proptest gives up after 65536
+        // rejections, long before 4096 frames have been built.
+        prop::collection::vec(any::<u8>(), locker::DATA_KEY_LEN),
     )
         .prop_map(
             |(verifier_name, file_name, plaintext_len, container_binding, data_key)| {

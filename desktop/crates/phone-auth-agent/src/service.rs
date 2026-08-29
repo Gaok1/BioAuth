@@ -497,7 +497,7 @@ impl Service {
 
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
 
         let spec = RequestSpec::new(
@@ -620,10 +620,11 @@ impl Service {
             ));
         }
 
-        let device_id = self.select_webauthn_device(params.credential_id.as_deref())?;
+        let (device_id, credential_id) =
+            self.select_service_credential("webauthn", "passkey relay", params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         if !session.security().suitable_for_authorization() {
             let _ = session.close();
@@ -687,31 +688,6 @@ impl Service {
         crate::ipc::take_webauthn_cancellation(request_id);
         let _ = session.close();
         result.map(|response| WebAuthnResult { response })
-    }
-
-    fn select_webauthn_device(&self, credential_id: Option<&str>) -> Result<String, ServiceError> {
-        if let Some(credential_id) = credential_id {
-            return self
-                .verifier
-                .store()
-                .find_credential(credential_id)
-                .map(|(device, _)| device.device_id.clone())
-                .ok_or_else(|| {
-                    ServiceError::new("unknown-credential", "unknown paired credential")
-                });
-        }
-        let devices: Vec<_> = self.verifier.store().devices().collect();
-        match devices.as_slice() {
-            [] => Err(ServiceError::new(
-                "not-paired",
-                "no phone is paired with this computer",
-            )),
-            [device] => Ok(device.device_id.clone()),
-            _ => Err(ServiceError::new(
-                "ambiguous-credential",
-                "more than one phone is paired; select a credential",
-            )),
-        }
     }
 
     /// Sends the request and checks the answer.
@@ -816,7 +792,7 @@ impl Service {
             self.select_locker_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -882,7 +858,7 @@ impl Service {
             self.select_locker_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -943,7 +919,7 @@ impl Service {
             self.select_locker_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -999,11 +975,11 @@ impl Service {
         &mut self,
         params: &VaultListParams,
     ) -> Result<VaultListResult, ServiceError> {
-        let (device_id, _credential_id) =
+        let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -1065,11 +1041,11 @@ impl Service {
     /// thing standing between a compromised desktop and an arbitrary
     /// signature.
     pub fn ssh_sign(&mut self, params: &SshSignParams) -> Result<SshSignResult, ServiceError> {
-        let (device_id, _credential_id) =
+        let (device_id, credential_id) =
             self.select_service_credential("ssh", "SSH", params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -1127,11 +1103,11 @@ impl Service {
         let host = origin_host(&params.origin)
             .ok_or_else(|| ServiceError::new("bad-params", "origin is not an https origin"))?;
 
-        let (device_id, _credential_id) =
+        let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
@@ -1229,11 +1205,11 @@ impl Service {
             ));
         }
 
-        let (device_id, _credential_id) =
+        let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
         let mut session = self
             .transports
-            .connect(&device_id)
+            .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;

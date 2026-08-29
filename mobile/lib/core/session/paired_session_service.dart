@@ -15,6 +15,7 @@ import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/enrolment.dart';
+import '../protocol/session_attach.dart';
 import '../protocol/webauthn_relay.dart';
 import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
@@ -108,6 +109,7 @@ class PairedSessionService {
   /// Returns the response that was sent, or null when the desktop asked for
   /// nothing before the timeout. A null is not an error: the caller simply
   /// dials again.
+  ///
   /// [onRequestRaised] fires with the id of every request this session puts in
   /// front of the user, so a caller cleaning up after a broken session can
   /// name what *this* session left pending instead of everything pending.
@@ -139,6 +141,13 @@ class PairedSessionService {
         'O computador respondeu como se nunca tivesse sido pareado',
       );
     }
+    // Which of this phone's credentials the session is for. The desktop parks
+    // one session per credential and picks the one matching the request it is
+    // about to send; without this it picked whichever arrived last, and a
+    // vault request going out over the login session comes back refused.
+    await outcome.session.send(
+      SessionAttach(credentialId: record.credentialId).encode(),
+    );
     _active[_key(record)] = outcome.session;
     // The channel is authenticated from here on. Reporting it now is what
     // separates "connected" from "has already answered something": waiting for

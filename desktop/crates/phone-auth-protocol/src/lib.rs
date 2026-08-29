@@ -10,6 +10,7 @@
 //! caller's problem, and never contributes to identity.
 
 mod application;
+mod attach;
 pub mod cbor;
 pub mod encoding;
 mod enrolment;
@@ -22,6 +23,7 @@ pub mod vault;
 pub use application::{
     ApplicationErrorCode, ApplicationFrame, ApplicationFrameKind, MAX_APPLICATION_PAYLOAD_BYTES,
 };
+pub use attach::SessionAttach;
 pub use enrolment::{CredentialPurpose, Enrolment, KeyKind};
 pub use request::{AuthRequest, RequestContext};
 pub use response::{AuthResponse, Decision};
@@ -58,6 +60,7 @@ const MESSAGE_TYPE_REQUEST: u64 = 1;
 const MESSAGE_TYPE_RESPONSE: u64 = 2;
 const MESSAGE_TYPE_ENROLMENT: u64 = 3;
 const MESSAGE_TYPE_APPLICATION: u64 = 4;
+const MESSAGE_TYPE_ATTACH: u64 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolError {

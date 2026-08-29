@@ -171,6 +171,11 @@ void main() {
       final acceptingPaired = desktop.accept(freshBootstrap);
       final serving = service.serveOne(record);
       final desktopSession = await acceptingPaired;
+      expect(
+        await desktopSession.readAttach(),
+        record.credentialId,
+        reason: 'the desktop parks this session under that credential',
+      );
 
       final request = requestFor(desktopSession.binding);
       // The user taps approve as soon as the card appears. The biometric prompt
@@ -225,6 +230,7 @@ void main() {
     );
     final serving = service.serveOne(record);
     final desktopSession = await acceptingPaired;
+    await desktopSession.readAttach();
 
     // A binding lifted from somewhere else. Nothing must reach a human.
     final request = requestFor(Uint8List.fromList(List<int>.filled(32, 0xaa)));

@@ -147,10 +147,16 @@ impl SimulatedPhone {
     ///
     /// Real phones wait on a user; this answers immediately, which is exactly
     /// why it must never be mistaken for one.
+    /// Serves one request on a session opened for `credential_id`.
+    ///
+    /// The credential is part of opening the session, as it is on a real
+    /// phone: the desktop parks one session per credential and picks the one
+    /// matching the request it is about to send.
     pub fn serve_once(
         &self,
         endpoint: &str,
         verifier_identity_spki: &[u8],
+        credential_id: &str,
         now_ms: i64,
     ) -> Result<(), String> {
         let (mut channel, mut stream) = client::connect(
@@ -158,6 +164,7 @@ impl SimulatedPhone {
             verifier_identity_spki,
             DEVICE_ID,
             &self.identity,
+            credential_id,
             now_ms,
         )?;
 
@@ -197,17 +204,39 @@ impl SimulatedPhone {
     ///
     /// A real phone connects when its user acts. This reconnects in a loop so
     /// that `phone-auth authorize` works without a human in the way.
+    ///
+    /// One loop per purpose, because that is what a real phone does and what
+    /// the desktop now routes by: each credential is a separate session, and a
+    /// desktop asking for the vault must find the vault's. Serving every
+    /// purpose rather than only the paired one costs an idle socket each and
+    /// saves the simulator from having to be told which pairing happened.
     pub fn run_in_background(self, endpoint: String, verifier_identity_spki: Vec<u8>) {
-        thread::spawn(move || loop {
-            let now = phone_auth_verifier::verifier::now_ms();
-            if let Err(error) = self.serve_once(&endpoint, &verifier_identity_spki, now) {
-                // Nothing to authorize yet is the normal case, not a fault.
-                if !error.contains("timed out") && !error.contains("os error") {
-                    eprintln!("phone-auth-agent: simulator: {error}");
+        let phone = std::sync::Arc::new(self);
+        for purpose in [
+            CredentialPurpose::Authorization,
+            CredentialPurpose::DiskUnlock,
+            CredentialPurpose::WebAuthn,
+            CredentialPurpose::Vault,
+            CredentialPurpose::FileLocker,
+            CredentialPurpose::Ssh,
+        ] {
+            let phone = std::sync::Arc::clone(&phone);
+            let endpoint = endpoint.clone();
+            let verifier_identity_spki = verifier_identity_spki.clone();
+            let credential_id = credential_id_for(purpose);
+            thread::spawn(move || loop {
+                let now = phone_auth_verifier::verifier::now_ms();
+                if let Err(error) =
+                    phone.serve_once(&endpoint, &verifier_identity_spki, &credential_id, now)
+                {
+                    // Nothing to authorize yet is the normal case, not a fault.
+                    if !error.contains("timed out") && !error.contains("os error") {
+                        eprintln!("phone-auth-agent: simulator: {error}");
+                    }
+                    thread::sleep(Duration::from_millis(500));
                 }
-                thread::sleep(Duration::from_millis(500));
-            }
-        });
+            });
+        }
     }
 }
 

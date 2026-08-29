@@ -69,8 +69,11 @@ void main() {
       );
 
       await serving;
+      // Two frames: the session attach the phone always opens with, then the
+      // answer. The attach is CBOR and carries no relay prefix.
+      expect(transport.session.outgoing, hasLength(2));
       final response =
-          jsonDecode(utf8.decode(transport.session.outgoing.single.sublist(6)))
+          jsonDecode(utf8.decode(transport.session.outgoing.last.sublist(6)))
               as Map<String, dynamic>;
       expect(cancelled, isTrue);
       expect(response['requestId'], 'request-1');

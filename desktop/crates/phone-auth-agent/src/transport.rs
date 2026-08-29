@@ -56,8 +56,18 @@ pub trait Transport: Send + Sync {
     /// Outbound transports do not need the map and keep the default no-op.
     fn set_known_peers(&self, _peers: HashMap<String, Vec<u8>>) {}
 
-    /// Opens a session, or explains why not.
-    fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String>;
+    /// Opens the session that device opened for `credential_id`, or explains
+    /// why not.
+    ///
+    /// The credential is part of the address, not a filter applied afterwards.
+    /// A phone runs one connection per credential and refuses a request naming
+    /// a different one, so a session picked without regard to the credential
+    /// produces a denial the user never made rather than a wrong answer.
+    fn connect(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<Box<dyn SecureSession + Send>, String>;
 }
 
 /// Snapshot of one transport for the IPC status payload.
@@ -120,7 +130,11 @@ impl TransportRegistry {
     }
 
     /// Opens a session over the first ready transport.
-    pub fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+    pub fn connect(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<Box<dyn SecureSession + Send>, String> {
         let ready: Vec<_> = self
             .transports
             .iter()
@@ -135,7 +149,7 @@ impl TransportRegistry {
 
         let mut errors = Vec::new();
         for transport in ready {
-            match transport.connect(device_id) {
+            match transport.connect(device_id, credential_id) {
                 Ok(session) => return Ok(session),
                 Err(error) => errors.push(format!("{}: {error}", transport.name())),
             }
@@ -168,7 +182,11 @@ impl Transport for PlannedTransport {
         }
     }
 
-    fn connect(&self, _device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+    fn connect(
+        &self,
+        _device_id: &str,
+        _credential_id: &str,
+    ) -> Result<Box<dyn SecureSession + Send>, String> {
         Err(format!(
             "{} is not implemented: {}",
             self.name, self.blocked_on
@@ -195,7 +213,11 @@ mod tests {
             TransportAvailability::Ready
         }
 
-        fn connect(&self, _device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+        fn connect(
+            &self,
+            _device_id: &str,
+            _credential_id: &str,
+        ) -> Result<Box<dyn SecureSession + Send>, String> {
             Err(format!("{} cannot reach it", self.0))
         }
     }
@@ -240,7 +262,7 @@ mod tests {
     fn connecting_without_a_ready_transport_explains_itself() {
         let registry = TransportRegistry::new(Vec::new());
         // `Box<dyn SecureSession>` has no `Debug`, so unwrap by hand.
-        match registry.connect("phone-1") {
+        match registry.connect("phone-1", "credential-1") {
             Ok(_) => panic!("a registry with no ready transport must not connect"),
             Err(error) => assert!(error.contains("no transport"), "{error}"),
         }
@@ -252,7 +274,7 @@ mod tests {
             Arc::new(FailingTransport("first")),
             Arc::new(FailingTransport("second")),
         ]);
-        let error = match registry.connect("phone-1") {
+        let error = match registry.connect("phone-1", "credential-1") {
             Ok(_) => panic!("both transports fail"),
             Err(error) => error,
         };

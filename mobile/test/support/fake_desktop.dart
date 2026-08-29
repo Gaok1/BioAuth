@@ -204,6 +204,23 @@ class DesktopSession {
   Future<Enrolment> readEnrolment() async =>
       Enrolment.decode(await channel.open(await _frames.next()));
 
+  /// Reads the credential a resuming phone declares before anything else.
+  ///
+  /// The real desktop reads this before parking the session, because it holds
+  /// one session per credential and has to know which is which. A fake that
+  /// skipped it would read the attach frame as the answer to the first
+  /// request, which is what this method exists to stop.
+  Future<String> readAttach() async {
+    final reader = CborReader(await channel.open(await _frames.next()));
+    if (reader.array() != 4) throw StateError('bad attach frame');
+    if (reader.uint() != 5) throw StateError('not a session attach');
+    if (reader.uint() != 1) throw StateError('unknown protocol version');
+    final credentialId = reader.text();
+    if (reader.uint() != 0) throw StateError('reserved field is not zero');
+    reader.finish();
+    return credentialId;
+  }
+
   /// Sends one authorization request and waits for the answer.
   Future<AuthResponse> requestAuthorization(
     AuthenticationRequest request,

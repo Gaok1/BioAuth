@@ -72,8 +72,12 @@ esac
   echo 'mkdir -p /target'
   echo 'chown -R ci /target /usr/local/cargo /usr/local/rustup'
   if [ "$#" -gt 0 ]; then
+    # `PROPTEST_CASES` travels because CI raises it to 4096, and a generator
+    # that wastes most of its draws on cases it then filters out passes at the
+    # default 256 and cannot pass at 4096: proptest gives up after 65536
+    # rejections. Reproducing that needs the budget, not just the test name.
     printf 'su ci -c %s\n' \
-      "'export CARGO_TARGET_DIR=/target; cd /work/desktop && cargo test $* '"
+      "'export CARGO_TARGET_DIR=/target PROPTEST_CASES=${PROPTEST_CASES:-256}; cd /work/desktop && cargo test $* '"
   else
     cat <<'STEPS'
 su ci -c '
@@ -83,9 +87,12 @@ su ci -c '
   echo "===== fmt ====="
   cargo fmt --all -- --check || status=1
   echo "===== clippy ====="
-  cargo clippy --workspace --all-targets -- -D warnings || status=1
+  cargo clippy --workspace --all-targets --all-features -- -D warnings || status=1
   echo "===== test ====="
-  cargo test --workspace || status=1
+  # `--all-features` because `dev-simulator` is off by default, and the tests
+  # that drive a phone over a real socket are gated on it. Without this they
+  # compile to nothing and report "0 passed", which reads exactly like passing.
+  cargo test --workspace --all-features || status=1
   exit $status
 '
 STEPS

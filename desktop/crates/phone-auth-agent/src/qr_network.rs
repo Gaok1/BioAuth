@@ -25,7 +25,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use phone_auth_protocol::{Enrolment, SESSION_BINDING_LEN};
+use phone_auth_protocol::{Enrolment, SessionAttach, SESSION_BINDING_LEN};
 use phone_auth_session::{
     ClientHandshake, IdentityKey, PairingIntent, PeerExpectation, PendingServerHandshake,
     SecureChannel, ServerBootstrap, VerifierExpectation,
@@ -76,8 +76,19 @@ struct ParkedSession {
 
 #[derive(Default)]
 struct State {
-    /// Idle authenticated sessions, by device id.
-    sessions: HashMap<String, ParkedSession>,
+    /// Idle authenticated sessions, by device and credential.
+    ///
+    /// Keyed by both because a phone runs one connection per credential: a
+    /// desktop holding a login credential and a vault credential for the same
+    /// phone has two live sessions from one device. Keyed by device alone, the
+    /// second arrival replaced the first, its socket closed, that loop on the
+    /// phone reported a failure and dialled again — and the two took turns
+    /// evicting each other for as long as the app was open.
+    ///
+    /// Within one credential a second arrival still replaces the first, which
+    /// is right: a phone has one loop per credential, so the new session *is*
+    /// that loop, and the old one is a socket its end has already closed.
+    sessions: HashMap<SessionKey, ParkedSession>,
     /// Session identity keys of paired devices, mirrored from the store so the
     /// listener never has to lock the verifier to answer a connection.
     known_peers: HashMap<String, Vec<u8>>,
@@ -214,7 +225,9 @@ impl QrNetworkTransport {
             .lock()
             .expect("state mutex")
             .sessions
-            .remove(device_id);
+            // Every credential of that phone. Forgetting a device is not
+            // "except for the vault".
+            .retain(|(parked, _), _| parked != device_id);
     }
 
     /// Takes a completed pairing proposal, if one has arrived.
@@ -253,13 +266,35 @@ impl QrNetworkTransport {
         &self.shared.identity
     }
 
-    /// Waits up to `timeout` for a session to this device.
-    fn take_session(&self, device_id: &str, timeout: Duration) -> Option<ParkedSession> {
+    /// Which of a device's credentials currently have a session parked.
+    ///
+    /// Exists for tests, which otherwise have to guess when an inbound
+    /// connection is ready: the phone's side of `connect` returns as soon as
+    /// it has written, and the desktop parks some microseconds later. `None`
+    /// is a phone that did not name its credential.
+    pub fn parked_credentials(&self, device_id: &str) -> Vec<Option<String>> {
+        let mut state = self.shared.state.lock().expect("state mutex");
+        discard_stale(&mut state);
+        state
+            .sessions
+            .keys()
+            .filter(|(parked, _)| parked == device_id)
+            .map(|(_, credential)| credential.clone())
+            .collect()
+    }
+
+    /// Waits up to `timeout` for this device's session for `credential_id`.
+    fn take_session(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+        timeout: Duration,
+    ) -> Option<ParkedSession> {
         let mut state = self.shared.state.lock().expect("state mutex");
         let deadline = Instant::now() + timeout;
         loop {
             discard_stale(&mut state);
-            if let Some(session) = state.sessions.remove(device_id) {
+            if let Some(session) = take_matching(&mut state, device_id, credential_id) {
                 return Some(session);
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -276,10 +311,27 @@ impl QrNetworkTransport {
     }
 }
 
+/// A parked session's address: which phone, and which of its credentials.
+///
+/// `None` is a phone from before the attach frame, which cannot say. It is
+/// served to any credential, because that is exactly what the desktop did for
+/// every phone before this existed — a fallback, never a match.
+type SessionKey = (String, Option<String>);
+
 fn discard_stale(state: &mut State) {
     state
         .sessions
         .retain(|_, session| session.parked_at.elapsed() < SESSION_IDLE_TIMEOUT);
+}
+
+/// The session that phone opened for that credential, or a phone that predates
+/// the attach frame and therefore answers for anything.
+fn take_matching(state: &mut State, device_id: &str, credential_id: &str) -> Option<ParkedSession> {
+    let exact = (device_id.to_owned(), Some(credential_id.to_owned()));
+    if let Some(session) = state.sessions.remove(&exact) {
+        return Some(session);
+    }
+    state.sessions.remove(&(device_id.to_owned(), None))
 }
 
 impl Transport for QrNetworkTransport {
@@ -305,12 +357,16 @@ impl Transport for QrNetworkTransport {
         QrNetworkTransport::set_known_peers(self, peers);
     }
 
-    fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+    fn connect(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<Box<dyn SecureSession + Send>, String> {
         // A short wait rather than an immediate answer: the phone may be
         // reconnecting right now, and failing instantly would turn a normal
         // reconnect into a visible error.
         let session = self
-            .take_session(device_id, Duration::from_secs(10))
+            .take_session(device_id, credential_id, Duration::from_secs(10))
             .ok_or_else(|| {
                 format!("`{device_id}` is not connected; open PhoneAuth on the phone")
             })?;
@@ -559,10 +615,15 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
         return Ok(());
     }
 
+    // Which of this phone's credentials the session is for. A phone that does
+    // not say is parked as an answer to anything, which is what every phone got
+    // before the frame existed.
+    let credential_id = read_attach(&mut stream, &mut channel)?;
+
     let mut state = shared.state.lock().expect("state mutex");
     discard_stale(&mut state);
     state.sessions.insert(
-        outcome.peer_device_id,
+        (outcome.peer_device_id, credential_id),
         ParkedSession {
             channel,
             stream,
@@ -575,6 +636,13 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
     Ok(())
 }
 
+/// How long a phone gets to say which credential its session carries.
+///
+/// Spent in full only by a phone too old to send the frame, and only once per
+/// reconnect. A phone that does send it costs nothing: the frame is already in
+/// flight when the handshake completes.
+const ATTACH_WINDOW: Duration = Duration::from_secs(2);
+
 /// How long a known phone gets to declare itself as re-pairing.
 ///
 /// Only spent while a pairing code is armed, and only before parking a session
@@ -586,6 +654,50 @@ const RE_ENROLMENT_WINDOW: Duration = Duration::from_secs(2);
 /// Silence is the ordinary answer and means this is a reconnect. Only a phone
 /// that scanned the armed code sends anything here, because in a paired
 /// session the desktop always speaks first.
+/// Reads the phone's declaration of which credential this session carries.
+///
+/// A real phone sends it the instant the channel is up, so the wait is spent
+/// only on a phone too old to send one — and on that phone the answer is
+/// `None`, which parks the session exactly as it was parked before this frame
+/// existed. Nothing here grants authority: a phone that names a credential it
+/// does not hold has only arranged to be sent requests it will refuse.
+fn read_attach(
+    stream: &mut TcpStream,
+    channel: &mut SecureChannel,
+) -> Result<Option<String>, String> {
+    stream
+        .set_read_timeout(Some(ATTACH_WINDOW))
+        .map_err(|error| error.to_string())?;
+    let record = read_frame(stream);
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(|error| error.to_string())?;
+
+    let record = match record {
+        Ok(record) => record,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            return Ok(None)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let frame = channel.open(&record).map_err(|error| error.to_string())?;
+    // Anything else arriving here is a phone speaking out of turn: the desktop
+    // is the side that asks. Refusing beats parking a session whose first
+    // frame has already been read and discarded.
+    if !SessionAttach::recognizes(&frame) {
+        return Err("the phone sent something other than a session attach".to_owned());
+    }
+    SessionAttach::decode(&frame)
+        .map(|attach| Some(attach.credential_id))
+        .map_err(|error| error.to_string())
+}
+
 fn peek_enrolment(
     stream: &mut TcpStream,
     channel: &mut SecureChannel,
@@ -687,12 +799,18 @@ pub mod client {
         Ok((channel, stream, outcome.verification_code))
     }
 
-    /// Connects as an already-paired device.
+    /// Connects as an already-paired device, for one of its credentials.
+    ///
+    /// The credential is declared straight away rather than left for the first
+    /// request to reveal: the desktop parks this session and later has to pick
+    /// the one belonging to the credential it wants to use, and a phone runs a
+    /// separate connection for each of them.
     pub fn connect(
         endpoint: &str,
         verifier_identity_spki: &[u8],
         device_id: &str,
         identity: &IdentityKey,
+        credential_id: &str,
         now_ms: i64,
     ) -> Result<(SecureChannel, TcpStream), String> {
         let mut stream = TcpStream::connect(endpoint).map_err(|error| error.to_string())?;
@@ -714,7 +832,13 @@ pub mod client {
         .map_err(|error| error.to_string())?;
         write_frame(&mut stream, &client_frame).map_err(|error| error.to_string())?;
 
-        Ok((outcome.channel, stream))
+        let mut channel = outcome.channel;
+        let record = channel
+            .seal(&SessionAttach::new(credential_id).encode())
+            .map_err(|error| error.to_string())?;
+        write_frame(&mut stream, &record).map_err(|error| error.to_string())?;
+
+        Ok((channel, stream))
     }
 }
 

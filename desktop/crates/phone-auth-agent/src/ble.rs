@@ -19,7 +19,7 @@ use bluer::gatt::local::{
     CharacteristicNotifyMethod, CharacteristicWrite, CharacteristicWriteMethod, ReqError, Service,
 };
 use futures::{future, FutureExt};
-use phone_auth_protocol::SESSION_BINDING_LEN;
+use phone_auth_protocol::{SessionAttach, SESSION_BINDING_LEN};
 use phone_auth_session::{
     IdentityKey, PeerExpectation, PendingServerHandshake, SecureChannel, ServerBootstrap,
 };
@@ -40,6 +40,12 @@ const RESPONSE_UUID: Uuid = Uuid::from_u128(0x7e57a003_b5a3_4d2f_9f55_41f0dd2f4e
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a phone gets to say which credential its session carries.
+///
+/// Spent in full only by a phone too old to send the frame. One that does send
+/// it has the frame in flight before the handshake finishes.
+const ATTACH_WINDOW: Duration = Duration::from_secs(2);
 // The minimum ATT MTU is 23, leaving 20 bytes for a characteristic value.
 // Notifications stay at that portable floor; negotiated larger writes are
 // still accepted and reassembled.
@@ -55,7 +61,10 @@ struct ParkedSession {
 
 #[derive(Default)]
 struct State {
-    sessions: HashMap<String, ParkedSession>,
+    /// By device *and* credential, for the reason set out in `qr_network`: a
+    /// phone runs one connection per credential, and keyed by device alone the
+    /// second one evicts the first.
+    sessions: HashMap<(String, Option<String>), ParkedSession>,
     known_peers: HashMap<String, Vec<u8>>,
     last_error: Option<String>,
 }
@@ -178,14 +187,26 @@ impl BleTransport {
             .known_peers = peers;
     }
 
-    fn take_session(&self, device_id: &str, timeout: Duration) -> Option<ParkedSession> {
+    fn take_session(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+        wait: Duration,
+    ) -> Option<ParkedSession> {
         let mut state = self.shared.state.lock().expect("BLE state mutex");
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now() + wait;
         loop {
             state
                 .sessions
                 .retain(|_, session| session.parked_at.elapsed() < SESSION_IDLE_TIMEOUT);
-            if let Some(session) = state.sessions.remove(device_id) {
+            let exact = (device_id.to_owned(), Some(credential_id.to_owned()));
+            if let Some(session) = state
+                .sessions
+                .remove(&exact)
+                // A phone too old to name its credential answers for anything,
+                // which is what every phone did before it could.
+                .or_else(|| state.sessions.remove(&(device_id.to_owned(), None)))
+            {
                 return Some(session);
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -230,9 +251,13 @@ impl Transport for BleTransport {
         BleTransport::set_known_peers(self, peers);
     }
 
-    fn connect(&self, device_id: &str) -> Result<Box<dyn SecureSession + Send>, String> {
+    fn connect(
+        &self,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<Box<dyn SecureSession + Send>, String> {
         let session = self
-            .take_session(device_id, Duration::from_secs(10))
+            .take_session(device_id, credential_id, Duration::from_secs(10))
             .ok_or_else(|| format!("`{device_id}` is not connected over Bluetooth"))?;
         Ok(Box::new(BleSession {
             channel: session.channel,
@@ -479,14 +504,42 @@ async fn serve_link(
         )
         .map_err(|error| error.to_string())?;
 
+    // Which of the phone's credentials this session carries, read before the
+    // session is parked because the loop below is what would otherwise deliver
+    // it — and by then the desktop may already have picked the wrong session.
+    let mut channel = outcome.channel;
+    let credential_id = match timeout(
+        ATTACH_WINDOW,
+        receive_frame(&mut raw_incoming, &mut decoder),
+    )
+    .await
+    {
+        Ok(record) => {
+            let frame = channel.open(&record?).map_err(|error| error.to_string())?;
+            // Anything else is a phone speaking out of turn: the desktop is the
+            // side that asks. Refusing beats parking a session whose first
+            // frame has already been read and discarded.
+            if !SessionAttach::recognizes(&frame) {
+                return Err("the phone sent something other than a session attach".to_owned());
+            }
+            Some(
+                SessionAttach::decode(&frame)
+                    .map_err(|error| error.to_string())?
+                    .credential_id,
+            )
+        }
+        // A phone too old to send one.
+        Err(_) => None,
+    };
+
     let (outgoing, mut outgoing_rx) = tokio_mpsc::unbounded_channel();
     let (incoming_tx, incoming) = mpsc::channel();
     {
         let mut state = shared.state.lock().expect("BLE state mutex");
         state.sessions.insert(
-            outcome.peer_device_id,
+            (outcome.peer_device_id, credential_id),
             ParkedSession {
-                channel: outcome.channel,
+                channel,
                 outgoing,
                 incoming,
                 origin: format!("{TRANSPORT_NAME} • authenticated nearby phone"),
