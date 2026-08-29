@@ -20,6 +20,11 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+      // Scrollable, because a dialog is not exempt from the system font: the
+      // box is capped at the screen and its content is not, so past a certain
+      // size the text is cut off mid-sentence -- and here it is the sentence
+      // explaining what the button below it destroys.
+        scrollable: true,
         title: const Text('Excluir passkey?'),
         content: Text(
           passkey.kind == 'orphan'

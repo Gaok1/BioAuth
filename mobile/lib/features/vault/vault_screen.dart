@@ -176,6 +176,11 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        // Scrollable, because the box is capped at the screen and the text is
+        // not. Cut off, this one loses the paragraph saying the discard takes
+        // nothing back that a backup could not restore -- which is the whole
+        // reason it is safe to press.
+        scrollable: true,
         title: const Text('Descartar o cofre?'),
         content: const Text(
           'Todos os itens guardados neste telefone são apagados, junto com a '
@@ -328,6 +333,8 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        // The name is the user's, so its length is not ours to assume.
+        scrollable: true,
         title: const Text('Excluir item?'),
         content: Text('“${item.name}” será removido do cofre.'),
         actions: [

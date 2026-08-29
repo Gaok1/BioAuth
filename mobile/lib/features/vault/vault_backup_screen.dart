@@ -439,6 +439,11 @@ class _CodeDialogState extends State<_CodeDialog> {
   Widget build(BuildContext context) {
     final created = widget.header.createdAt.toLocal();
     return AlertDialog(
+      // Scrollable, because the keyboard opens over this one. What it takes
+      // is the bottom of the dialog, and the bottom of this dialog is the
+      // field the keyboard was raised to type into: a code that cannot be
+      // reached is a backup that cannot be restored.
+      scrollable: true,
       title: const Text('Código do backup'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
