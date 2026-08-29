@@ -154,7 +154,7 @@ fn run(args: Args) -> Result<(), String> {
     if args.listen_port.is_none() {
         if let Err(error) = config.remember_listen_port(network.port(), &paths.config_file()) {
             eprintln!(
-                "phone-auth-agent: could not record the listening port ({error});                  paired phones may have to be paired again after a restart"
+                "phone-auth-agent: could not record the listening port ({error}); paired phones may have to be paired again after a restart"
             );
         }
     }

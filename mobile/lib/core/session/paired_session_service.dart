@@ -149,6 +149,14 @@ class PairedSessionService {
     }
   }
 
+  /// Bounds the time one request may spend waiting for a person.
+  ///
+  /// Every path to an answer ends in a prompt or a sheet, and every one of them
+  /// waited for it forever. A request nobody answers is not rare -- the phone is
+  /// in a pocket, the sheet is behind a game -- and holding it kept that
+  /// credential's loop on a session the desktop had already given up on, so the
+  /// computer sat there looking connected to a phone that would never answer.
+  /// Whatever the answer eventually was, it went into a closed socket.
   Future<T> _answered<T>(Future<T> work) => work.timeout(
     _answerTimeout,
     onTimeout: () => throw const PairedSessionAnswerExpired(),
@@ -333,14 +341,6 @@ class _SessionScopedConsent implements AuthorizationConsent {
   }
 }
 
-/// Bounds the time one request may spend waiting for a person.
-///
-/// Every path below this line ends in a prompt or a sheet, and every one of
-/// them waited for it forever. A request nobody answers is not rare — the
-/// phone is in a pocket, the sheet is behind a game — and holding it kept that
-/// credential's loop on a session the desktop had already given up on, so the
-/// computer sat there looking connected to a phone that would never answer it.
-/// Whatever the answer eventually was, it went into a closed socket.
 /// The same seam as [_SessionScopedConsent], for the vault's sheet.
 ///
 /// A sheet is raised by one session and answered by a person, and the two can
