@@ -15,6 +15,8 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/vault/sensitive_clipboard.dart';
+
 import '../../core/vault/vault_export.dart';
 import '../../core/vault/vault_import.dart';
 import 'vault_controller.dart';
@@ -295,8 +297,9 @@ class _CodeCard extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: () =>
-                    Clipboard.setData(ClipboardData(text: backup.code)),
+                // The code that opens the whole backup, so it is copied the
+                // same guarded way a single password is.
+                onPressed: () => copySensitive(backup.code),
                 icon: const Icon(Icons.copy, size: 18),
                 label: const Text('Copiar código'),
               ),

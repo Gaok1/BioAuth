@@ -86,8 +86,26 @@ class PhoneAuthNativePlugin :
             "generateLockerKey" -> generateLockerKey(result)
             "lockerWrapKey" -> lockerWrapKey(call.arguments, result)
             "lockerUnwrapKey" -> lockerUnwrapKey(call.arguments, result)
+            "copySensitive" -> copySensitive(call.arguments, result)
             else -> if (!bleController.handle(call, result)) result.notImplemented()
         }
+    }
+
+    private fun copySensitive(arguments: Any?, result: MethodChannel.Result) {
+        val text = arguments as? String
+        if (text.isNullOrEmpty()) {
+            result.error("invalid_arguments", "A value to copy is required", null)
+            return
+        }
+        runCatching { SensitiveClipboard.copy(applicationContext, text) }
+            .onSuccess {
+                if (it) {
+                    result.success(null)
+                } else {
+                    result.error("clipboard_unavailable", "This device has no clipboard", null)
+                }
+            }
+            .onFailure { result.error("clipboard_failed", "Unable to copy", null) }
     }
 
     private fun generateKey(arguments: Any?, result: MethodChannel.Result) {

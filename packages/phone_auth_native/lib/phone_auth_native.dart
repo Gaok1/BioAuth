@@ -280,6 +280,22 @@ class PhoneAuthBackgroundSessions {
       false;
 }
 
+/// Copies a secret in the one way Android does not put it on screen.
+///
+/// From Android 13 a copy raises a preview showing what was copied, and the
+/// only thing that suppresses it is a flag on the `ClipData` itself. Flutter's
+/// `Clipboard.setData` does not set it, so every password this app copied was
+/// displayed to the room and kept in clipboard history. The flag also keeps it
+/// out of a keyboard's suggestion strip, which is the longer-lived half.
+class PhoneAuthClipboard {
+  const PhoneAuthClipboard();
+
+  static const _channel = MethodChannel('phone_auth_native');
+
+  Future<void> copySensitive(String value) =>
+      _channel.invokeMethod<void>('copySensitive', value);
+}
+
 class PhoneAuthWebAuthnRelay {
   const PhoneAuthWebAuthnRelay();
 

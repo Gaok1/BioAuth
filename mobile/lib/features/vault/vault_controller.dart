@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/vault/sensitive_clipboard.dart';
 import '../../core/vault/totp.dart';
 import '../../core/vault/vault_export.dart';
 import 'vault_favourites.dart';
@@ -34,8 +35,7 @@ class VaultController extends ChangeNotifier {
     VaultFavourites? favourites,
   }) : _store = store ?? const NativeVaultStore(),
        _favourites = favourites ?? VaultFavourites(),
-       _copy =
-           copy ?? ((value) => Clipboard.setData(ClipboardData(text: value)));
+       _copy = copy ?? copySensitive;
 
   final VaultStore _store;
   final VaultFavourites _favourites;
