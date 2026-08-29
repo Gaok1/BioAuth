@@ -36,9 +36,13 @@ pub struct AgentConfig {
 
     /// Port phones connect to. Zero asks the OS for a free one.
     ///
-    /// Ephemeral by default because the port is published in the pairing code
-    /// anyway, and a fixed well-known port is one more thing to collide or to
-    /// scan for.
+    /// Ephemeral on first run, because a fixed well-known port is one more
+    /// thing to collide or to scan for -- and then written back here, because
+    /// the pairing code publishes the port and a paired phone dials the one it
+    /// was given. Left at zero, the OS handed out a different port on every
+    /// start and every phone already paired went on dialling the old one: the
+    /// desktop stopped being reachable after a reboot, and pairing again was
+    /// the only thing that appeared to fix it.
     #[serde(default)]
     pub listen_port: u16,
 }
@@ -73,6 +77,18 @@ impl AgentConfig {
             request_validity_ms: default_validity_ms(),
             listen_port: 0,
         }
+    }
+
+    /// Records the port the listener actually got, if it is news.
+    ///
+    /// Called after binding rather than before, because zero means "any" and
+    /// only the OS knows which one that turned out to be.
+    pub fn remember_listen_port(&mut self, port: u16, path: &Path) -> io::Result<()> {
+        if self.listen_port == port {
+            return Ok(());
+        }
+        self.listen_port = port;
+        self.save(path)
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -111,6 +127,56 @@ mod tests {
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("phoneauth-cfg-{}-{name}.json", std::process::id()))
+    }
+
+    /// A phone dials the port it was handed in the pairing code, so the port
+    /// the OS picked has to be the port the agent asks for next time. It used
+    /// to be forgotten, which is why a paired desktop stopped answering after
+    /// a reboot.
+    #[test]
+    fn the_port_the_os_chose_survives_a_restart() {
+        let path = temp_path("listen-port");
+        let _ = fs::remove_file(&path);
+
+        let mut config = AgentConfig::load_or_create(&path).expect("create");
+        assert_eq!(config.listen_port, 0, "the first run asks for any port");
+        config
+            .remember_listen_port(49_732, &path)
+            .expect("the port is written down");
+
+        let reloaded = AgentConfig::load_or_create(&path).expect("reload");
+        assert_eq!(reloaded.listen_port, 49_732);
+
+        fs::remove_file(&path).ok();
+    }
+
+    /// Saving on every start would rewrite the file for nothing, and the file
+    /// is the one the user edits.
+    #[test]
+    fn a_port_that_did_not_change_is_not_rewritten() {
+        let path = temp_path("listen-port-unchanged");
+        let _ = fs::remove_file(&path);
+
+        let mut config = AgentConfig::load_or_create(&path).expect("create");
+        config.remember_listen_port(49_733, &path).expect("write");
+        let written = fs::metadata(&path)
+            .expect("stat")
+            .modified()
+            .expect("mtime");
+
+        config
+            .remember_listen_port(49_733, &path)
+            .expect("nothing to do");
+
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("stat")
+                .modified()
+                .expect("mtime"),
+            written
+        );
+
+        fs::remove_file(&path).ok();
     }
 
     #[test]

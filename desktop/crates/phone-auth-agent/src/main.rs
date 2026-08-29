@@ -110,7 +110,7 @@ fn run(args: Args) -> Result<(), String> {
         .create_all()
         .map_err(|error| format!("could not create {}: {error}", paths.data_dir.display()))?;
 
-    let config = AgentConfig::load_or_create(&paths.config_file())
+    let mut config = AgentConfig::load_or_create(&paths.config_file())
         .map_err(|error| format!("could not read {}: {error}", paths.config_file().display()))?;
     config
         .validate()
@@ -147,6 +147,17 @@ fn run(args: Args) -> Result<(), String> {
         "phone-auth-agent: listening for phones on 0.0.0.0:{}",
         network.port()
     );
+    // Written down now that the OS has chosen, so the phones that were handed
+    // this port in a pairing code still reach this machine after a restart.
+    // Not when the port came from the command line: that is one run's choice,
+    // not the machine's.
+    if args.listen_port.is_none() {
+        if let Err(error) = config.remember_listen_port(network.port(), &paths.config_file()) {
+            eprintln!(
+                "phone-auth-agent: could not record the listening port ({error});                  paired phones may have to be paired again after a restart"
+            );
+        }
+    }
     match qr_network::advertised_address() {
         Ok(address) => println!("phone-auth-agent: phones should reach this machine at {address}"),
         Err(error) => eprintln!(

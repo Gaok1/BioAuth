@@ -154,6 +154,24 @@ pub fn advertised_address() -> io::Result<Ipv4Addr> {
     Ok(local)
 }
 
+/// Binds the remembered port, and any port at all if that one is taken.
+///
+/// The port is not decoration: it is half of the address a phone was given
+/// when it scanned the pairing code, and nothing tells the phone a new one.
+/// So the agent asks for the same port every start. It can still lose it to
+/// whatever claimed it while the agent was not running, and refusing to start
+/// over a port number would make the machine unreachable rather than merely
+/// re-pairable -- so losing it costs a pairing, not the agent.
+fn bind_listener(port: u16) -> io::Result<TcpListener> {
+    let wanted = TcpListener::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)));
+    match wanted {
+        Err(error) if port != 0 && error.kind() == io::ErrorKind::AddrInUse => {
+            TcpListener::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))
+        }
+        other => other,
+    }
+}
+
 impl QrNetworkTransport {
     /// Binds a listener and starts accepting.
     ///
@@ -166,7 +184,7 @@ impl QrNetworkTransport {
         port: u16,
         is_development: bool,
     ) -> io::Result<Self> {
-        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))?;
+        let listener = bind_listener(port)?;
         let local_addr = listener.local_addr()?;
 
         let shared = Arc::new(Shared {
@@ -845,6 +863,33 @@ pub mod client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The port is half the address a phone was given, so the agent asks for
+    /// the same one every start.
+    #[test]
+    fn the_remembered_port_is_the_one_bound() {
+        let first = bind_listener(0).expect("any port");
+        let port = first.local_addr().expect("addr").port();
+        drop(first);
+
+        let again = bind_listener(port).expect("the same port again");
+
+        assert_eq!(again.local_addr().expect("addr").port(), port);
+    }
+
+    /// And losing it costs a pairing, not the agent: a machine that refuses to
+    /// start because something took its port is a machine no phone can reach
+    /// at all.
+    #[test]
+    fn a_port_taken_by_something_else_does_not_stop_the_listener() {
+        let holder = bind_listener(0).expect("any port");
+        let taken = holder.local_addr().expect("addr").port();
+
+        let listener = bind_listener(taken).expect("some other port");
+
+        assert_ne!(listener.local_addr().expect("addr").port(), taken);
+        assert_ne!(listener.local_addr().expect("addr").port(), 0);
+    }
 
     #[test]
     fn the_advertised_address_is_dialable_from_another_device() {
