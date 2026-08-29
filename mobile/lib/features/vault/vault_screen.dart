@@ -101,7 +101,25 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
           ),
   );
 
-  Widget _locked() => Center(
+  /// Scrolls, because everything on it grows with the system font.
+  ///
+  /// At the largest accessibility text sizes on a small phone the column below
+  /// is taller than the screen, and a `Column` that runs out of room does not
+  /// shrink to fit: it lays its last children out past the bottom edge, where
+  /// they are painted over by the overflow stripes and cannot be tapped. The
+  /// child that falls off is "Desbloquear" — so the vault came up barred with
+  /// no way past it, which from the outside is a vault that does not render.
+  /// Centred while it fits, scrollable once it does not.
+  Widget _locked() => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+        child: _lockedBody(),
+      ),
+    ),
+  );
+
+  Widget _lockedBody() => Center(
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(

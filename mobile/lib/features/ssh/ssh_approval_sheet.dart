@@ -44,7 +44,13 @@ class _SshApprovalSheet extends StatelessWidget {
     final colors = theme.colorScheme;
     final named = request.destination.isNotEmpty;
 
-    return Padding(
+    // Scrolls, because the sheet is sized by its contents and its contents are
+    // sized by the system font and by names the computer chose. Past a certain
+    // height a `Column` does not shrink -- it puts its last children below the
+    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
+    // can be neither approved nor refused looks, from the computer, like a
+    // phone that stopped answering.
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
