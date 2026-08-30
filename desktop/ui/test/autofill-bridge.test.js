@@ -6,8 +6,9 @@
 // script exists to refuse those, so this is where the refusals are pinned.
 //
 // Loaded into a `vm` context the way `browser-extension.test.js` loads the
-// passkey bridge, which is also why the script is a plain file with top-level
-// declarations rather than a module with test-only exports.
+// passkey bridge. The script is a plain file wrapped in a function -- content
+// scripts have no module loading, and every one of them shares a global scope
+// with the others -- so what it exposes is one namespace, not bare globals.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -67,7 +68,12 @@ function loginForm() {
 }
 
 /// Boots the script and hands back its context.
-function boot({ onMessage = null, runtimeMessage = async () => ({}) } = {}) {
+function boot({
+  onMessage = null,
+  runtimeMessage = async () => ({}),
+  document = {},
+  window = {},
+} = {}) {
   const context = vm.createContext({
     Event: FakeEvent,
     Array,
@@ -80,8 +86,8 @@ function boot({ onMessage = null, runtimeMessage = async () => ({}) } = {}) {
       },
     },
     globalThis: {},
-    window: {},
-    document: {},
+    window,
+    document,
   });
   vm.runInContext(source, context);
   // The script publishes one namespace rather than a handful of bare globals,
@@ -294,4 +300,45 @@ test('the listener ignores messages that are not its own', () => {
   assert.equal(listener({ type: 'bioauth-webauthn' }, {}, () => {}), undefined);
   assert.equal(listener({}, {}, () => {}), undefined);
   assert.equal(listener(null, {}, () => {}), undefined);
+});
+
+/// The toolbar button cannot name a frame -- the browser does not say which one
+/// has focus -- so the fill message goes to every frame in the tab. A frame
+/// that answers is a frame claiming the reply, and only one of them is holding
+/// the field the person is typing in.
+test('a frame with nothing focused does not answer for the page', async () => {
+  const claims = [];
+  const boot_ = (document) => {
+    let listener;
+    boot({
+      document,
+      window: {},
+      onMessage: (value) => {
+        listener = value;
+      },
+    });
+    return listener;
+  };
+
+  const idle = boot_({ activeElement: { tagName: 'BODY' } });
+  const answered = await new Promise((resolve) => {
+    const claimed = idle({ type: 'bioauth-autofill-fill' }, {}, () => resolve('answered'));
+    claims.push(claimed);
+    if (claimed === undefined) resolve('silent');
+  });
+  assert.equal(answered, 'silent');
+  assert.equal(claims[0], undefined, 'a quiet frame must not hold the channel open');
+
+  // And the frame that does hold the field answers, or the button would have
+  // traded one silence for another.
+  const password = input();
+  const focused = boot_({ activeElement: password });
+  const reply = await new Promise((resolve) => {
+    assert.equal(
+      focused({ type: 'bioauth-autofill-fill' }, {}, resolve),
+      true,
+      'the frame with the field claims the reply'
+    );
+  });
+  assert.equal(reply.ok, false, 'no view was given, so it refuses -- but it says so');
 });

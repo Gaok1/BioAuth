@@ -162,6 +162,14 @@
   if (typeof runtime?.onMessage?.addListener === "function") {
     runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type !== "bioauth-autofill-fill") return undefined;
+      // A frame with nothing focused in it has no opinion, and says so by not
+      // answering. The toolbar button cannot name a frame -- the browser does
+      // not tell it which one has focus -- so it asks all of them, and if every
+      // frame answered, the first refusal to come back would be delivered as
+      // the reply while the frame that actually held the field was still
+      // working. The claim has to be made synchronously, before the listener
+      // returns, which is why the target is looked up twice.
+      if (!fillTarget(document)) return undefined;
       performFill({
         view: window,
         document,

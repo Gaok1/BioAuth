@@ -79,36 +79,88 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
 // cannot reach `chrome.action.onClicked`.
 
 const AUTOFILL_MENU = "bioauth-autofill";
+const AUTOFILL_TITLE = "Preencher senha do cofre";
 
-const startFill = (tabId, frameId) => {
-  if (typeof tabId !== "number") return;
-  // Addressed to the frame the user was actually in. Sending to the tab would
-  // deliver to every frame, and the one that answered first would win.
-  runtime.sendMessage
-    ? chrome.tabs.sendMessage(
-        tabId,
-        { type: "bioauth-autofill-fill" },
-        typeof frameId === "number" ? { frameId } : undefined,
-      )
-    : undefined;
+// What went wrong, where the person who pressed the button can see it.
+//
+// A fill has no window of its own: the click happens on the toolbar and the
+// answer used to be dropped on the floor, so refusing was indistinguishable
+// from a button that does nothing. Every reason the vault has for refusing --
+// locked, no item for this site, two accounts and no way to choose -- arrived
+// and was discarded one step from the person who needed it.
+//
+// The badge marks that something was refused and the title carries the
+// sentence. Cleared when the next attempt starts rather than on a timer,
+// because a service worker can be stopped between the two and a timer that
+// dies with it leaves the mark up for good.
+const report = (message) => {
+  const action = globalThis.chrome?.action;
+  if (!action) return;
+  action.setBadgeText?.({ text: message ? "!" : "" });
+  action.setTitle?.({ title: message ? `PhoneAuth: ${message}` : AUTOFILL_TITLE });
+  if (message) action.setBadgeBackgroundColor?.({ color: "#b3261e" });
+};
+
+// Firefox answers with a promise, Chrome with a callback. The same split as
+// `sendToHost`, for the same reason.
+const askFrameToFill = (tabId, frameId) => {
+  const message = { type: "bioauth-autofill-fill" };
+  // `{}` rather than `undefined`: the options argument sits between the
+  // message and the callback, and a hole there is not the same as an absence.
+  const options = typeof frameId === "number" ? { frameId } : {};
+  if (globalThis.browser?.tabs) {
+    return globalThis.browser.tabs.sendMessage(tabId, message, options);
+  }
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, options, (response) => {
+      const failure = chrome.runtime.lastError;
+      if (failure) reject(new Error(failure.message));
+      else resolve(response);
+    });
+  });
+};
+
+const startFill = ({ tabId, frameId, pageUrl }) => {
+  if (typeof tabId !== "number" || !globalThis.chrome?.tabs) return;
+  report(null);
+  // Content scripts only match `https://*/*`, so anywhere else there is nobody
+  // to answer, and that silence would otherwise be read as "no field is
+  // focused". The page's own URL is the only thing that tells those apart.
+  if (typeof pageUrl === "string" && !pageUrl.startsWith("https://")) {
+    report("só páginas https podem ser preenchidas");
+    return;
+  }
+  // The context menu names the frame the click was in. The toolbar button
+  // cannot -- the browser does not say which frame has focus -- so that one
+  // goes to every frame, and the content script stays quiet in the frames with
+  // nothing focused rather than answering for a page it is not part of.
+  askFrameToFill(tabId, frameId).then(
+    (response) => {
+      if (!response?.ok) report(response?.error ?? "o cofre não respondeu");
+    },
+    () => report("selecione o campo de senha primeiro"),
+  );
 };
 
 if (globalThis.chrome?.action?.onClicked) {
-  chrome.action.onClicked.addListener((tab) => startFill(tab?.id));
+  chrome.action.onClicked.addListener((tab) => startFill({
+    tabId: tab?.id,
+    pageUrl: tab?.url,
+  }));
 }
 
 if (globalThis.chrome?.contextMenus) {
   chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: AUTOFILL_MENU,
-      title: "Preencher senha do cofre",
+      title: AUTOFILL_TITLE,
       contexts: ["editable"],
       documentUrlPatterns: ["https://*/*"],
     });
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (info?.menuItemId !== AUTOFILL_MENU) return;
-    startFill(tab?.id, info.frameId);
+    startFill({ tabId: tab?.id, frameId: info.frameId, pageUrl: info.pageUrl });
   });
 }
 

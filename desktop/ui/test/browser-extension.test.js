@@ -303,3 +303,90 @@ test('isolated bridge cannot bypass iframe policy with a forged page event', asy
   assert.equal(response.id, 'forged');
   assert.equal(response.ok, false);
 });
+
+test('a refused fill says why, where the button is', async () => {
+  // The click lands on the toolbar and the refusal used to land nowhere: the
+  // answer was never read, so "the vault is locked", "no item for this site"
+  // and "two accounts, pick one" were all a button that did nothing. The badge
+  // marks it and the title carries the sentence, because those are the only
+  // two surfaces an extension with no popup has.
+  const boot = ({ answer, sendMessage }) => {
+    const action = { title: null, badge: null, colour: null };
+    const clicks = [];
+    const menus = [];
+    const runtime = {
+      onMessage: { addListener: () => {} },
+      onInstalled: { addListener: () => {} },
+      sendNativeMessage: () => {},
+      lastError: undefined,
+    };
+    const context = vm.createContext({
+      URL,
+      setTimeout,
+      chrome: {
+        runtime,
+        tabs: {
+          sendMessage: sendMessage
+            ? (...args) => sendMessage(runtime, ...args)
+            : ((tabId, message, options, done) => done(answer)),
+        },
+        action: {
+          onClicked: { addListener: (value) => clicks.push(value) },
+          setBadgeText: ({ text }) => { action.badge = text; },
+          setTitle: ({ title }) => { action.title = title; },
+          setBadgeBackgroundColor: ({ color }) => { action.colour = color; },
+        },
+        contextMenus: {
+          create: () => {},
+          onClicked: { addListener: (value) => menus.push(value) },
+        },
+      },
+    });
+    context.globalThis = context;
+    vm.runInContext(fs.readFileSync(path.join(extension, 'service-worker.js'), 'utf8'), context);
+    return { action, click: clicks[0], menu: menus[0] };
+  };
+
+  const refused = boot({ answer: { ok: false, error: 'o cofre está trancado' } });
+  refused.click({ id: 7, url: 'https://bank.example/login' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(refused.action.badge, '!');
+  assert.equal(refused.action.title, 'PhoneAuth: o cofre está trancado');
+
+  // A filled field is not an announcement. The mark comes down and the title
+  // goes back to what the button does.
+  const filled = boot({ answer: { ok: true } });
+  filled.click({ id: 7, url: 'https://bank.example/login' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(filled.action.badge, '');
+  assert.equal(filled.action.title, 'Preencher senha do cofre');
+
+  // Nobody answered, because no frame held a focused field. That silence has
+  // its own sentence rather than being left as nothing happening.
+  const quiet = boot({
+    sendMessage: (runtime, tabId, message, options, done) => {
+      // What Chrome actually does when nobody answers: it does not throw, it
+      // sets `lastError` and runs the callback anyway. Reading the return
+      // value instead of that flag is how this reads as success.
+      runtime.lastError = { message: 'Could not establish connection' };
+      done(undefined);
+      runtime.lastError = undefined;
+    },
+  });
+  quiet.click({ id: 7, url: 'https://bank.example/login' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(quiet.action.badge, '!');
+  assert.equal(quiet.action.title, 'PhoneAuth: selecione o campo de senha primeiro');
+
+  // A page the content scripts were never injected into. Told apart from the
+  // silence above by the only thing that can tell them apart: the page's URL.
+  let asked = false;
+  const insecure = boot({
+    sendMessage: () => { asked = true; },
+  });
+
+  insecure.click({ id: 7, url: 'http://bank.example/login' });
+  assert.equal(asked, false, 'no tab was messaged');
+  assert.equal(insecure.action.badge, '!');
+  assert.equal(insecure.action.title, 'PhoneAuth: só páginas https podem ser preenchidas');
+});
