@@ -22,6 +22,7 @@
 
 pub mod bootstrap;
 mod channel;
+pub mod framing;
 mod handshake;
 mod identity;
 pub mod keys;

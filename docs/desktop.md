@@ -20,12 +20,12 @@ a view that cannot approve anything even if it is fully compromised.
 | `phone-auth` CLI (the PAM entry point) | done |
 | Electron tray, with a scannable QR | done |
 | NixOS module, systemd units, PAM wiring | done |
-| `phone-auth-initrd` decision logic | done |
-| **A phone that speaks any of it** | **not built — see pendências** |
+| `phone-auth-initrd` selection and wired authenticated transport | done; wrapping pending |
+| Android LAN/BLE peer and hardware-backed signer | implemented; physical matrix pending |
 
-The desktop is complete. A phone can connect over TCP, pair, and authorize,
-and the whole path runs today against a simulated phone that speaks the real
-protocol over a real socket.
+The desktop and Android implementations can connect over TCP, pair and
+authorize. The deterministic simulator still exercises that protocol over a
+real socket in CI; the remaining gap is the physical-device matrix.
 
 That simulator is not security: it signs with a software key and approves
 everything. It enrols as `KeyKind::Software`, which is on its own enough to
@@ -293,13 +293,14 @@ The credential selection, key-separation and hardware-key gates are
 implemented and tested. The initrd attack-surface review selected a minimal
 wired IPv4/TCP listener and rejected Wi-Fi and BlueZ; the complete boundary and
 implementation gates are in
-[`luks-initrd-threat-review.md`](luks-initrd-threat-review.md). What is missing:
+[`luks-initrd-threat-review.md`](luks-initrd-threat-review.md). The accepted
+wired path is implemented with the standard library: IPv4 listener, the same
+mutually authenticated handshake the phone already speaks, shared bounded
+framing, one paired identity and one end-to-end timeout. It has no discovery,
+D-Bus, BlueZ, HTTP or TLS stack.
 
-- a transport that works in an initrd. This is not the desktop transport with
-  a different config: there is no NetworkManager, no D-Bus and no BlueZ, and
-  adding any of them expands what runs before the disk is decrypted. The
-  accepted first path is wired Ethernet with no discovery, D-Bus or TLS stack.
-- a dedicated LUKS wrapping credential — see pendência 4.
+What remains is a dedicated LUKS wrapping exchange and credential — see
+`LUK-03`.
 
 The module deliberately ships no initrd unit. A unit that cannot work would
 only invite someone to enable it and find out at the next reboot.

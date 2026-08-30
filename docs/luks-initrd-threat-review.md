@@ -1,7 +1,7 @@
 # LUKS initrd transport threat review
 
-Status: accepted for the first implementation. This review unblocks `LUK-02`;
-it does not enable boot unlock by itself.
+Status: accepted and implemented for `LUK-02`; it does not enable boot unlock
+by itself.
 
 ## Decision
 
@@ -37,10 +37,13 @@ Not selected for version 1:
 - The paired phone identity and the dedicated LUKS credential are the trust
   roots. A connection is useless until the existing signed handshake matches
   the baked-in pairing record.
-- The initrd is trusted code. Secure Boot (or an equivalent authenticated boot
-  chain) is required before treating PhoneAuth as more than convenience; an
-  attacker who can replace the initrd can capture the key after approval or
-  bypass the client entirely.
+- The initrd is trusted code but **not confidential**: the boot partition can
+  normally be read without unlocking root. Secure Boot (or an equivalent
+  authenticated boot chain) is required for integrity, but does not hide it.
+  The long-lived handshake private key therefore must not be copied into the
+  initrd image. `LUK-04` must provide it at runtime from a confidential,
+  authenticated source or replace it with a fresh QR-authenticated boot
+  identity before enabling the unit.
 - The boot console and kernel command line are not secret. They may contain
   addresses, port and credential identifiers, never a disk key, Wi-Fi secret,
   private credential or recovery passphrase.
@@ -64,17 +67,18 @@ Not selected for version 1:
 
 ## Implementation gates
 
-`LUK-02` must keep the initrd crate dependency-free beyond the existing protocol
-and verifier crates, reuse the protocol's length bounds, use a fixed configured
-port, and enforce one end-to-end timeout. It must not import the agent, BlueZ,
-D-Bus, an HTTP stack or a TLS stack.
+`LUK-02` keeps the initrd crate dependency-free beyond the existing protocol,
+session and verifier crates, shares the session crate's bounded framing, uses a
+fixed configured port, and enforces one end-to-end timeout. It does not import
+the agent, BlueZ, D-Bus, an HTTP stack or a TLS stack.
 
 `LUK-03` must define a versioned wrapping envelope and a dedicated
 hardware-backed credential. The disk key is random; it is never a signature,
 signature hash or deterministic biometric output.
 
 `LUK-04` may install a systemd-initrd unit only when the transport and wrapping
-path work. The unit must order after wired networking, feed stdout directly to
+path work **and the handshake private key is not embedded in the public initrd**.
+The unit must order after wired networking, feed stdout directly to
 `cryptsetup`, and preserve password fallback. systemd documents `_netdev`,
 `x-initrd.attach` and bounded token/key timeouts in
 [`crypttab`](https://www.freedesktop.org/software/systemd/man/latest/crypttab.html).

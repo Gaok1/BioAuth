@@ -20,4 +20,5 @@ path = "src/main.rs"
 # surface. No agent, no IPC, no UI, no JSON-RPC.
 [dependencies]
 phone-auth-protocol.workspace = true
+phone-auth-session.workspace = true
 phone-auth-verifier.workspace = true

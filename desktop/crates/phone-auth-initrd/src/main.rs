@@ -21,20 +21,23 @@
 //!
 //! # Status
 //!
-//! The decision logic below is complete and shared with the desktop agent.
-//! What is missing is a transport that works in an initrd, and a phone that
-//! speaks it — see `blocked_on` in the failure path.
+//! Credential selection and a minimal authenticated wired transport are
+//! complete. What is missing is the dedicated LUKS wrapping exchange.
 
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
+use phone_auth_session::IdentityKey;
 use phone_auth_verifier::pairing::{CredentialPurpose, PairingStore};
-use phone_auth_verifier::verifier::{now_ms, RequestSpec, Verifier, VerifierIdentity};
+
+mod network;
 
 // The exit codes are the interface the boot script is written against, so all
 // four are defined here even though the two success-path codes are unreachable
-// until an initrd transport exists.
+// until the LUKS wrapping exchange exists.
 #[allow(dead_code)]
 /// Unlocked; the key is on stdout.
 const EXIT_UNLOCKED: u8 = 0;
@@ -56,7 +59,11 @@ OPTIONS:
     --volume <NAME>      Volume being unlocked, e.g. nvme0n1p2
     --store <PATH>       Pairing store baked into the initrd
                          [default: /etc/phone-auth/devices.json]
+    --identity <PATH>    Runtime-provided desktop handshake key
+                         [default: /etc/phone-auth/identity.pkcs8]
+    --verifier-id <ID>   Desktop id stored by the paired phone
     --credential <ID>    Which disk-unlock credential to use
+    --port <PORT>        Fixed wired TCP port [default: 8765]
     --timeout <SECONDS>  How long to wait for the phone [default: 60]
     -h, --help           Show this message
 
@@ -70,7 +77,10 @@ EXIT CODES:
 struct Args {
     volume: Option<String>,
     store: PathBuf,
+    identity: PathBuf,
+    verifier_id: Option<String>,
     credential: Option<String>,
+    port: u16,
     timeout_secs: u64,
     help: bool,
 }
@@ -79,7 +89,10 @@ fn parse() -> Result<Args, String> {
     let mut args = Args {
         volume: None,
         store: PathBuf::from("/etc/phone-auth/devices.json"),
+        identity: PathBuf::from("/etc/phone-auth/identity.pkcs8"),
+        verifier_id: None,
         credential: None,
+        port: 8765,
         timeout_secs: 60,
         help: false,
     };
@@ -90,11 +103,24 @@ fn parse() -> Result<Args, String> {
         match flag.as_str() {
             "--volume" => args.volume = Some(value()?),
             "--store" => args.store = PathBuf::from(value()?),
+            "--identity" => args.identity = PathBuf::from(value()?),
+            "--verifier-id" => args.verifier_id = Some(value()?),
             "--credential" => args.credential = Some(value()?),
+            "--port" => {
+                args.port = value()?
+                    .parse()
+                    .map_err(|_| "--port must be an integer from 1 to 65535".to_owned())?;
+                if args.port == 0 {
+                    return Err("--port must be an integer from 1 to 65535".to_owned());
+                }
+            }
             "--timeout" => {
                 args.timeout_secs = value()?
                     .parse()
-                    .map_err(|_| "--timeout must be a whole number of seconds".to_owned())?
+                    .map_err(|_| "--timeout must be from 1 to 300 seconds".to_owned())?;
+                if !(1..=300).contains(&args.timeout_secs) {
+                    return Err("--timeout must be from 1 to 300 seconds".to_owned());
+                }
             }
             "-h" | "--help" => args.help = true,
             other => return Err(format!("unknown argument `{other}`")),
@@ -119,10 +145,18 @@ fn main() -> ExitCode {
 }
 
 fn run(args: Args) -> u8 {
-    let Some(volume) = args.volume else {
+    let Some(_volume) = args.volume else {
         eprintln!("phone-auth-initrd: --volume is required\n\n{USAGE}");
         return EXIT_USAGE;
     };
+    let Some(verifier_id) = args.verifier_id else {
+        eprintln!("phone-auth-initrd: --verifier-id is required\n\n{USAGE}");
+        return EXIT_USAGE;
+    };
+    if verifier_id.is_empty() || verifier_id.len() > 64 {
+        eprintln!("phone-auth-initrd: --verifier-id must contain 1 to 64 bytes");
+        return EXIT_USAGE;
+    }
 
     let store = match PairingStore::load(&args.store) {
         Ok(store) => store,
@@ -145,39 +179,47 @@ fn run(args: Args) -> u8 {
         }
     };
 
-    let mut verifier = Verifier::new(
-        VerifierIdentity {
-            // At boot there is no agent config to read, so identity comes from
-            // the same store that was baked into the initrd.
-            verifier_id: credential.verifier_id.clone(),
-            verifier_name: format!("{} (boot)", credential.device_name),
-        },
-        store,
-    );
+    let identity = match fs::read(&args.identity)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| IdentityKey::from_pkcs8_der(&bytes).map_err(|error| error.to_string()))
+    {
+        Ok(identity) => identity,
+        Err(error) => {
+            eprintln!(
+                "phone-auth-initrd: cannot load handshake identity {}: {error}",
+                args.identity.display()
+            );
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let listener = match network::WiredListener::bind(args.port) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "phone-auth-initrd: cannot bind wired port {}: {error}",
+                args.port
+            );
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let _session = match listener.accept(
+        &identity,
+        &verifier_id,
+        &credential.phone_device_id,
+        &credential.phone_identity_spki,
+        Duration::from_secs(args.timeout_secs),
+    ) {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("phone-auth-initrd: paired phone unavailable: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
 
-    let _spec = RequestSpec::new(
-        credential.credential_id.clone(),
-        "luks",
-        "unlock",
-        volume.clone(),
-        "root",
-    )
-    .with_validity_ms((args.timeout_secs as i64 * 1000).min(phone_auth_protocol::MAX_VALIDITY_MS));
-
-    // Everything above this line is real. What is missing is the transport.
-    //
-    // An initrd transport is not the desktop transport with a different
-    // config: it has no NetworkManager, no D-Bus, no BlueZ, and adding any of
-    // them expands what runs before the disk is decrypted. The roadmap gates
-    // this behind a separate attack-surface review for exactly that reason.
-    let _ = (&mut verifier, now_ms());
     eprintln!(
-        "phone-auth-initrd: cannot reach a phone from the initrd yet.\n\
+        "phone-auth-initrd: authenticated wired session established, but LUKS key wrapping is not implemented yet.\n\
          \n\
          blocked on:\n\
-         \x20 - mobile: a transport the phone speaks (BLE, roadmap phase 1A)\n\
-         \x20 - desktop: an initrd-safe transport stack, after the attack-surface\n\
-         \x20   review the roadmap requires for phase 2\n\
          \x20 - a dedicated LUKS wrapping credential, separate from the\n\
          \x20   authorization credential\n\
          \n\
@@ -190,9 +232,9 @@ fn run(args: Args) -> u8 {
 /// A disk-unlock credential resolved from the pairing store.
 #[derive(Debug)]
 struct BootCredential {
-    credential_id: String,
-    device_name: String,
-    verifier_id: String,
+    _credential_id: String,
+    phone_device_id: String,
+    phone_identity_spki: Vec<u8>,
 }
 
 /// Finds the credential enrolled for disk unlock.
@@ -216,15 +258,18 @@ fn select_credential(
             if !credential.key_kind.allowed_at_boot() {
                 continue;
             }
+            if device.session_identity_public_key.is_empty() {
+                continue;
+            }
             if let Some(requested) = requested {
                 if credential.credential_id != requested {
                     continue;
                 }
             }
             candidates.push(BootCredential {
-                credential_id: credential.credential_id.clone(),
-                device_name: device.display_name.clone(),
-                verifier_id: device.device_id.clone(),
+                _credential_id: credential.credential_id.clone(),
+                phone_device_id: device.device_id.clone(),
+                phone_identity_spki: device.session_identity_public_key.clone(),
             });
         }
     }
@@ -322,7 +367,7 @@ mod tests {
             .expect("insert");
 
         let credential = select_credential(&store, None).expect("selected");
-        assert_eq!(credential.credential_id, "luks-v1");
+        assert_eq!(credential._credential_id, "luks-v1");
     }
 
     #[test]
@@ -349,6 +394,6 @@ mod tests {
         assert!(error.contains("--credential"), "{error}");
 
         let chosen = select_credential(&store, Some("luks-v2")).expect("explicit choice");
-        assert_eq!(chosen.credential_id, "luks-v2");
+        assert_eq!(chosen._credential_id, "luks-v2");
     }
 }

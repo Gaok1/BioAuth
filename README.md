@@ -144,7 +144,7 @@ Honest about what is finished:
 | Android biometric signing | **Implemented.** Keystore, `BIOMETRIC_STRONG`, auth-per-use |
 | Android passkeys | Credential Provider, desktop relay, account selection and biometric management implemented; physical/browser matrix pending |
 | Bluetooth LE transport | Android LAN→BLE fallback and Linux/BlueZ GATT server implemented; physical-device validation pending |
-| Disk unlock from the initrd | Scaffold. Not wired to a real LUKS flow yet |
+| Disk unlock from the initrd | Authenticated wired transport implemented; wrapping and keyslot integration pending |
 | iOS | Deferred; outside the first supported matrix |
 
 The end-to-end path has been exercised against a desktop written from the same
