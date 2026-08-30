@@ -173,3 +173,75 @@ platform support, license, sensitive-data behavior, transitive dependencies,
 and why a platform or standard-library API is insufficient. Production logs
 must never contain challenges, signatures, session secrets, or private-key
 material.
+
+## Upgrade procedure
+
+Update one ecosystem per pull request. A lockfile-only diff is not enough: the
+review must name the direct dependency or toolchain being changed, link its
+release notes, call out security/storage/protocol changes, and record whether
+the minimum supported platform changed. Never regenerate the recovery fixtures
+to make an upgrade pass; old vault and locker bytes are the compatibility
+contract.
+
+### Rust
+
+1. Change the direct requirement in the owning `Cargo.toml`, then update only
+   that package with `cargo update -p <crate> --precise <version>` from
+   `desktop/`. Review every transitive change in `Cargo.lock`; do not accept a
+   workspace-wide `cargo update` as an incidental side effect.
+2. When raising the compiler floor, update `desktop/Cargo.toml`'s
+   `rust-version` separately and compile once with that exact toolchain. The CI
+   `stable` job proves the ceiling, not the floor.
+3. Run:
+
+   ```text
+   cargo fmt --all -- --check
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace
+   cargo deny check
+   ```
+
+Crypto, CBOR, handshake, locker or zeroization changes also run the property
+jobs from `.github/workflows/ci.yml` with `PROPTEST_CASES=4096` and both recovery
+fixture drills: `cargo test -p phone-auth-locker --test format_drill` from
+`desktop/` and `flutter test test/vault_restore_drill_test.dart` from `mobile/`.
+A format change needs a new version and reader; replacing the v1 fixture is
+forbidden.
+
+### Flutter, Dart and Android
+
+1. Upgrade the plugin first in `packages/phone_auth_native/`, then the app in
+   `mobile/`. Use `flutter pub upgrade <package>` for a named dependency; do not
+   combine an SDK move with unrelated package upgrades.
+2. A Flutter SDK change updates all three pins together: both
+   `flutter-version` entries in `.github/workflows/ci.yml` and
+   `FLUTTER_VERSION` in `.github/workflows/release.yml`. Keep the Dart SDK
+   constraints in both pubspecs compatible with that Flutter release.
+3. Kotlin, Android Gradle Plugin, Gradle wrapper, `compileSdk` and Java 17 are a
+   single reviewed toolchain boundary. If one forces another to move, explain
+   the chain in the pull request rather than hiding it among package updates.
+4. Run the Flutter format/analyze/test commands from `mobile/README.md`, the
+   plugin equivalents, `flutter build apk --debug --flavor dev --target
+   lib/main_dev.dart`, and the Gradle lint/unit-test command from the CI file.
+   Credential Provider or Keystore changes also require the API 35
+   instrumentation job before merge.
+
+### Electron and npm
+
+Run `npm outdated` and update named packages from `desktop/ui/`; commit
+`package.json` and `package-lock.json` together. Then run `npm ci`, `npm test`,
+build the release Rust binaries, and produce an unpacked Windows or Linux tray
+with `npx electron-builder --dir`. An Electron major upgrade must recheck tray
+startup, native-host paths and that no vault secret enters the renderer or main
+process.
+
+### Merge, release and rollback
+
+All four lockfiles go through OSV scanning, the Rust graph goes through
+`cargo-deny`, and the release retains its CycloneDX SBOM. Merge only after the
+Linux, Windows, Flutter, Android unit and Android instrumentation jobs relevant
+to the change are green. A failed rollout is rolled back by reverting the
+manifest **and** its lockfile together and rebuilding through the normal signed
+pipeline; never reuse an already-published version or delete/mutate user data
+to fit the older binary. If a storage migration ran, rollback is allowed only
+when its preserved pre-migration snapshot opens with the restored version.

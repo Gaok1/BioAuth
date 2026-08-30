@@ -201,6 +201,7 @@ by a non-publishing manual workflow run and is named `PhoneAuth-android-debug`.
 - [Product and security decisions](docs/product-decisions.md)
 - [Security and vulnerability disclosure](SECURITY.md)
 - [Privacy policy](PRIVACY.md)
+- [Dependency policy and upgrade procedure](docs/dependencies.md)
 - [Desktop internals](docs/desktop.md)
 - [Roadmap](docs/roadmap.md)
 - [Complete requirements and implementation tracker](docs/implementation-tracker.md)
