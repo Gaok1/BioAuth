@@ -164,12 +164,22 @@ function wireAgent() {
     send('agent:status', status);
     tray.setToolTip(status.connected ? 'PhoneAuth — connected' : 'PhoneAuth — agent offline');
 
-    // On a packaged install nothing else starts the daemon. A service-managed
-    // agent reports connected on the first poll, so this never fires there.
+    // On a packaged install nothing else starts the daemon.
+    //
+    // `reachable` is passed where a hardcoded `false` used to be, which threw
+    // away the one guard `ensureRunning` documents -- on the path that runs
+    // most often, since a failed connection re-emits this every couple of
+    // seconds. The agent has no single-instance lock and a second one
+    // overwrites the endpoint file, so a service-managed agent restarting, or
+    // simply closing the connection on a token it no longer recognises, had the
+    // tray start a rival to it: one of them owns the endpoint file, the phone
+    // dials whichever port its pairing record holds, and both write the pairing
+    // store. An agent that really did die answers nothing on the next attempt
+    // two seconds later, and is started then.
     if (status.connected) {
       supervisor.markHealthy();
     } else {
-      supervisor.ensureRunning(false);
+      supervisor.ensureRunning(status.reachable === true);
     }
   });
 

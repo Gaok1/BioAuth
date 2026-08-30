@@ -67,6 +67,11 @@ class AgentConnection extends EventEmitter {
     this.connected = false;
     this.retryTimer = null;
     this.lastError = null;
+    // Whether this attempt got as far as an accepted socket. Not the same
+    // question as `connected`: the agent closes the connection on a token it
+    // does not recognise and on a malformed line, so "the socket went away" and
+    // "nothing is serving" look identical from the outside unless this is kept.
+    this.reachedAgent = false;
   }
 
   isConnected() {
@@ -76,6 +81,7 @@ class AgentConnection extends EventEmitter {
   /** Opens the connection, retrying until the agent appears. */
   start() {
     this.stopRetry();
+    this.reachedAgent = false;
 
     let endpoint;
     try {
@@ -108,6 +114,7 @@ class AgentConnection extends EventEmitter {
 
     socket.on('connect', () => {
       this.connected = true;
+      this.reachedAgent = true;
       this.lastError = null;
       this.emit('status', { connected: true });
       // Subscribing here rather than on demand: the tray has to reflect a
@@ -183,7 +190,11 @@ class AgentConnection extends EventEmitter {
     // that had never run could never be started, and restarting the app landed
     // in the same state. Silence is not a safe default for a signal something
     // else acts on.
-    this.emit('status', { connected: false, reason });
+    // `reachable` says whether anything answered on that port during this
+    // attempt. The supervisor starts the daemon from this event, and starting a
+    // second one next to a service-managed agent is the harm it exists to
+    // avoid: two agents race over the endpoint file and the pairing store.
+    this.emit('status', { connected: false, reason, reachable: this.reachedAgent });
     this.scheduleRetry();
   }
 

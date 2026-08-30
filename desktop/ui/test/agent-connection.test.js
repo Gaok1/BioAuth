@@ -54,6 +54,51 @@ test('isConnected is false before anything succeeds', () => {
   agent.stop();
 });
 
+test('a missing agent is reported as nothing serving', () => {
+  // No endpoint file at all: the supervisor must start the daemon.
+  const agent = new AgentConnection();
+  const seen = [];
+  agent.on('status', (status) => seen.push(status));
+  try {
+    agent.start();
+    assert.equal(seen[0].reachable, false);
+  } finally {
+    agent.stop();
+  }
+});
+
+test('an agent that closes the connection still counts as serving', async () => {
+  // The agent closes on a token it does not recognise and on a malformed line,
+  // so from the outside that is indistinguishable from the agent having died --
+  // unless it is recorded that the socket was accepted. It matters because the
+  // supervisor starts the daemon from this event and the agent has no
+  // single-instance lock: a second one overwrites the endpoint file, so the
+  // tray would start a rival to a perfectly healthy service-managed agent.
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  fs.mkdirSync(path.dirname(endpointFile()), { recursive: true });
+  fs.writeFileSync(
+    endpointFile(),
+    JSON.stringify({ port: server.address().port, token: 'test-token' })
+  );
+
+  const agent = new AgentConnection();
+  try {
+    const dropped = new Promise((resolve) => {
+      agent.on('status', (status) => {
+        if (!status.connected && status.reachable) resolve(status);
+      });
+    });
+    agent.start();
+    const status = await dropped;
+    assert.equal(status.reachable, true);
+  } finally {
+    agent.stop();
+    fs.rmSync(endpointFile(), { force: true });
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('a malformed endpoint file is reported, not thrown', () => {
   // Valid JSON, no usable port -- a half-written file, or one from a build that
   // spelled the field differently. `net.createConnection` throws synchronously
