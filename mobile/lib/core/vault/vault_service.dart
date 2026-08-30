@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../features/vault/vault_store.dart' as store;
+import '../protocol/application_idempotency.dart';
 import '../protocol/application_frame.dart';
 import '../protocol/vault_payloads.dart' as wire;
 import 'vault_approval.dart';
@@ -31,6 +32,7 @@ class VaultService {
   final VaultListing _listing;
   final VaultApproval _approval;
   final DateTime Function() _clock;
+  final ApplicationIdempotency _idempotency = ApplicationIdempotency();
 
   /// How many summaries go in one response.
   ///
@@ -42,6 +44,7 @@ class VaultService {
     Uint8List frame, {
     required Uint8List sessionBinding,
     required bool authorized,
+    String replayScope = 'local',
     DateTime? now,
   }) async {
     final request = ApplicationFrame.decode(frame);
@@ -83,37 +86,77 @@ class VaultService {
       return _error(request, ApplicationErrorCode.invalidRequest);
     }
 
+    Future<ApplicationOutcome> execute() async {
+      try {
+        // Listing is the one operation that needs no approval: it releases no
+        // secret, and a sheet on every list would train the user to dismiss the
+        // one that matters.
+        if (decoded is wire.VaultListRequest) {
+          return ApplicationOutcome(
+            ApplicationFrameKind.response,
+            await _list(decoded),
+          );
+        }
+
+        final approved = await _approval.confirm(
+          await _describe(request.requestId, decoded),
+        );
+        if (!approved) {
+          return ApplicationOutcome(
+            ApplicationFrameKind.error,
+            ApplicationErrorCode.rejected.encode(),
+          );
+        }
+
+        // The window above was measured before the sheet went up, and the
+        // sheet waits on a person. A tap landing after the request died is
+        // not worth a fingerprint: the desktop stopped accepting an answer at
+        // `expiresAt`, so `_run` would raise the Keystore prompt and decrypt a
+        // secret into a session that is already gone. Checked before that, not
+        // after, because refusing afterwards would spend the gesture this
+        // exists to save.
+        if (request.isExpiredAt(moment())) {
+          return ApplicationOutcome(
+            ApplicationFrameKind.error,
+            ApplicationErrorCode.rejected.encode(),
+          );
+        }
+
+        return ApplicationOutcome(
+          ApplicationFrameKind.response,
+          await _run(decoded),
+        );
+        // not_found, revision_conflict and biometric refusal are
+        // intentionally indistinguishable on the wire.
+      } on PlatformException {
+        return ApplicationOutcome(
+          ApplicationFrameKind.error,
+          ApplicationErrorCode.rejected.encode(),
+        );
+      } on Object {
+        return ApplicationOutcome(
+          ApplicationFrameKind.error,
+          ApplicationErrorCode.unavailable.encode(),
+          cacheable: false,
+        );
+      }
+    }
+
+    final mutates =
+        decoded is wire.VaultCreateRequest ||
+        decoded is wire.VaultUpdateRequest ||
+        decoded is wire.VaultDeleteRequest;
     try {
-      // Listing is the one operation that needs no approval: it releases no
-      // secret, and a sheet on every list would train the user to dismiss the
-      // one that matters.
-      if (decoded is wire.VaultListRequest) {
-        return _reply(request, await _list(decoded));
-      }
-
-      final approved = await _approval.confirm(
-        await _describe(request.requestId, decoded),
-      );
-      // The same code a missing item gets. Whether the user said no, the item
-      // was never there, or the revision had moved on is not something the
-      // desktop is told — see `protocol-application.md`.
-      if (!approved) return _error(request, ApplicationErrorCode.rejected);
-
-      // The window above was measured before the sheet went up, and the sheet
-      // waits on a person. A tap landing after the request died is not worth a
-      // fingerprint: the desktop stopped accepting an answer at `expiresAt`,
-      // so `_run` would raise the Keystore prompt and decrypt a secret into a
-      // session that is already gone. Checked before that, not after, because
-      // refusing afterwards would spend the gesture this exists to save.
-      if (request.isExpiredAt(moment())) {
-        return _error(request, ApplicationErrorCode.rejected);
-      }
-
-      return _reply(request, await _run(decoded));
-    } on PlatformException {
-      // not_found, revision_conflict and biometric refusal are intentionally
-      // indistinguishable on the wire.
-      return _error(request, ApplicationErrorCode.rejected);
+      final outcome = mutates
+          ? await _idempotency.run(
+              scope: replayScope,
+              request: request,
+              operation: execute,
+            )
+          : await execute();
+      return _frame(request, outcome.kind, outcome.payload);
+    } on FormatException {
+      return _error(request, ApplicationErrorCode.invalidRequest);
     } on Object {
       return _error(request, ApplicationErrorCode.unavailable);
     }
@@ -305,9 +348,6 @@ class VaultService {
       secret: secret,
     );
   }
-
-  Uint8List _reply(ApplicationFrame request, Uint8List payload) =>
-      _frame(request, ApplicationFrameKind.response, payload);
 
   Uint8List _error(ApplicationFrame request, ApplicationErrorCode code) =>
       _frame(request, ApplicationFrameKind.error, code.encode());

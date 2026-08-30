@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/protocol/application_frame.dart';
@@ -10,11 +12,16 @@ void main() {
   final binding = Uint8List.fromList(List<int>.generate(32, (i) => i));
   final now = DateTime.utc(2026, 8, 28, 18);
 
-  Uint8List request(String operation, Uint8List payload) => ApplicationFrame(
+  Uint8List request(
+    String operation,
+    Uint8List payload, {
+    String? requestId,
+    Uint8List? frameBinding,
+  }) => ApplicationFrame(
     protocolVersion: 1,
     kind: ApplicationFrameKind.request,
-    requestId: 'request-1',
-    sessionBinding: binding,
+    requestId: requestId ?? operation,
+    sessionBinding: frameBinding ?? binding,
     operation: operation,
     issuedAt: now,
     expiresAt: now.add(const Duration(minutes: 1)),
@@ -300,6 +307,125 @@ void main() {
     );
   });
 
+  test('a retried create is committed and approved only once', () async {
+    final repository = _CountingStore();
+    final approval = _RecordingApproval(approve: true);
+    final service = VaultService(repository: repository, approval: approval);
+    final payload = wire.VaultCreateRequest(
+      verifierName: 'Desktop',
+      kind: wire.VaultItemKind.note,
+      name: 'Note',
+      username: '',
+      uri: '',
+      secret: 'body',
+    ).encode();
+    final nextBinding = Uint8List.fromList(List<int>.filled(32, 9));
+
+    final first = ApplicationFrame.decode(
+      await service.handle(
+        request(wire.vaultCreateOperation, payload),
+        sessionBinding: binding,
+        authorized: true,
+        replayScope: 'desktop-1/vault-1',
+        now: now,
+      ),
+    );
+    final retry = ApplicationFrame.decode(
+      await service.handle(
+        request(wire.vaultCreateOperation, payload, frameBinding: nextBinding),
+        sessionBinding: nextBinding,
+        authorized: true,
+        replayScope: 'desktop-1/vault-1',
+        now: now,
+      ),
+    );
+
+    expect(retry.payload, first.payload);
+    expect(retry.sessionBinding, nextBinding);
+    expect(repository.writes, 1);
+    expect(approval.seen, hasLength(1));
+  });
+
+  test('a requestId cannot be reused with another vault payload', () async {
+    final repository = _CountingStore();
+    final service = VaultService(
+      repository: repository,
+      approval: _RecordingApproval(approve: true),
+    );
+
+    Uint8List create(String name) => wire.VaultCreateRequest(
+      verifierName: 'Desktop',
+      kind: wire.VaultItemKind.note,
+      name: name,
+      username: '',
+      uri: '',
+      secret: 'body',
+    ).encode();
+    await service.handle(
+      request(wire.vaultCreateOperation, create('First')),
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    final changed = ApplicationFrame.decode(
+      await service.handle(
+        request(wire.vaultCreateOperation, create('Changed')),
+        sessionBinding: binding,
+        authorized: true,
+        now: now,
+      ),
+    );
+
+    expect(changed.kind, ApplicationFrameKind.error);
+    expect(
+      ApplicationErrorCode.decode(changed.payload),
+      ApplicationErrorCode.invalidRequest,
+    );
+    expect(repository.writes, 1);
+  });
+
+  test('concurrent retries coalesce before the vault commit', () async {
+    final repository = _BlockingCreateStore();
+    final approval = _RecordingApproval(approve: true);
+    final service = VaultService(repository: repository, approval: approval);
+    final encoded = request(
+      wire.vaultCreateOperation,
+      wire.VaultCreateRequest(
+        verifierName: 'Desktop',
+        kind: wire.VaultItemKind.note,
+        name: 'Only once',
+        username: '',
+        uri: '',
+        secret: 'body',
+      ).encode(),
+    );
+
+    final first = service.handle(
+      encoded,
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    final retry = service.handle(
+      encoded,
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    while (repository.writes == 0) {
+      await pumpEventQueue();
+    }
+    expect(repository.writes, 1);
+    expect(approval.seen, hasLength(1));
+
+    repository.release.complete();
+    final replies = await Future.wait([first, retry]);
+    expect(
+      ApplicationFrame.decode(replies[1]).payload,
+      ApplicationFrame.decode(replies[0]).payload,
+    );
+  });
+
   /// The desktop sends an id; the name on the sheet comes from the phone's own
   /// store. A desktop that could supply the name could label a request for the
   /// bank password "Spotify" and get it approved.
@@ -501,6 +627,17 @@ class _ListCountingStore extends _VaultStore {
   Future<store.VaultSecret> fetch(String id) {
     unlocks++;
     return super.fetch(id);
+  }
+}
+
+class _BlockingCreateStore extends _CountingStore {
+  final release = Completer<void>();
+
+  @override
+  Future<store.VaultWrite> create(store.VaultItemInput item) async {
+    writes++;
+    await release.future;
+    return const store.VaultWrite(id: 'two', revision: 1);
   }
 }
 

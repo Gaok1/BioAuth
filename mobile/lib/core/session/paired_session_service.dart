@@ -378,6 +378,7 @@ class PairedSessionService {
             frame,
             sessionBinding: outcome.session.sessionBinding,
             authorized: purpose == CredentialPurpose.vault,
+            replayScope: '${record.verifierId}\u0000${record.credentialId}',
           ),
         };
         await outcome.session.send(

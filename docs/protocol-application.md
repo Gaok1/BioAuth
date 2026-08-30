@@ -35,6 +35,22 @@ binding, and operation equal the still-pending request and the frame has not
 expired. The caller owns that pending-request check; successfully decoding an
 envelope is not authorization.
 
+### Idempotent mutation retries
+
+`vault.create`, `vault.update`, `vault.delete`, and `locker.create` are
+idempotent by request ID. The phone scopes IDs to the paired verifier and
+credential, coalesces concurrent copies, and keeps the completed outcome in a
+bounded 1024-entry cache. A retry with the same operation and payload gets that
+outcome without another approval, Keystore gesture, vault write, or wrapper;
+the response envelope is rebuilt with the retry's current session binding.
+
+Changing the operation or payload while reusing an ID fails closed. The cache
+stores a process-random HMAC fingerprint rather than the request payload, so it
+does not retain vault secrets merely to recognize a retry. Temporary
+`unavailable` outcomes are not cached. Read/unlock operations are deliberately
+not retained because their responses contain plaintext secrets; optimistic
+vault revisions already make update and delete safe after cache eviction.
+
 ## Error payloads
 
 A frame of kind `3` carries a two-element canonical CBOR array: the protocol
