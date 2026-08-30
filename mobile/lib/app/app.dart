@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/onboarding/onboarding_screen.dart';
+import '../features/pairing/pairing_controller.dart';
 import 'app_controller.dart';
 import 'config.dart';
 import 'navigation.dart';
@@ -106,6 +109,17 @@ class _SessionHostState extends ConsumerState<_SessionHost>
           ref.read(vaultApprovalProvider).abandonAll();
           ref.read(sshApprovalProvider).abandonAll();
           ref.read(interactiveAuthorizerProvider).abandonUnanswered();
+          // The verification code is a sheet too, and the most consequential
+          // one: confirming it is what makes a computer trusted. It was the
+          // one this rule was never applied to. A code left on screen stayed
+          // confirmable across a trip to the background, so a tap landing on
+          // the way back paired a desktop scanned who knows when -- and until
+          // then the phone held an open authenticated socket to it and the
+          // desktop held a proposal waiting on an answer.
+          if (ref.read(pairingControllerProvider).stage ==
+              PairingStage.awaitingCode) {
+            unawaited(ref.read(pairingControllerProvider.notifier).reset());
+          }
         }
     }
   }

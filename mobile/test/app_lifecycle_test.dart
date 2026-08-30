@@ -10,6 +10,9 @@ import 'package:phone_auth/app/config.dart';
 import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/features/pairing/pairing_controller.dart';
+import 'package:phone_auth/core/pairing/pairing_service.dart';
+import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/transport/auth_transport.dart';
 import 'package:phone_auth/core/transport/secure_session_establisher.dart';
 import 'package:phone_auth/core/auth/interactive_authorizer.dart';
@@ -58,6 +61,64 @@ void main() {
 
     expect(transport.stopped, isFalse);
     expect(session.closed, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+
+  // The verification code is a sheet too, and the most consequential one:
+  // confirming it is what makes a computer trusted. It was the one sheet this
+  // rule was never applied to.
+  testWidgets('leaving the foreground takes down a pairing code', (
+    tester,
+  ) async {
+    final pairing = _IdleSession();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    WidgetRef? reader;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appConfigProvider.overrideWithValue(const AppConfig.production()),
+          pairedVerifiersProvider.overrideWith((ref) async => [_record]),
+          backgroundSessionsReadyProvider.overrideWith((ref) async => false),
+          pairingServiceProvider.overrideWith(
+            (ref) async => _StubPairingService(pairing),
+          ),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            reader = ref;
+            return const PhoneAuthApp();
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await reader!.read(pairingControllerProvider.notifier).submitScan('code');
+    await tester.pump();
+    expect(
+      reader!.read(pairingControllerProvider).stage,
+      PairingStage.awaitingCode,
+      reason: 'the code is on screen before anything is asked to take it down',
+    );
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+
+    expect(
+      reader!.read(pairingControllerProvider).stage,
+      PairingStage.idle,
+      reason:
+          'a code the user cannot see must not stay confirmable -- a tap on '
+          'the way back would pair a desktop scanned who knows when',
+    );
+    expect(
+      pairing.closed,
+      isTrue,
+      reason: 'and the socket it was holding open to that desktop goes with it',
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -324,6 +385,26 @@ class _LifecycleTransport implements AuthTransport {
     sessionId: 'session-1',
     verificationCode: '123456',
     wasPairing: false,
+  );
+}
+
+/// A pairing service that hands back one session, without a network.
+class _StubPairingService extends PairingService {
+  _StubPairingService(this.session)
+    : super(
+        transport: _LifecycleTransport(_IdleSession()),
+        store: InMemoryPairingStore(),
+        deviceName: 'test phone',
+      );
+
+  final SecureTransportSession session;
+
+  @override
+  Future<PairingSession> begin(String scannedUri) async => PairingSession(
+    verificationCode: '123456',
+    proposed: _record,
+    session: session,
+    store: InMemoryPairingStore(),
   );
 }
 
