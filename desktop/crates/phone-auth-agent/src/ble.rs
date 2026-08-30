@@ -41,6 +41,12 @@ const RESPONSE_UUID: Uuid = Uuid::from_u128(0x7e57a003_b5a3_4d2f_9f55_41f0dd2f4e
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How often the reaper looks, as a fraction of the timeout it enforces.
+///
+/// A tenth, so a session outlives its window by at most ten percent of it.
+/// Mirrors `qr_network`.
+const STALE_SWEEP_DIVISOR: u32 = 10;
+
 /// How long a phone gets to say which credential its session carries.
 ///
 /// Spent in full only by a phone too old to send the frame. One that does send
@@ -76,6 +82,35 @@ struct State {
     /// availability took the transport out of `TransportRegistry::connect`
     /// until some later phone happened to connect cleanly.
     last_link_error: Option<String>,
+}
+
+fn discard_stale(state: &mut State) {
+    state
+        .sessions
+        .retain(|_, session| session.parked_at.elapsed() < SESSION_IDLE_TIMEOUT);
+}
+
+/// Enforces the idle window instead of only consulting it.
+///
+/// The same defect `qr_network` had, one step further along: there the sweep at
+/// least ran whenever a session was parked, and here it ran in exactly one
+/// place -- `take_session`, reached only when the desktop wants a session for
+/// that same phone. So a phone that connected once and went away left its
+/// session parked, holding a `SecureChannel` with live keys and its end of the
+/// GATT link, until somebody asked that phone for something. If nobody ever
+/// did, forever.
+///
+/// Not covered by a test on this transport: reaching the park path needs BlueZ
+/// and a peer, and a `ParkedSession` cannot be fabricated from this crate
+/// because `SecureChannel::new` is crate-private to `phone-auth-session`. The
+/// equivalent on `qr_network` is tested over a real socket.
+fn reap_loop(shared: Arc<Shared>) {
+    let interval = SESSION_IDLE_TIMEOUT / STALE_SWEEP_DIVISOR;
+    loop {
+        thread::sleep(interval);
+        let mut state = shared.state.lock().expect("BLE state mutex");
+        discard_stale(&mut state);
+    }
 }
 
 struct Shared {
@@ -185,6 +220,10 @@ impl BleTransport {
         started_rx
             .recv()
             .map_err(|_| "BLE server stopped during startup".to_owned())??;
+
+        let reap_shared = Arc::clone(&shared);
+        thread::spawn(move || reap_loop(reap_shared));
+
         Ok(Self { shared })
     }
 
@@ -205,9 +244,7 @@ impl BleTransport {
         let mut state = self.shared.state.lock().expect("BLE state mutex");
         let deadline = Instant::now() + wait;
         loop {
-            state
-                .sessions
-                .retain(|_, session| session.parked_at.elapsed() < SESSION_IDLE_TIMEOUT);
+            discard_stale(&mut state);
             let exact = (device_id.to_owned(), Some(credential_id.to_owned()));
             if let Some(session) = state
                 .sessions
@@ -555,6 +592,7 @@ async fn serve_link(
     let (incoming_tx, incoming) = mpsc::channel();
     {
         let mut state = shared.state.lock().expect("BLE state mutex");
+        discard_stale(&mut state);
         state.sessions.insert(
             (outcome.peer_device_id, credential_id),
             ParkedSession {
