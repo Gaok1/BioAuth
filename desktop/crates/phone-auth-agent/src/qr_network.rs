@@ -43,6 +43,11 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a parked session stays usable before it is discarded.
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How often the reaper looks, as a fraction of the timeout it enforces.
+///
+/// A tenth, so a session outlives its window by at most ten percent of it.
+const STALE_SWEEP_DIVISOR: u32 = 10;
+
 /// What a completed pairing handshake offers, pending user confirmation.
 ///
 /// Not a paired device: nothing here is trusted until the user confirms the
@@ -118,6 +123,11 @@ struct Shared {
     state: Mutex<State>,
     /// Signalled whenever a session is parked or a proposal arrives.
     signal: Condvar,
+    /// How long a parked session may sit unused.
+    ///
+    /// Held rather than read from the constant so a test can set a window it
+    /// can afford to wait out. Production always passes [`SESSION_IDLE_TIMEOUT`].
+    idle_timeout: Duration,
 }
 
 pub struct QrNetworkTransport {
@@ -195,6 +205,26 @@ impl QrNetworkTransport {
         port: u16,
         is_development: bool,
     ) -> io::Result<Self> {
+        Self::bind_with_idle_timeout(
+            identity,
+            verifier_id,
+            port,
+            is_development,
+            SESSION_IDLE_TIMEOUT,
+        )
+    }
+
+    /// As [`Self::bind`], with the parked-session window named explicitly.
+    ///
+    /// Exists for tests, which cannot afford to wait out five minutes to watch
+    /// a stale session be dropped. Production uses [`Self::bind`].
+    pub fn bind_with_idle_timeout(
+        identity: IdentityKey,
+        verifier_id: String,
+        port: u16,
+        is_development: bool,
+        idle_timeout: Duration,
+    ) -> io::Result<Self> {
         let listener = bind_listener(port)?;
         let local_addr = listener.local_addr()?;
 
@@ -204,10 +234,14 @@ impl QrNetworkTransport {
             is_development,
             state: Mutex::new(State::default()),
             signal: Condvar::new(),
+            idle_timeout,
         });
 
         let accept_shared = Arc::clone(&shared);
         thread::spawn(move || accept_loop(listener, accept_shared));
+
+        let reap_shared = Arc::clone(&shared);
+        thread::spawn(move || reap_loop(reap_shared));
 
         Ok(Self { shared, local_addr })
     }
@@ -317,7 +351,7 @@ impl QrNetworkTransport {
     /// is a phone that did not name its credential.
     pub fn parked_credentials(&self, device_id: &str) -> Vec<Option<String>> {
         let mut state = self.shared.state.lock().expect("state mutex");
-        discard_stale(&mut state);
+        discard_stale(&mut state, self.shared.idle_timeout);
         state
             .sessions
             .keys()
@@ -336,7 +370,7 @@ impl QrNetworkTransport {
         let mut state = self.shared.state.lock().expect("state mutex");
         let deadline = Instant::now() + timeout;
         loop {
-            discard_stale(&mut state);
+            discard_stale(&mut state, self.shared.idle_timeout);
             if let Some(session) = take_matching(&mut state, device_id, credential_id) {
                 return Some(session);
             }
@@ -361,10 +395,30 @@ impl QrNetworkTransport {
 /// every phone before this existed — a fallback, never a match.
 type SessionKey = (String, Option<String>);
 
-fn discard_stale(state: &mut State) {
+fn discard_stale(state: &mut State, idle_timeout: Duration) {
     state
         .sessions
-        .retain(|_, session| session.parked_at.elapsed() < SESSION_IDLE_TIMEOUT);
+        .retain(|_, session| session.parked_at.elapsed() < idle_timeout);
+}
+
+/// Enforces the idle window instead of only consulting it.
+///
+/// [`discard_stale`] ran on the way past: when another connection arrived, or
+/// when the desktop reached for a session to use. In the steady state the
+/// phone's own reconnect drives it -- that is why its idle timeout is shorter
+/// than this one -- but a phone that stops reconnecting is precisely the case
+/// the window exists for. Backgrounded, out of range, killed: its last session
+/// stayed parked, holding a `SecureChannel` with live keys and an open socket,
+/// for as long as it took some other phone to connect or some other request to
+/// be made. On a desktop with one paired phone and no `sudo` to run, that is
+/// forever.
+fn reap_loop(shared: Arc<Shared>) {
+    let interval = shared.idle_timeout / STALE_SWEEP_DIVISOR;
+    loop {
+        thread::sleep(interval);
+        let mut state = shared.state.lock().expect("state mutex");
+        discard_stale(&mut state, shared.idle_timeout);
+    }
 }
 
 /// The session that phone opened for that credential, or a phone that predates
@@ -692,7 +746,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
     let credential_id = read_attach(&mut stream, &mut channel)?;
 
     let mut state = shared.state.lock().expect("state mutex");
-    discard_stale(&mut state);
+    discard_stale(&mut state, shared.idle_timeout);
     state.sessions.insert(
         (outcome.peer_device_id, credential_id),
         ParkedSession {

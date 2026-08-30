@@ -16,6 +16,7 @@
 #![cfg(feature = "dev-simulator")]
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
@@ -116,6 +117,52 @@ fn a_credential_with_no_session_is_not_served_by_another_credentials() {
     assert!(
         transport.connect(DEVICE, LOGIN).is_err(),
         "a vault session must not stand in for a login credential"
+    );
+}
+
+/// The idle window has to happen on its own, not when something else asks.
+///
+/// `discard_stale` ran on the way past: on another connection arriving, or on
+/// the desktop reaching for a session to use. In the steady state the phone's
+/// own reconnect drives it -- its idle timeout is deliberately shorter than
+/// this one -- but a phone that stops reconnecting is exactly what the window
+/// is for. Backgrounded, out of range, killed: its last session stayed parked,
+/// holding a `SecureChannel` with live keys and an open socket, until some
+/// other phone connected or some other request was made. On a desktop with one
+/// paired phone and no `sudo` to run, that is forever.
+///
+/// Observed from the phone's socket rather than through `parked_credentials`,
+/// because that call sweeps as it reads: asking it would be doing the very
+/// thing this is checking nobody has to do.
+#[test]
+fn a_session_nobody_touches_is_dropped_when_its_window_runs_out() {
+    let phone = IdentityKey::generate();
+    let transport = QrNetworkTransport::bind_with_idle_timeout(
+        IdentityKey::generate(),
+        "verifier-1".into(),
+        0,
+        true,
+        Duration::from_millis(300),
+    )
+    .expect("bind");
+    transport.set_known_peers(HashMap::from([(
+        DEVICE.to_owned(),
+        phone.public_key_spki().expect("phone spki"),
+    )]));
+
+    let (_channel, mut stream) = dial(&transport, &phone, LOGIN);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+
+    // The desktop dropping the parked session closes its end, which the phone
+    // sees as EOF. Nothing else in this test touches the transport, so the
+    // only thing that can produce it is the window running out by itself.
+    let mut byte = [0u8; 1];
+    let read = stream.read(&mut byte);
+    assert!(
+        matches!(read, Ok(0)),
+        "the phone's socket should have been closed from the desktop side, got {read:?}"
     );
 }
 
