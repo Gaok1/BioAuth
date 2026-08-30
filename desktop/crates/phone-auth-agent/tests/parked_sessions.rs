@@ -20,6 +20,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
+use phone_auth_agent::framing::{read_frame, write_frame};
 use phone_auth_agent::qr_network::{client, QrNetworkTransport};
 use phone_auth_agent::transport::Transport;
 use phone_auth_session::{IdentityKey, SecureChannel};
@@ -164,6 +165,102 @@ fn a_session_nobody_touches_is_dropped_when_its_window_runs_out() {
         matches!(read, Ok(0)),
         "the phone's socket should have been closed from the desktop side, got {read:?}"
     );
+}
+
+/// A session the phone has already hung up on must not be handed out.
+///
+/// Staleness here was measured in elapsed time alone, and the window is five
+/// minutes. A phone that closes its end -- backgrounded, Wi-Fi roamed, process
+/// killed -- leaves a socket in the park that is seconds old and therefore
+/// looks perfectly healthy. The desktop takes it, writes the request into a
+/// half-closed connection (which succeeds, because TCP accepts writes until
+/// the peer resets), waits, and reads EOF.
+///
+/// What that produced was a website reporting `connection closed inside a
+/// frame`: framing prose, thrown at a person who did nothing wrong and cannot
+/// act on it, for a phone that was simply no longer there. Noticing costs one
+/// non-blocking peek, and the honest answer -- open PhoneAuth on the phone --
+/// is one the person can actually do something with.
+#[test]
+fn a_session_the_phone_hung_up_on_is_never_handed_out() {
+    let phone = IdentityKey::generate();
+    let transport = listening(&phone);
+
+    let (_channel, stream) = dial(&transport, &phone, LOGIN);
+    parked(&transport, 1);
+
+    // The phone goes away.
+    drop(stream);
+
+    // The FIN crosses loopback on its own schedule, so wait for the desktop to
+    // notice rather than race it. `parked_credentials` sweeps as it reads,
+    // which is the same sweep every other path takes.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !transport.parked_credentials(DEVICE).is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "a session whose phone hung up stayed parked"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // And the answer to a request is the one a person can act on, not a dead
+    // session that fails ten seconds later inside a passkey ceremony.
+    assert!(
+        transport.connect(DEVICE, LOGIN).is_err(),
+        "a hung-up session must not be handed out as a live one"
+    );
+}
+
+/// The liveness check must give the socket back exactly as it found it.
+///
+/// The peek needs the socket non-blocking to answer "nothing to say" instead
+/// of waiting forever for a phone that is correctly silent. Leaving it that
+/// way would be a worse bug than the one being fixed: `receive` sets a read
+/// timeout per call and expects the read to honour it, so every wait for the
+/// phone would return at once with nothing, and a passkey request would spin
+/// out its entire sixty-second deadline against a phone that answered in two.
+///
+/// The phone answers from another thread, after the desktop is already
+/// waiting, because that is the only arrangement the mistake fails: with the
+/// answer written first there is data to be had and a non-blocking read finds
+/// it.
+#[test]
+fn the_liveness_check_leaves_a_live_session_able_to_wait() {
+    let phone = IdentityKey::generate();
+    let transport = listening(&phone);
+
+    let (mut channel, mut stream) = dial(&transport, &phone, LOGIN);
+
+    // Sweeps, and therefore peeks, before anything is handed out.
+    parked(&transport, 1);
+    let mut session = transport
+        .connect(DEVICE, LOGIN)
+        .expect("the session is live");
+
+    session.send(b"question").expect("the desktop asks");
+
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("read timeout");
+    let asked = channel
+        .open(&read_frame(&mut stream).expect("the phone reads"))
+        .expect("sealed by the desktop");
+    assert_eq!(asked, b"question");
+
+    let answering = std::thread::spawn(move || {
+        // Long enough that the desktop is inside `receive` with nothing to
+        // read, which is the state the restored blocking mode is about.
+        std::thread::sleep(Duration::from_millis(300));
+        let record = channel.seal(b"answer").expect("the phone seals");
+        write_frame(&mut stream, &record).expect("the phone answers");
+    });
+
+    let answer = session
+        .receive(Duration::from_secs(10))
+        .expect("the desktop waits for the phone");
+    assert_eq!(answer, b"answer");
+    answering.join().expect("the phone's thread");
 }
 
 /// A stranger on the port must not take the desktop off the air.

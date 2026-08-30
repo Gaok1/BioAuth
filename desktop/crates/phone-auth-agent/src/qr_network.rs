@@ -404,10 +404,50 @@ impl QrNetworkTransport {
 /// every phone before this existed — a fallback, never a match.
 type SessionKey = (String, Option<String>);
 
+/// Drops parked sessions that are past their window or already hung up.
+///
+/// Two ways for a parked session to be worthless, and time was only the first
+/// of them. The second is the phone closing its end -- backgrounded, Wi-Fi
+/// roamed, process killed -- which leaves a socket here that is seconds old
+/// and therefore, by elapsed time alone, in perfect health. The desktop took
+/// it, wrote a request into a half-closed connection (which succeeds: TCP
+/// accepts writes until the peer resets), waited, and read EOF.
+///
+/// The window is five minutes, so that corpse was handed to every request made
+/// in the five minutes after the phone went away. What a person saw for it was
+/// a website reporting `connection closed inside a frame` -- framing prose,
+/// about a phone that was simply no longer there, offering nothing to do about
+/// it. Noticing costs one non-blocking peek per parked socket.
 fn discard_stale(state: &mut State, idle_timeout: Duration) {
     state
         .sessions
-        .retain(|_, session| session.parked_at.elapsed() < idle_timeout);
+        .retain(|_, session| session.parked_at.elapsed() < idle_timeout && answers(session));
+}
+
+/// Whether the phone still has its end of this socket open.
+///
+/// A parked session is silent by construction: the desktop speaks first, and
+/// nothing on the phone sends until it has been asked something. So anything
+/// readable here is news. `Ok(0)` is the peer's FIN. Bytes are a peer that is
+/// not speaking this protocol, and would in any case be read as the answer to
+/// a question nobody has asked yet. `WouldBlock` -- nothing to say -- is the
+/// only healthy answer.
+///
+/// A peek rather than a read, because a live session must be left exactly as
+/// it was found: this runs on the sweep, against sessions that are about to go
+/// on waiting.
+fn answers(session: &ParkedSession) -> bool {
+    if session.stream.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let mut probe = [0u8; 1];
+    let alive = matches!(session.stream.peek(&mut probe), Err(error) if error.kind() == io::ErrorKind::WouldBlock);
+
+    // Back to blocking, whatever the verdict. `receive` sets a read timeout
+    // per call and expects the read to honour it; left non-blocking, every one
+    // of those would return `WouldBlock` at once and the request would spin
+    // out its whole deadline without ever waiting for the phone.
+    session.stream.set_nonblocking(false).is_ok() && alive
 }
 
 /// Enforces the idle window instead of only consulting it.

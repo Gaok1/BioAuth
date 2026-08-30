@@ -1790,8 +1790,7 @@ fn decode_webauthn_response(
             .filter(|reason| !reason.trim().is_empty());
         return Err(ServiceError::new(
             "declined",
-            reported
-                .unwrap_or_else(|| "passkey operation was cancelled or rejected".to_owned()),
+            reported.unwrap_or_else(|| "passkey operation was cancelled or rejected".to_owned()),
         ));
     }
     value
