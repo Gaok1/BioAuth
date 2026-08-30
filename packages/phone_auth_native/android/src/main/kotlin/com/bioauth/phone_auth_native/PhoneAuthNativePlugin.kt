@@ -591,40 +591,61 @@ class PhoneAuthNativePlugin :
             result.error("invalid_arguments", "Invalid desktop passkey request", null)
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                applicationContext,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            result.error(
-                "background_sessions_unavailable",
-                "Notification permission is required for desktop passkeys",
-                null,
-            )
-            return
-        }
-        if (!BackgroundSessionService.running || !backgroundNotificationAvailable()) {
-            result.error(
-                "background_sessions_unavailable",
-                "Foreground session service is not running",
-                null,
-            )
-            return
-        }
-
+        // Whether the app is on screen changes what this is allowed to do, and
+        // everything below turns on it.
+        //
+        // A desktop passkey is delivered as a notification because Android
+        // forbids launching an activity from the background -- that is the
+        // whole reason for the design. It is not a reason to do it when the
+        // person is looking at the app: from the foreground the activity can
+        // simply be shown, and a request arriving while they watch used to
+        // become a banner behind their own window, suppressed outright by Do
+        // Not Disturb, with the shade the last place anyone thinks to look.
+        // What they saw was the computer asking and the phone doing nothing.
+        //
+        // `hasWindowFocus` rather than merely a non-null activity: Flutter
+        // keeps the activity attached while the app is paused, so the field
+        // alone says the app exists, not that anyone can see it.
+        val foreground = activity?.takeIf { !it.isFinishing && it.hasWindowFocus() }
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    WEBAUTHN_CHANNEL,
-                    "Solicitacoes de passkey",
-                    NotificationManager.IMPORTANCE_HIGH,
-                ),
-            )
-            if (manager.getNotificationChannel(WEBAUTHN_CHANNEL).importance == NotificationManager.IMPORTANCE_NONE) {
-                result.error("background_sessions_unavailable", "Passkey notifications are disabled", null)
+        if (foreground == null) {
+            // Only the notification route needs any of this. Demanding it of a
+            // foreground request turned people away who had the app open in
+            // front of them with background sessions switched off: a permission
+            // for a notification that was never going to be posted.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                result.error(
+                    "background_sessions_unavailable",
+                    "Notification permission is required for desktop passkeys",
+                    null,
+                )
                 return
+            }
+            if (!BackgroundSessionService.running || !backgroundNotificationAvailable()) {
+                result.error(
+                    "background_sessions_unavailable",
+                    "Foreground session service is not running",
+                    null,
+                )
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        WEBAUTHN_CHANNEL,
+                        "Solicitacoes de passkey",
+                        NotificationManager.IMPORTANCE_HIGH,
+                    ),
+                )
+                if (manager.getNotificationChannel(WEBAUTHN_CHANNEL).importance == NotificationManager.IMPORTANCE_NONE) {
+                    result.error("background_sessions_unavailable", "Passkey notifications are disabled", null)
+                    return
+                }
             }
         }
         if (!WebAuthnRelayCoordinator.add(requestId, result)) {
@@ -637,27 +658,36 @@ class PhoneAuthNativePlugin :
             putExtra(WebAuthnRelayActivity.EXTRA_ORIGIN, origin)
             putExtra(WebAuthnRelayActivity.EXTRA_OPTIONS, optionsJson)
         }
-        val pendingIntent = PendingIntent.getActivity(
-            applicationContext,
-            WebAuthnRelayCoordinator.notificationId(requestId),
-            intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val icon = applicationContext.applicationInfo.icon.takeIf { it != 0 }
-            ?: android.R.drawable.ic_lock_idle_lock
-        manager.notify(
-            WebAuthnRelayCoordinator.notificationId(requestId),
-            NotificationCompat.Builder(applicationContext, WEBAUTHN_CHANNEL)
-                .setSmallIcon(icon)
-                .setContentTitle("Passkey solicitada no computador")
-                .setContentText(origin)
-                .setStyle(NotificationCompat.BigTextStyle().bigText("Toque para revisar e autenticar: $origin"))
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
-                .setCategory(NotificationCompat.CATEGORY_EVENT)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .build(),
-        )
+        if (foreground != null) {
+            // The request is registered by now, so a launch that fails has to
+            // answer it rather than leave the desktop waiting out the deadline.
+            runCatching { foreground.startActivity(intent) }.onFailure {
+                WebAuthnRelayCoordinator.cancel(requestId, "Unable to show the passkey prompt")
+                return
+            }
+        } else {
+            val pendingIntent = PendingIntent.getActivity(
+                applicationContext,
+                WebAuthnRelayCoordinator.notificationId(requestId),
+                intent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val icon = applicationContext.applicationInfo.icon.takeIf { it != 0 }
+                ?: android.R.drawable.ic_lock_idle_lock
+            manager.notify(
+                WebAuthnRelayCoordinator.notificationId(requestId),
+                NotificationCompat.Builder(applicationContext, WEBAUTHN_CHANNEL)
+                    .setSmallIcon(icon)
+                    .setContentTitle("Passkey solicitada no computador")
+                    .setContentText(origin)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText("Toque para revisar e autenticar: $origin"))
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true)
+                    .setCategory(NotificationCompat.CATEGORY_EVENT)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .build(),
+            )
+        }
         Handler(Looper.getMainLooper()).postDelayed({
             manager.cancel(WebAuthnRelayCoordinator.notificationId(requestId))
             WebAuthnRelayCoordinator.cancel(
