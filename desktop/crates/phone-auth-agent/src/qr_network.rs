@@ -462,6 +462,13 @@ impl SecureSession for NetworkSession {
     }
 }
 
+/// How long the accept loop pauses after a failed accept.
+///
+/// Short enough that a phone dialling during the pause only waits for its
+/// retry, long enough that a persistent failure costs no more than ten wakeups
+/// a second.
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
+
 fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     for stream in listener.incoming() {
         match stream {
@@ -479,8 +486,15 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
                 });
             }
             Err(error) => {
-                let mut state = shared.state.lock().expect("state mutex");
-                state.last_error = Some(format!("accept failed: {error}"));
+                shared.state.lock().expect("state mutex").last_error =
+                    Some(format!("accept failed: {error}"));
+                // A failing accept usually fails again immediately -- the
+                // process is out of descriptors, the kernel is out of buffers
+                // -- and `incoming()` never ends, so recording and retrying at
+                // once is a loop that pegs a core. Which is also what makes
+                // the condition last: nothing else on this machine gets the
+                // scheduling it needs to release whatever ran out.
+                thread::sleep(ACCEPT_RETRY_DELAY);
             }
         }
     }
