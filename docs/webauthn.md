@@ -144,6 +144,7 @@ Build both agent binaries:
 ```console
 cd desktop
 cargo build --release --bin phone-auth-agent --bin phone-auth-webauthn-host
+windows-plugin/build.ps1 -Configuration release
 ```
 
 Load `desktop/browser-extension/` as an unpacked extension. Chrome and Edge use
@@ -198,6 +199,24 @@ The registry default value is the absolute path to the JSON host manifest. The
 agent must be running and the phone paired. If several phones are paired, the
 IPC request must name a credential; the extension fails rather than selecting
 one by map order.
+
+### Native Windows apps
+
+The browser extension cannot be loaded by a native client such as Discord. On a
+fully updated Windows 11 24H2 or newer, the installer therefore also registers
+`phone-auth-windows-webauthn-plugin.exe` through Microsoft's WebAuthn Plugin
+Authenticator API. Windows then offers **PhoneAuth** in the system passkey
+picker used by browsers and Win32 apps. After installation, enable it under
+**Settings → Accounts → Passkeys → Advanced options** if Windows leaves the new
+provider disabled.
+
+The plugin verifies the platform-signed CTAP request, preserves Windows'
+`clientDataHash`, and relays the operation through the same authenticated agent
+and phone session. The phone remains the credential store and still performs
+`BIOMETRIC_STRONG` verification for every signature. Windows versions without
+the plugin API keep the browser-extension path; they cannot expose PhoneAuth to
+native apps. Microsoft's current sample requires Windows 11 build 26100.6725 or
+newer.
 
 ## Distribution
 
@@ -274,6 +293,11 @@ devices and browsers**:
    Firefox.
 5. Background/remove the PhoneAuth activity while leaving its persistent
    notification active, then repeat a desktop assertion.
+6. Exercise the real compatibility matrix: create and authenticate at GitHub
+   and Google in a browser, then create and authenticate in Discord desktop via
+   the Windows picker. GitHub's `appid`/`appidExclude` U2F-migration extensions
+   must return `false` from the client instead of reaching the phone as unknown
+   authenticator extensions.
 
 The automated suite covers CTAP2 fixed vectors, malformed frames, request-ID
 binding, RP/origin and asset-links rejection, background lifecycle, native
@@ -289,7 +313,7 @@ matrix.
 | Page → main-world bridge | The page is untrusted and may forge DOM events. Both the main-world and isolated bridges independently require `create`/`get` and re-check iframe Permissions Policy; unknown policy fails closed. |
 | Isolated bridge → service worker | The worker ignores a page-supplied origin and derives the HTTPS origin from the browser-provided `sender.url`; operation and options shape are validated again. |
 | Service worker → native host | The installed native-host manifest allowlists only the reviewed extension ID (`allowed_origins` on Chromium, `allowed_extensions` on Firefox). A Chromium package/install must replace the placeholder with its final ID. |
-| Native host → agent | Native messages are capped at 128 KiB before allocation. The host accepts only JSON `create`/`get` objects; the agent additionally caps origin at 2,048 characters and encoded options at 6,000 bytes. |
+| Native host / Windows plugin → agent | Native messages are capped at 128 KiB before allocation. The host accepts only JSON `create`/`get` objects; the agent additionally caps origin at 2,048 characters and encoded options at 6,000 bytes. The Windows plugin accepts only platform-signed CTAP2 requests. |
 | Agent → phone | The transport must be authenticated and confidential. The phone binds the response to the request ID, validates origin against RP ID again, displays the origin, and requires strong biometric authentication. |
 
 A fake extension cannot reach the host unless it is added to the OS-installed
@@ -329,8 +353,8 @@ responses are rebound to the retry's live session without repeating a commit.
 
 ## Deliberately out of scope
 
-- Windows Plugin Authenticator API is the future native desktop path, but it
-  requires Windows 11 24H2+; this phase keeps the extension relay.
+- Native passkey-manager integration on Windows builds older than 26100.6725;
+  those builds keep the browser-extension relay.
 - caBLE/hybrid transport, iOS credential providers, and passkey sync/export.
 - Any change to transport pairing or the authenticated-session handshake.
 

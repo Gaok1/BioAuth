@@ -7,6 +7,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class WebAuthnRelayActivity : FragmentActivity() {
@@ -55,6 +56,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
     private fun prepareCreate(origin: String, optionsJson: String) {
         val options = core.creationOptions(optionsJson)
         RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
+        val client = relayClientData(origin, optionsJson)
         runOnUiThread {
             if (cancelled) return@runOnUiThread
             authenticate(
@@ -63,24 +65,25 @@ class WebAuthnRelayActivity : FragmentActivity() {
                 NO_BACKUP_WARNING,
                 null,
                 claimBeforeOperation = true,
-            ) { core.create(options, WebAuthnClientData(origin, null)) }
+            ) { core.create(options, client) }
         }
     }
 
     private fun prepareGet(origin: String, optionsJson: String) {
         val options = core.requestOptions(optionsJson)
         RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
+        val client = relayClientData(origin, optionsJson)
         val matches = core.credentialsFor(options)
         require(matches.isNotEmpty()) { "No matching passkey" }
         runOnUiThread {
             if (cancelled) return@runOnUiThread
             if (matches.size == 1) {
-                authenticateGet(options, matches.single(), origin)
+                authenticateGet(options, matches.single(), origin, client)
             } else {
                 AlertDialog.Builder(this)
                     .setTitle("Escolha uma conta")
                     .setItems(accountLabels(matches)) { _, index ->
-                        authenticateGet(options, matches[index], origin)
+                        authenticateGet(options, matches[index], origin, client)
                     }
                     .setNegativeButton("Cancelar") { _, _ -> fail("Passkey selection was cancelled") }
                     .setOnCancelListener { fail("Passkey selection was cancelled") }
@@ -93,9 +96,10 @@ class WebAuthnRelayActivity : FragmentActivity() {
         options: WebAuthnRequestOptions,
         credential: PasskeyRecord,
         origin: String,
+        client: WebAuthnClientData,
     ) {
         val prepared = runCatching {
-            core.prepareAssertion(options, credential.credentialId, WebAuthnClientData(origin, null))
+            core.prepareAssertion(options, credential.credentialId, client)
         }.getOrElse {
             fail("Passkey is no longer available")
             return
@@ -221,6 +225,14 @@ class WebAuthnRelayActivity : FragmentActivity() {
         const val OP_CREATE = "create"
         const val OP_GET = "get"
     }
+}
+
+internal fun relayClientData(origin: String, optionsJson: String): WebAuthnClientData {
+    val root = JSONObject(optionsJson)
+    if (!root.has("clientDataHash")) return WebAuthnClientData(origin, null)
+    val hash = WebAuthnRequestParser.decode(root.optString("clientDataHash"), "clientDataHash")
+    require(hash.size == 32) { "clientDataHash must contain 32 bytes" }
+    return WebAuthnClientData(origin, null, hash)
 }
 
 internal fun accountLabels(matches: List<PasskeyRecord>): Array<String> =

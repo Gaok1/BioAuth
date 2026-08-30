@@ -202,6 +202,11 @@ jobs:
           if ($result.valid -or $result.publicKey -or $result.fileVersion) {
             throw 'unsigned file was reported as a trusted update'
           }
+      - name: Build Windows WebAuthn plugin
+        shell: powershell
+        run: |
+          .\desktop\windows-plugin\build.ps1 -Configuration debug
+          .\desktop\target\debug\phone-auth-windows-webauthn-plugin.exe --self-test
       # This is a separate job rather than a matrix entry because Linux alone
       # needs BlueZ headers. More importantly, it compiles and runs the code
       # behind cfg(windows): DACLs, clipboard exclusions, hard-link counting

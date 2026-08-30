@@ -27,3 +27,15 @@ test('Windows packaging signs before verifying every shipped executable', () => 
       resource.to === 'verify-authenticode.ps1'
   ));
 });
+
+test('Windows installer ships and registers the native WebAuthn plugin', () => {
+  const manifest = require('../package.json');
+  const binaries = manifest.build.extraResources.find(
+    (resource) => resource.from === '../target/release/' && resource.to === 'bin'
+  );
+  assert.ok(binaries.filter.includes('phone-auth-windows-webauthn-plugin.exe'));
+
+  const installer = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  assert.match(installer, /phone-auth-windows-webauthn-plugin\.exe" --register/);
+  assert.match(installer, /phone-auth-windows-webauthn-plugin\.exe" --unregister/);
+});
