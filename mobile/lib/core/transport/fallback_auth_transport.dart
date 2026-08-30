@@ -63,7 +63,17 @@ class FallbackAuthTransport implements AuthTransport {
       Error.throwWithStackTrace(primaryError, primaryStack);
     }
 
-    final release = await _fallbackGate.acquire();
+    final void Function() release;
+    try {
+      release = await _fallbackGate.acquire();
+    } on Object catch (gateError, gateStack) {
+      // Reported together with why the LAN was not used, because "Bluetooth is
+      // busy" on its own does not say what was being fallen back from.
+      Error.throwWithStackTrace(
+        FallbackTransportException(primaryError, gateError),
+        gateStack,
+      );
+    }
     try {
       final outcome = await _connectDiscovered(expectation);
       return SecureSessionOutcome(
@@ -163,6 +173,19 @@ class _ReleasingSession implements SecureTransportSession {
   }
 }
 
+/// How long a connection waits for the one before it to give the radio back.
+///
+/// Not a queueing policy -- it is a deadlock breaker, and it is sized to never
+/// fire in normal use. A session legitimately holds the client for as long as it
+/// may sit idle waiting for a request plus as long as a person may take to
+/// answer one, so anything shorter would cut off working sessions. What it is
+/// for is the holder that never gives it back: releasing happens after the
+/// native disconnect returns, and a wedged GATT stack is a real thing on
+/// Android. Without a bound that is not a slow connection, it is every future
+/// Bluetooth connection on this phone hanging forever, with nothing raised and
+/// nothing logged, until the app is restarted.
+const _gateWait = Duration(minutes: 10);
+
 /// Serializes use of the plugin's one active Android GATT connection.
 class _SerialGate {
   Future<void> _tail = Future.value();
@@ -171,13 +194,24 @@ class _SerialGate {
     final previous = _tail;
     final released = Completer<void>();
     _tail = released.future;
-    await previous;
 
     var didRelease = false;
-    return () {
+    void release() {
       if (didRelease) return;
       didRelease = true;
       released.complete();
-    };
+    }
+
+    try {
+      await previous.timeout(_gateWait);
+    } on TimeoutException {
+      // Give up this slot on the way out, so whoever is queued behind gets the
+      // same chance instead of inheriting the wedge.
+      release();
+      throw StateError(
+        'A conexão Bluetooth anterior não foi liberada. Reinicie o aplicativo.',
+      );
+    }
+    return release;
   }
 }

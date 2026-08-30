@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/transport/auth_transport.dart';
 import 'package:phone_auth/core/transport/fallback_auth_transport.dart';
@@ -8,6 +10,51 @@ import 'package:phone_auth/core/transport/secure_session_establisher.dart';
 
 void main() {
   final identity = Uint8List.fromList([1, 2, 3]);
+
+  test('a bluetooth link nobody gives back does not wedge the next one', () {
+    fakeAsync((async) {
+      const desktop = TransportPeer(
+        transportId: '192.0.2.1:42371',
+        displayName: 'desktop-1',
+      );
+      final transport = FallbackAuthTransport(
+        primary: _TestTransport(error: StateError('LAN unavailable')),
+        discoveredFallback: _TestTransport(
+          peers: const [TransportPeer(transportId: 'ble', displayName: 'PC')],
+          outcomeFactory: () => _outcome(_TestSession()),
+        ),
+        discoveryTimeout: const Duration(milliseconds: 50),
+      );
+
+      // Taken and never given back, the way a native disconnect that never
+      // returns leaves it.
+      SecureTransportSession? held;
+      unawaited(
+        transport
+            .connect(desktop, PairedVerifier(identity))
+            .then((outcome) => held = outcome.session),
+      );
+      async.elapse(const Duration(seconds: 1));
+      expect(held, isNotNull);
+
+      Object? error;
+      unawaited(() async {
+        try {
+          await transport.connect(desktop, PairedVerifier(identity));
+        } on Object catch (raised) {
+          error = raised;
+        }
+      }());
+
+      // Long enough to cover an idle session plus someone taking their time to
+      // answer: the wait is a deadlock breaker, not a queueing limit.
+      async.elapse(const Duration(minutes: 9));
+      expect(error, isNull);
+
+      async.elapse(const Duration(minutes: 2));
+      expect(error, isA<FallbackTransportException>());
+    });
+  });
 
   test('a paired verifier falls back from its saved endpoint to BLE', () async {
     final primary = _TestTransport(error: StateError('LAN unavailable'));
