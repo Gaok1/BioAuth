@@ -4,19 +4,36 @@ import '../../features/vault/vault_store.dart' as store;
 import '../protocol/application_frame.dart';
 import '../protocol/vault_payloads.dart' as wire;
 import 'vault_approval.dart';
+import 'vault_listing.dart';
 
 /// Serves vault application frames without exposing storage failure details.
 class VaultService {
-  VaultService({store.VaultStore? repository, VaultApproval? approval})
-    : _store = repository ?? const store.NativeVaultStore(),
-      // Defaulting to a refusal rather than to a pass is deliberate. A build
-      // that forgets to wire the sheet serves an empty list and nothing else,
-      // which is a visible bug; defaulting the other way would serve secrets
-      // behind a bare Keystore prompt, which is an invisible one.
-      _approval = approval ?? const DenyVaultApproval();
+  VaultService({
+    store.VaultStore? repository,
+    VaultApproval? approval,
+    VaultListing? listing,
+  }) : _store = repository ?? const store.NativeVaultStore(),
+       // Its own by default, which is correct and gives up the snapshot
+       // between sessions -- and a paged walk is several sessions. The
+       // session service passes a shared one for exactly that reason.
+       _listing =
+           listing ??
+           VaultListing(store: repository ?? const store.NativeVaultStore()),
+       // Defaulting to a refusal rather than to a pass is deliberate. A build
+       // that forgets to wire the sheet serves an empty list and nothing else,
+       // which is a visible bug; defaulting the other way would serve secrets
+       // behind a bare Keystore prompt, which is an invisible one.
+       _approval = approval ?? const DenyVaultApproval();
 
   final store.VaultStore _store;
+  final VaultListing _listing;
   final VaultApproval _approval;
+
+  /// How many summaries go in one response.
+  ///
+  /// A frame is capped at 6144 bytes, so this is a wire limit rather than a
+  /// storage one. The native store pages at the same number.
+  static const int _pageSize = 32;
 
   Future<Uint8List> handle(
     Uint8List frame, {
@@ -146,13 +163,23 @@ class VaultService {
     );
   }
 
+  /// Serves one page of a walk, from the snapshot the walk started with.
+  ///
+  /// The cursor is this service's own: an offset into that snapshot, opaque to
+  /// the desktop, which only ever hands back what it was given. An empty one
+  /// starts a walk and is the only thing that reads the vault again.
   Future<Uint8List> _list(wire.VaultListRequest request) async {
-    final page = await _store.listPage(
-      request.cursor.isEmpty ? null : request.cursor,
-    );
+    final restart = request.cursor.isEmpty;
+    final offset = restart ? 0 : int.tryParse(request.cursor) ?? -1;
+    final all = await _listing.items(restart: restart);
+    if (offset < 0 || offset > all.length) {
+      throw const FormatException('Cursor de listagem inválido');
+    }
+    final page = all.skip(offset).take(_pageSize).toList(growable: false);
+    final next = offset + page.length;
     return wire.VaultListResponse(
       items: [
-        for (final item in page.items)
+        for (final item in page)
           wire.VaultItemSummary(
             id: item.id,
             revision: item.revision,
@@ -163,7 +190,7 @@ class VaultService {
             updatedAtMs: item.updatedAt.millisecondsSinceEpoch,
           ),
       ],
-      nextCursor: page.nextCursor ?? '',
+      nextCursor: next < all.length ? '$next' : '',
     ).encode();
   }
 

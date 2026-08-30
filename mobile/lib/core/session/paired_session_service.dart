@@ -20,6 +20,7 @@ import '../protocol/webauthn_relay.dart';
 import '../locker/locker_service.dart';
 import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
+import '../vault/vault_listing.dart';
 import '../vault/vault_service.dart';
 import '../../features/vault/vault_store.dart';
 import '../transport/auth_transport.dart';
@@ -84,6 +85,16 @@ class PairedSessionService {
   /// attributable to the session that raised it: a session that dies with a
   /// sheet on screen must refuse that sheet and no other.
   final VaultStore? _vaultStore;
+
+  /// Shared across sessions, because a paged listing is several of them.
+  ///
+  /// A session carries one request and closes, so the desktop walking a vault
+  /// opens one per page. Built per session, the snapshot would be discarded
+  /// between every page and each page would cost its own unlock -- which is
+  /// the whole thing [VaultListing] exists to stop.
+  late final VaultListing _listing = VaultListing(
+    store: _vaultStore ?? const NativeVaultStore(),
+  );
   final VaultApproval? _vaultApproval;
   final SshApproval? _sshApproval;
   final SshSigner? _sshSigner;
@@ -118,6 +129,8 @@ class PairedSessionService {
     _stopped = true;
     await _transport.stop();
     await Future.wait(_active.values.toList().map(_close));
+    // Nothing left to page through it, and it is the vault's metadata.
+    _listing.forget();
   }
 
   /// Closes the live session with one verifier and refuses later ones.
@@ -215,6 +228,7 @@ class PairedSessionService {
 
     final vault = VaultService(
       repository: _vaultStore,
+      listing: _listing,
       approval: onRequestRaised == null
           ? _vaultApproval
           : _ScopedVaultApproval(_vaultApproval, onRequestRaised),
