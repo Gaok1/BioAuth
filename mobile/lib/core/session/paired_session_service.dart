@@ -66,9 +66,11 @@ class PairedSessionService {
     SshApproval? sshApproval,
     SshSigner? sshSigner,
     LockerKeyGuardian? lockerGuardian,
+    WebAuthnRelayHandler? webAuthn,
     Duration? answerTimeout,
     DateTime Function()? clock,
   }) : _answerTimeout = answerTimeout ?? pairedSessionAnswerTimeout,
+       _webAuthn = webAuthn ?? const WebAuthnRelayHandler(),
        _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
@@ -123,7 +125,7 @@ class PairedSessionService {
   // nothing. Verifier alone is not a key either, since one computer can hold
   // several credentials and each has its own session.
   final Map<(String, String), SecureTransportSession> _active = {};
-  final WebAuthnRelayHandler _webAuthn = const WebAuthnRelayHandler();
+  final WebAuthnRelayHandler _webAuthn;
   final Set<String> _closed = {};
   bool _stopped = false;
 
@@ -295,12 +297,31 @@ class PairedSessionService {
           }
           return frames.current;
         });
+        // A read that produced no frame is `null` rather than a throw, because
+        // the race below has to be able to lose to it. Whichever side loses is
+        // left with nobody awaiting it, and the loser is normally this one:
+        // the outer `finally` cancels the iterator underneath it.
+        final cancelled = nextFrame.then<(bool, Uint8List)?>(
+          (value) => (true, value),
+          onError: (Object _) => null,
+        );
         var nativeSettled = false;
         try {
-          final completed = await Future.any<(bool, Uint8List)>([
-            response.then((value) => (false, value)),
-            nextFrame.then((value) => (true, value)),
-          ]);
+          // Bounded like every other path to a person. This one alone was not,
+          // and it is the only one where the phone learns the exchange is over
+          // solely by the desktop hanging up: the relay frame carries no
+          // deadline of its own, so a half-open socket -- a lid closed, an
+          // agent killed -- left the passkey prompt up and the session held
+          // for as long as TCP took to notice, which is hours.
+          final completed = await _answered(
+            Future.any<(bool, Uint8List)?>([
+              response.then((value) => (false, value)),
+              cancelled,
+            ]),
+          );
+          if (completed == null) {
+            throw StateError('Desktop closed the passkey session');
+          }
           if (completed.$1) {
             final cancel = WebAuthnRelayCancel.decode(completed.$2);
             if (cancel.requestId != request.requestId) {

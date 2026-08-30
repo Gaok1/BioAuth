@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -17,6 +18,8 @@ import 'package:phone_auth/core/protocol/application_frame.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/protocol/locker_payloads.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
+import 'package:phone_auth/core/protocol/webauthn_relay.dart';
+import 'package:phone_auth_native/phone_auth_native.dart';
 import 'package:phone_auth/core/session/paired_session_runner.dart';
 import 'package:phone_auth/core/session/paired_session_service.dart';
 import 'package:phone_auth/core/session/phone_auth_core.dart';
@@ -345,6 +348,83 @@ void main() {
           'as already expired, which is a different thing passing for the '
           'same reason.',
     );
+  });
+
+  group('the passkey relay', () {
+    Uint8List relayRequest() => Uint8List.fromList([
+      // `BAWA1` and a newline: the relay frame's magic, spelled out so this
+      // does not depend on a string escape surviving a round trip.
+      0x42, 0x41, 0x57, 0x41, 0x31, 0x0a,
+      ...utf8.encode(
+        jsonEncode({
+          'version': 1,
+          'type': 'webauthn.request',
+          'requestId': 'passkey-1',
+          'verifierId': 'desktop-1',
+          'operation': 'get',
+          'origin': 'https://example.test',
+          'options': {'challenge': 'AAAA'},
+        }),
+      ),
+    ]);
+
+    // Every other path to a person is bounded by `_answered`; this one was
+    // not. It is also the only one where the phone learns the exchange is
+    // over solely by the desktop hanging up -- the relay frame carries no
+    // deadline of its own -- so a half-open socket left the passkey prompt up
+    // and the session held for as long as TCP took to notice.
+    test('a passkey nobody answers is not held until TCP notices', () async {
+      final session = _FramingSession();
+      final relay = _StubWebAuthnRelay();
+      final service = PairedSessionService(
+        transport: _StubTransport(session),
+        authorizer: _UnusedAuthorizer(),
+        consent: _UnusedConsent(),
+        webAuthn: WebAuthnRelayHandler(native: relay),
+        answerTimeout: const Duration(milliseconds: 20),
+      );
+
+      final serving = service.serveOne(_record);
+      await session.listening.future;
+      session.push(relayRequest());
+
+      await expectLater(serving, throwsA(isA<PairedSessionAnswerExpired>()));
+      expect(
+        relay.cancelled,
+        contains('passkey-1'),
+        reason: 'and the prompt on the phone goes down with it',
+      );
+      expect(session.closed, isTrue);
+    });
+
+    // The ordinary path, kept honest across the restructure above: a read that
+    // produced no frame is now a `null` the race can lose to rather than a
+    // throw, so the answer still has to come back and the prompt still has to
+    // be left alone.
+    test('an approved passkey still answers the desktop', () async {
+      final session = _FramingSession();
+      final relay = _StubWebAuthnRelay(response: '{"id":"credential"}');
+      final service = PairedSessionService(
+        transport: _StubTransport(session),
+        authorizer: _UnusedAuthorizer(),
+        consent: _UnusedConsent(),
+        webAuthn: WebAuthnRelayHandler(native: relay),
+      );
+
+      final serving = service.serveOne(_record);
+      await session.listening.future;
+      session.push(relayRequest());
+
+      expect(await serving, isNull, reason: 'a relay is not an authorization');
+      // The attach the dial always sends, and then the answer.
+      expect(session.sent, hasLength(2));
+      expect(
+        jsonDecode(utf8.decode(session.sent.last.sublist(6))),
+        containsPair('ok', true),
+        reason: 'the answer went back',
+      );
+      expect(relay.cancelled, isEmpty, reason: 'nothing to take down');
+    });
   });
 
   test('revoking a desktop takes down the sheet it left on screen', () async {
@@ -848,3 +928,29 @@ const _properties = TransportSecurityProperties(
   proximitySignal: false,
   expectedLatency: Duration.zero,
 );
+
+/// The native passkey side, without a phone.
+///
+/// `perform` never completing is the case the timeout exists for: the user has
+/// the system credential sheet on screen and has not answered it.
+class _StubWebAuthnRelay implements PhoneAuthWebAuthnRelay {
+  _StubWebAuthnRelay({this.response});
+
+  final String? response;
+  final List<String> cancelled = [];
+
+  @override
+  Future<String> perform({
+    required String requestId,
+    required String operation,
+    required String origin,
+    required String optionsJson,
+  }) {
+    final ready = response;
+    if (ready == null) return Completer<String>().future;
+    return Future.value(jsonEncode({'responseJson': ready}));
+  }
+
+  @override
+  Future<void> cancel(String requestId) async => cancelled.add(requestId);
+}
