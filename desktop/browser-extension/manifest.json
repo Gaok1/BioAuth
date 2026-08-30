@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PhoneAuth Passkeys",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Relays WebAuthn requests to a paired PhoneAuth device.",
   "permissions": [
     "nativeMessaging",

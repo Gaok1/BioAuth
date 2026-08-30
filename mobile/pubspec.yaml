@@ -1,7 +1,7 @@
 name: phone_auth
 description: Offline-first mobile authenticator for BioAuth.
 publish_to: none
-version: 0.1.5+6
+version: 0.2.0+7
 
 environment:
   sdk: ">=3.9.0 <4.0.0"

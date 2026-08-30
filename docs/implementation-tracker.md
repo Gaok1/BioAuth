@@ -84,7 +84,7 @@ continuar passando enquanto os produtos novos são construídos.
 
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
-| HOT-01 | P0 | 🧪 | Versão **0.1.5** sincronizada em `desktop/Cargo.toml`, `mobile/pubspec.yaml`, `desktop/ui/package.json` e `desktop/nixos/package.nix`; locks Cargo/npm atualizados e gate local aprovado. Falta publicar a tag/release para concluir o corte. |
+| HOT-01 | P0 | 🧪 | Versão **0.2.0** sincronizada em `desktop/Cargo.toml`, `mobile/pubspec.yaml`, `desktop/ui/package.json` e `desktop/nixos/package.nix`; locks Cargo/npm atualizados e gate local aprovado. O corte de 0.2.0 marca o ciclo do boot unlock pelo cabo, do plugin WebAuthn do Windows e do drill de passphrase; o `+7` do pubspec sobe o versionCode, porque APK com versionCode igual não atualiza o instalado. Falta publicar a tag/release para concluir o corte, e o caminho estável exige os seis secrets de assinatura. |
 | HOT-02 | P0 | 🧪 | O workflow agora exige os quatro secrets de assinatura Android em qualquer publicação, falha com configuração parcial e só permite APK debug-signed, com nome distinto, em `workflow_dispatch` não publicável. `REL-07` acrescentou a mesma regra para o instalador Windows. **Seis secrets cabem ao dono:** `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `WINDOWS_CERT_BASE64` e `WINDOWS_CERT_PASSWORD`. Sem eles a publicação falha por desenho — nenhum artefato sem assinatura chega a um release. |
 | HOT-03 | P0 | ✅ | `flake.lock` foi gerado com Nix, fixa `nixpkgs`, `flake-utils` e `systems`, passa validação estrutural e **está versionado**. O texto anterior dizia que faltava commitar; estava desatualizado. |
 
