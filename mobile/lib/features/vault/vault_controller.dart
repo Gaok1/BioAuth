@@ -150,12 +150,26 @@ class VaultController extends ChangeNotifier {
 
   void lock() {
     locked = true;
+    _forget();
+    error = null;
+    notifyListeners();
+  }
+
+  /// Drops everything the unlocked vault held.
+  ///
+  /// The search text with it. The field holding that text lives in the
+  /// unlocked view and is destroyed along with it, so a query that outlived
+  /// the lock came back filtering the list against a box the user could see
+  /// was empty -- and one that matched nothing came back as a vault that had
+  /// apparently lost every item it had. Locking happens on its own, every time
+  /// the app leaves the foreground, so this was not a state anybody had to go
+  /// looking for.
+  void _forget() {
     _items = const [];
+    _query = '';
     _revealedId = null;
     _revealedSecret = null;
     _clearTotp();
-    error = null;
-    notifyListeners();
   }
 
   Future<void> reveal(VaultItemSummary item) => _run(() async {
@@ -308,9 +322,11 @@ class VaultController extends ChangeNotifier {
   /// whose safety is not enforced here.
   Future<void> discard() => _run(() async {
     await _store.discard();
-    _items = const [];
-    _revealedId = null;
-    _revealedSecret = null;
+    // The same forgetting a lock does, because a discarded vault holds even
+    // less than a locked one. It used to do most of it by hand and leave the
+    // TOTP ticker running, so a seed went on being derived from after the
+    // vault it came out of had been destroyed.
+    _forget();
     locked = true;
   });
 

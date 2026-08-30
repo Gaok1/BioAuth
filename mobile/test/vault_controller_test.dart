@@ -53,6 +53,24 @@ void main() {
     expect(controller.secretFor(item.id), isNull);
   });
 
+  test('locking forgets the search, not just the items', () async {
+    final store = _MemoryVaultStore();
+    final controller = VaultController(store: store, copy: (_) async {});
+
+    await controller.unlock();
+    controller.search('nada corresponde a isto');
+    expect(controller.items, isEmpty);
+
+    // What the app does every time it leaves the foreground.
+    controller.lock();
+    await controller.unlock();
+
+    // The search field lives in the unlocked view and is rebuilt empty, so a
+    // query that survived the lock filtered the vault against a box showing
+    // nothing -- which reads as a vault that lost its items.
+    expect(controller.items.map((item) => item.name), ['Example']);
+  });
+
   test(
     'a write shows the vault it left behind, without reading it again',
     () async {
