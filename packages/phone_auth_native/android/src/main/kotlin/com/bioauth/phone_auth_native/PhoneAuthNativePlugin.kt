@@ -74,7 +74,7 @@ class PhoneAuthNativePlugin :
             "getSessionIdentityPublicKey" -> sessionIdentityPublicKey(result)
             "signSessionIdentity" -> signSessionIdentity(call.arguments, result)
             "verifySessionIdentity" -> verifySessionIdentity(call.arguments, result)
-            "getSecurityCapabilities" -> result.success(securityCapabilities())
+            "getSecurityCapabilities" -> result.success(securityCapabilities(purposeOf(call.arguments)))
             "requestBlePermissions" -> requestBlePermissions(result)
             "setBackgroundSessionsEnabled" -> setBackgroundSessionsEnabled(call.arguments, result)
             "performWebAuthn" -> performWebAuthn(call.arguments, result)
@@ -771,8 +771,8 @@ class PhoneAuthNativePlugin :
         return signature.sign()
     }
 
-    private fun securityCapabilities(): Map<String, Any> {
-        val security = runCatching { keyStore.keySecurity() }
+    private fun securityCapabilities(purpose: String): Map<String, Any> {
+        val security = runCatching { keyStore.keySecurity(purpose) }
             .getOrDefault(DeviceKeyStore.KeySecurity(false, false, false))
         val biometricCode = strongBiometricStatus()
         return mapOf(

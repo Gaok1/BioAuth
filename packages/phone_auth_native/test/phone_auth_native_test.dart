@@ -30,16 +30,17 @@ class MockPhoneAuthNativePlatform
       generateKey(purpose: purpose);
 
   @override
-  Future<SecurityCapabilities> getSecurityCapabilities() async =>
-      const SecurityCapabilities(
-        keyExists: true,
-        hardwareBacked: true,
-        strongBoxBacked: false,
-        biometrics: BiometricCapabilities(
-          availability: BiometricAvailability.available,
-          strongBiometrics: true,
-        ),
-      );
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) async => const SecurityCapabilities(
+    keyExists: true,
+    hardwareBacked: true,
+    strongBoxBacked: false,
+    biometrics: BiometricCapabilities(
+      availability: BiometricAvailability.available,
+      strongBiometrics: true,
+    ),
+  );
 
   @override
   Future<SignatureResult> sign({

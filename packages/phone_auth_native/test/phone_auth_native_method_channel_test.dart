@@ -8,10 +8,13 @@ void main() {
 
   final platform = MethodChannelPhoneAuthNative();
   const channel = MethodChannel('phone_auth_native');
+  final calls = <MethodCall>[];
 
   setUp(() {
+    calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
           return switch (call.method) {
             'generateKey' ||
             'getPublicKey' ||
@@ -76,6 +79,21 @@ void main() {
       capabilities.biometrics.availability,
       BiometricAvailability.available,
     );
+    // The purpose has to reach the other side. There is one key per purpose,
+    // and this call used to carry no arguments at all, so Android answered
+    // about the authorization key whichever key the caller meant -- which is
+    // how a Keystore-backed passkey credential came to be enrolled as
+    // `software`.
+    expect(
+      calls
+          .singleWhere((call) => call.method == 'getSecurityCapabilities')
+          .arguments,
+      {'purpose': 'authorization'},
+    );
+
+    calls.clear();
+    await platform.getSecurityCapabilities(purpose: 'webAuthn');
+    expect(calls.single.arguments, {'purpose': 'webAuthn'});
   });
 
   test('sends canonical payload and display context to native sign', () async {

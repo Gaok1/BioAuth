@@ -91,8 +91,22 @@ internal class DeviceKeyStore(
         }
     }
 
-    fun keySecurity(): KeySecurity {
-        val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
+    /**
+     * How well protected the key for [purpose] is.
+     *
+     * Takes the purpose for the same reason every other method here does: there
+     * is one key per purpose, and this used to read the authorization alias no
+     * matter which key was being asked about. A pairing therefore enrolled one
+     * key and described a different one -- and a phone that never paired for
+     * login has no authorization key at all, so a Keystore-backed passkey
+     * credential was enrolled as `Software`. The other direction is the one
+     * that matters: StrongBox is attempted per key and falls back per key, so
+     * an authorization key that got StrongBox would have vouched for a purpose
+     * key that did not. This value exists to withhold authority, never to grant
+     * more of it, and vouching for the wrong key can only do the second.
+     */
+    fun keySecurity(purpose: String = AUTHORIZATION): KeySecurity {
+        val privateKey = keyStore.getKey(aliasFor(purpose), null) as? PrivateKey
             ?: return KeySecurity(keyExists = false, hardwareBacked = false, strongBoxBacked = false)
         val keyInfo = KeyFactory.getInstance(privateKey.algorithm, ANDROID_KEYSTORE)
             .getKeySpec(privateKey, KeyInfo::class.java)

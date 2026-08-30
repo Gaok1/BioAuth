@@ -81,9 +81,12 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
       false;
 
   @override
-  Future<SecurityCapabilities> getSecurityCapabilities() async {
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) async {
     final response = await methodChannel.invokeMapMethod<String, Object?>(
       'getSecurityCapabilities',
+      {'purpose': purpose},
     );
     if (response == null) {
       throw const FormatException('Capacidades nativas ausentes');

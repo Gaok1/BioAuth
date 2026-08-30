@@ -14,18 +14,19 @@ class _RecordingAuthenticator implements SecureAuthenticator {
   String? signedPurpose;
 
   @override
-  Future<SecurityCapabilities> getSecurityCapabilities() async =>
-      SecurityCapabilities(
-        keyExists: true,
-        hardwareBacked: true,
-        strongBoxBacked: false,
-        biometrics: BiometricCapabilities(
-          availability: strongBiometrics
-              ? BiometricAvailability.available
-              : BiometricAvailability.unavailable,
-          strongBiometrics: strongBiometrics,
-        ),
-      );
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) async => SecurityCapabilities(
+    keyExists: true,
+    hardwareBacked: true,
+    strongBoxBacked: false,
+    biometrics: BiometricCapabilities(
+      availability: strongBiometrics
+          ? BiometricAvailability.available
+          : BiometricAvailability.unavailable,
+      strongBiometrics: strongBiometrics,
+    ),
+  );
 
   @override
   Future<SignatureResult> sign({

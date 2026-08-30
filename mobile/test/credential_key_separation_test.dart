@@ -23,6 +23,7 @@ import 'package:phone_auth_native/phone_auth_native.dart';
 class _RecordingKeystore implements SecureAuthenticator {
   final List<String> generated = [];
   final List<String> signed = [];
+  final List<String> described = [];
 
   @override
   Future<DevicePublicKey> generateKey({
@@ -45,17 +46,26 @@ class _RecordingKeystore implements SecureAuthenticator {
     return SignatureResult(signature: Uint8List(64), algorithm: 'test');
   }
 
+  /// Only the keys this keystore was actually asked to generate exist, and
+  /// those are Keystore-backed. That is what makes the question answerable:
+  /// a keystore that says the same thing about every alias cannot tell whether
+  /// the caller asked about the right one.
   @override
-  Future<SecurityCapabilities> getSecurityCapabilities() async =>
-      const SecurityCapabilities(
-        keyExists: true,
-        hardwareBacked: true,
-        strongBoxBacked: false,
-        biometrics: BiometricCapabilities(
-          availability: BiometricAvailability.available,
-          strongBiometrics: true,
-        ),
-      );
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) async {
+    described.add(purpose);
+    final exists = generated.contains(purpose);
+    return SecurityCapabilities(
+      keyExists: exists,
+      hardwareBacked: exists,
+      strongBoxBacked: false,
+      biometrics: const BiometricCapabilities(
+        availability: BiometricAvailability.available,
+        strongBiometrics: true,
+      ),
+    );
+  }
 
   @override
   Future<BiometricCapabilities> getBiometricCapabilities() async =>
@@ -111,6 +121,30 @@ void main() {
       keystore.generated,
       CredentialPurpose.values.map((purpose) => purpose.name),
     );
+  });
+
+  test('a pairing describes the key it enrolled, not another one', () async {
+    // The enrolment carries how well protected the key is, and it used to ask
+    // about the authorization key whichever purpose it had just generated. A
+    // phone paired only for passkeys or the vault has no authorization key at
+    // all, so a Keystore-backed credential enrolled as `software` -- which is
+    // what the desktop then showed. The direction that matters is the other
+    // one: StrongBox is attempted per key and falls back per key, so an
+    // authorization key that got it would have vouched for a purpose key that
+    // did not, and this value exists to withhold authority, never to grant it.
+    for (final purpose in CredentialPurpose.values) {
+      final keystore = _RecordingKeystore();
+      final enrolment = await NativeAuthorizationCredential(
+        authenticator: keystore,
+      ).describe(purpose);
+
+      expect(keystore.described, [purpose.name]);
+      expect(
+        enrolment.keyKind,
+        KeyKind.hardware,
+        reason: 'a $purpose credential was described by the wrong key',
+      );
+    }
   });
 
   test('the key that signs is the one the session was opened with', () async {

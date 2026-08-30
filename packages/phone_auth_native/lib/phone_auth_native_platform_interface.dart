@@ -30,10 +30,11 @@ abstract class PhoneAuthNativePlatform extends PlatformInterface {
     String purpose = 'authorization',
   }) => throw UnimplementedError('sign() has not been implemented.');
 
-  Future<SecurityCapabilities> getSecurityCapabilities() =>
-      throw UnimplementedError(
-        'getSecurityCapabilities() has not been implemented.',
-      );
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) => throw UnimplementedError(
+    'getSecurityCapabilities() has not been implemented.',
+  );
 
   Future<DevicePublicKey> generateSessionIdentityKey() =>
       throw UnimplementedError(

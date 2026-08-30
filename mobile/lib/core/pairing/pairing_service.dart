@@ -114,7 +114,16 @@ class NativeAuthorizationCredential implements AuthorizationCredential {
     // The purpose names the key. Sharing one across purposes would make a
     // signature approving a `sudo` a signature an SSH server also accepts.
     final key = await _authenticator.generateKey(purpose: purpose.name);
-    final capabilities = await _authenticator.getSecurityCapabilities();
+    // The same purpose, because this describes the key generated on the line
+    // above. Asking without one described the authorization key instead: a
+    // phone that never paired for login has none, so a Keystore-backed passkey
+    // or vault credential enrolled as `software`. The direction that would have
+    // hurt is the other one -- StrongBox is attempted per key and falls back
+    // per key, so an authorization key that got it would have vouched for a
+    // purpose key that did not.
+    final capabilities = await _authenticator.getSecurityCapabilities(
+      purpose: purpose.name,
+    );
     // Reported honestly, including when it is bad news: the verifier uses this
     // only to withhold authority, never to grant more of it.
     final keyKind = capabilities.strongBoxBacked

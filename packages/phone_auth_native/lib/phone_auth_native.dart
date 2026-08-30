@@ -28,7 +28,14 @@ abstract interface class SecureAuthenticator {
 
   Future<BiometricCapabilities> getBiometricCapabilities();
 
-  Future<SecurityCapabilities> getSecurityCapabilities();
+  /// How well protected the key for [purpose] is, and what biometrics exist.
+  ///
+  /// Takes the purpose like everything else on this interface: there is one key
+  /// per purpose, so asking about "the" key without naming one describes
+  /// whichever key the default happens to be, not the one the caller means.
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  });
 }
 
 /// Non-exportable identity used to authenticate secure-session handshakes.
@@ -89,8 +96,11 @@ class PhoneAuthNative implements SecureAuthenticator, SessionIdentity {
       (await getSecurityCapabilities()).biometrics;
 
   @override
-  Future<SecurityCapabilities> getSecurityCapabilities() =>
-      PhoneAuthNativePlatform.instance.getSecurityCapabilities();
+  Future<SecurityCapabilities> getSecurityCapabilities({
+    String purpose = 'authorization',
+  }) => PhoneAuthNativePlatform.instance.getSecurityCapabilities(
+    purpose: purpose,
+  );
 
   @override
   Future<DevicePublicKey> generateSessionIdentityKey() =>
