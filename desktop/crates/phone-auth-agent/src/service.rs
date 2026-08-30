@@ -640,6 +640,8 @@ impl Service {
                 "desktop passkeys require an authenticated confidential session",
             ));
         }
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
 
         let request_id = &params.request_id;
         let envelope = serde_json::json!({
@@ -694,7 +696,42 @@ impl Service {
         })();
         crate::ipc::take_webauthn_cancellation(request_id);
         let _ = session.close();
-        result.map(|response| WebAuthnResult { response })
+
+        // Written down here and nowhere else. The phone says exactly why it
+        // refused and that sentence is worth keeping -- it is the only account
+        // of what happened, and losing it is why a passkey that will not work
+        // is so hard to tell apart from one that was declined. It belongs in
+        // the log the person can read, on their own machine.
+        //
+        // It does not belong in the answer to the page. WebAuthn gives relying
+        // parties one undifferentiated failure on purpose, and a site that can
+        // tell "no credential for you" from "the fingerprint did not take" has
+        // learnt something about the person from an authenticator that is
+        // supposed to tell it nothing.
+        match result {
+            Ok(response) => {
+                self.record_application(
+                    "webauthn",
+                    &params.operation,
+                    params.origin.clone(),
+                    &device_name,
+                    development,
+                    Ok(()),
+                );
+                Ok(WebAuthnResult { response })
+            }
+            Err(error) => {
+                self.record_application(
+                    "webauthn",
+                    &params.operation,
+                    params.origin.clone(),
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
+                Err(browser_facing(error))
+            }
+        }
     }
 
     /// Sends the request and checks the answer.
@@ -1689,6 +1726,25 @@ fn webauthn_frame(value: &serde_json::Value) -> Result<Vec<u8>, ServiceError> {
     Ok(frame)
 }
 
+/// What a relying party is allowed to hear about a refusal.
+///
+/// One sentence for every way the phone can say no. WebAuthn hands relying
+/// parties a single undifferentiated failure by design, and the reasons here
+/// are exactly the ones that design is about: whether a credential exists,
+/// whether a fingerprint was accepted, whether the person pressed Cancel.
+/// A site learns none of it.
+///
+/// Only refusals. A transport that broke or a request the agent would not
+/// parse is this machine's own failure, says nothing about the person, and is
+/// the kind of thing someone is going to have to debug.
+fn browser_facing(error: ServiceError) -> ServiceError {
+    if error.code == "declined" {
+        ServiceError::new("declined", "passkey operation was cancelled or rejected")
+    } else {
+        error
+    }
+}
+
 fn decode_webauthn_response(
     frame: &[u8],
     expected_request_id: &str,
@@ -1708,9 +1764,34 @@ fn decode_webauthn_response(
         ));
     }
     if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        // The phone's own account of the refusal, which this used to delete.
+        //
+        // The frame carries `error` precisely so the browser can be told what
+        // happened, and every word of it was replaced here with a guess that
+        // the person had cancelled. The phone knows the difference between a
+        // passkey that no longer exists, an origin that does not match the
+        // relying party, a fingerprint that never arrived, and someone
+        // pressing Cancel; all four arrived at the website as the fourth one.
+        //
+        // Bounded and stripped of control characters, because it ends up in a
+        // `DOMException` on a page: this is a device the desktop is already
+        // trusting to sign, not an untrusted source, but a message is not a
+        // reason to hand a page arbitrary length or arbitrary bytes.
+        let reported = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map(|reason| {
+                reason
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(160)
+                    .collect::<String>()
+            })
+            .filter(|reason| !reason.trim().is_empty());
         return Err(ServiceError::new(
             "declined",
-            "passkey operation was cancelled or rejected",
+            reported
+                .unwrap_or_else(|| "passkey operation was cancelled or rejected".to_owned()),
         ));
     }
     value
@@ -1952,7 +2033,23 @@ mod webauthn_tests {
         let frame = webauthn_frame(&denied).unwrap();
         let error = decode_webauthn_response(&frame, "request-1").unwrap_err();
         assert_eq!(error.code, "declined");
-        assert!(!error.message.contains("secret detail"));
+
+        // The phone's words survive this far, and no further. They used to be
+        // dropped right here, which kept them from the page and from the
+        // person equally: the audit entry is written from this message, so
+        // deleting it early left the log saying a passkey was denied and
+        // nothing about why. The wall belongs one step later.
+        assert!(error.message.contains("secret detail"));
+        assert!(!browser_facing(error).message.contains("secret detail"));
+    }
+
+    #[test]
+    fn a_broken_transport_is_not_dressed_up_as_a_refusal() {
+        // Only refusals are made uniform. A failure of this machine's own says
+        // nothing about the person and is the kind of thing someone has to
+        // debug, so it keeps its words.
+        let broken = ServiceError::new("transport-failed", "connection reset by peer");
+        assert_eq!(browser_facing(broken).message, "connection reset by peer");
     }
 }
 

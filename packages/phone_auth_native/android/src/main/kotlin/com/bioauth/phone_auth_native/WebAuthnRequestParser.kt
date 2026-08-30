@@ -37,7 +37,23 @@ internal object WebAuthnRequestParser {
             } == true
         }) { "ES256 is not permitted by the relying party" }
         val selection = root.optionalObject("authenticatorSelection")
-        selection?.optionalEnum("authenticatorAttachment", setOf("platform"))
+        // Both, because from the browser's side this authenticator is both.
+        //
+        // A relying party asking for `cross-platform` is asking for something
+        // that is not the computer it is running on -- a security key, or a
+        // phone reached over a link, which is exactly what the desktop relay
+        // is and the entire reason it exists. Refusing that value refused the
+        // case this product was built for, and refused it before any key was
+        // touched: the ceremony ended with the site reporting that the
+        // authenticator would not do it. `platform` stays accepted for the
+        // browser on the phone itself, where it is the true answer.
+        //
+        // Like `attestation` below, this is a preference the party states so
+        // the client can choose among authenticators. By the time a request
+        // arrives here the choosing is done -- someone picked this phone --
+        // and failing the ceremony over the hint is the wrong end to fail at.
+        // The vocabulary stays closed: a third value is still malformed.
+        selection?.optionalEnum("authenticatorAttachment", ATTACHMENT_VALUES)
         selection?.optionalEnum("residentKey", RESIDENT_KEY_VALUES)
         selection?.optionalEnum("userVerification", USER_VERIFICATION_VALUES)
         selection?.optionalBoolean("requireResidentKey")
@@ -184,6 +200,7 @@ internal object WebAuthnRequestParser {
     }
 
     private const val BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    private val ATTACHMENT_VALUES = setOf("platform", "cross-platform")
     private val ATTESTATION_VALUES = setOf("none", "indirect", "direct", "enterprise")
     private val RESIDENT_KEY_VALUES = setOf("discouraged", "preferred", "required")
     private val USER_VERIFICATION_VALUES = setOf("discouraged", "preferred", "required")

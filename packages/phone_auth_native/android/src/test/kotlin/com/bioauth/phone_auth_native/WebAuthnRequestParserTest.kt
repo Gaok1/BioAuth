@@ -97,6 +97,22 @@ internal class WebAuthnRequestParserTest {
         )
         assertTrue(supported.reportCredentialProperties)
 
+        // The one a real site asks for by default, and the one this relay
+        // actually is: the browser is on a computer and the authenticator is a
+        // phone somewhere else. Refusing it ended the ceremony before any key
+        // was touched, with the site saying the authenticator would not do it.
+        WebAuthnRequestParser.creation(
+            """{
+              "rp":{"id":"example.org","name":"Example"},
+              "user":{"id":"AQ","name":"alice"},
+              "challenge":"$challenge",
+              "pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}],
+              "authenticatorSelection":{"authenticatorAttachment":"cross-platform","requireResidentKey":true,"residentKey":"required","userVerification":"required"},
+              "attestation":"direct",
+              "timeout":60000
+            }""",
+        )
+
         // Attestation conveyance is a preference the relying party states and the
         // client answers as best it can. Every value the spec defines is accepted
         // and answered with none attestation; refusing `direct` refused
@@ -114,7 +130,7 @@ internal class WebAuthnRequestParserTest {
         }
 
         for (unsupported in listOf(
-            "\"authenticatorSelection\":{\"authenticatorAttachment\":\"cross-platform\"}",
+            "\"authenticatorSelection\":{\"authenticatorAttachment\":\"roaming\"}",
             "\"attestation\":\"whatever\"",
             "\"extensions\":{\"largeBlob\":{\"support\":\"required\"}}",
         )) {
