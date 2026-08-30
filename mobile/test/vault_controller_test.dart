@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
@@ -101,6 +102,70 @@ void main() {
       expect(store.reads, 1);
     },
   );
+
+  test('a lock during an unlock wins over the unlock', () async {
+    // The Keystore prompt is the whole delay: `listAll` is what raises it, and
+    // the app can leave the foreground while it is up. `lock` forgot what the
+    // vault held at the moment it ran, and the read still in flight wrote its
+    // own result afterwards -- so the vault ended up open, with every item in
+    // memory, on an app that had already gone to the background.
+    final store = _SlowStore();
+    final controller = VaultController(store: store, copy: (_) async {});
+    final unlocking = controller.unlock();
+    await pumpEventQueue();
+    expect(store.pending.isCompleted, isFalse, reason: 'the prompt is up');
+
+    controller.lock();
+    store.pending.complete();
+    await unlocking;
+
+    expect(
+      controller.locked,
+      isTrue,
+      reason:
+          'leaving the foreground forgets, and finishing later is not '
+          'permission to remember',
+    );
+    expect(controller.items, isEmpty);
+  });
+
+  test('a lock during a reveal drops the secret it was fetching', () async {
+    final store = _SlowStore();
+    final controller = VaultController(store: store, copy: (_) async {});
+    store.pending.complete();
+    await controller.unlock();
+    final item = controller.items.single;
+
+    store.pending = Completer<void>();
+    final revealing = controller.reveal(item);
+    await pumpEventQueue();
+    controller.lock();
+    store.pending.complete();
+    await revealing;
+
+    expect(
+      controller.secretFor(item.id),
+      isNull,
+      reason: 'the plaintext arrived after the vault was told to forget',
+    );
+  });
+}
+
+/// A store whose reads wait, the way the Keystore prompt makes them wait.
+class _SlowStore extends _MemoryVaultStore {
+  Completer<void> pending = Completer<void>();
+
+  @override
+  Future<VaultPage> listPage([String? cursor]) async {
+    await pending.future;
+    return super.listPage(cursor);
+  }
+
+  @override
+  Future<VaultSecret> fetch(String id) async {
+    await pending.future;
+    return super.fetch(id);
+  }
 }
 
 class _MemoryVaultStore extends VaultStore {

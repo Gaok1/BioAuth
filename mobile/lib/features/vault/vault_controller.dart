@@ -66,6 +66,17 @@ class VaultController extends ChangeNotifier {
   /// `ChangeNotifier` throws.
   bool _disposed = false;
 
+  /// Bumped every time the vault is locked.
+  ///
+  /// An operation still waiting on the Keystore when the app leaves the
+  /// foreground finishes afterwards and writes its result into a vault that
+  /// has just been told to forget everything. [lock] cleared what was held at
+  /// the moment it ran, and nothing stopped the work already in flight from
+  /// putting it back -- so backgrounding mid-unlock forgot the vault and then
+  /// unlocked it again, and backgrounding mid-reveal left the plaintext in
+  /// memory behind a screen that said it was locked.
+  int _generation = 0;
+
   /// Whether the vault can be thrown away and started over.
   ///
   /// Narrower than [unrecoverable]: only failures that no future version of
@@ -149,6 +160,7 @@ class VaultController extends ChangeNotifier {
   }
 
   void lock() {
+    _generation++;
     locked = true;
     _forget();
     error = null;
@@ -363,6 +375,7 @@ class VaultController extends ChangeNotifier {
 
   Future<void> _run(Future<void> Function() action) async {
     if (busy) return;
+    final generation = _generation;
     busy = true;
     error = null;
     unrecoverable = false;
@@ -423,6 +436,15 @@ class VaultController extends ChangeNotifier {
       error = 'Não foi possível concluir a operação do cofre.';
     } finally {
       busy = false;
+      // A lock that landed while this was in flight wins, whatever the
+      // operation went on to write. Checked here rather than inside each
+      // action because it is the same rule for all of them: the vault forgets
+      // when the app leaves the foreground, and that has to hold against work
+      // that had already started.
+      if (_generation != generation) {
+        _forget();
+        locked = true;
+      }
       notifyListeners();
     }
   }
