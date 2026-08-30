@@ -54,6 +54,67 @@ test('isConnected is false before anything succeeds', () => {
   agent.stop();
 });
 
+test('a malformed endpoint file is reported, not thrown', () => {
+  // Valid JSON, no usable port -- a half-written file, or one from a build that
+  // spelled the field differently. `net.createConnection` throws synchronously
+  // on that, and `start()` runs from a retry timer where nothing catches it, so
+  // this used to take the whole tray down rather than report an agent that is
+  // not up yet.
+  fs.mkdirSync(path.dirname(endpointFile()), { recursive: true });
+  fs.writeFileSync(endpointFile(), JSON.stringify({ token: 'test-token' }));
+
+  const agent = new AgentConnection();
+  const seen = [];
+  agent.on('status', (status) => seen.push(status));
+  try {
+    assert.doesNotThrow(() => agent.start());
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].connected, false);
+    assert.match(seen[0].reason, /malformed/);
+  } finally {
+    agent.stop();
+    fs.rmSync(endpointFile(), { force: true });
+  }
+});
+
+test('a call the agent never answers gives up on its own', async () => {
+  // The socket stays up and the reply never comes: the agent's IPC is serial
+  // per connection behind a process-wide lock, so a call waiting on a phone
+  // that is not answering holds every later call on a healthy connection.
+  // `discard` rejects what is in flight, but only when the socket is lost --
+  // which this is not. `client.rs` has always bounded its reads; this side had
+  // no bound at all, and the vault panel stayed loading for as long as the app
+  // was open.
+  const accepted = [];
+  const server = net.createServer((socket) => accepted.push(socket));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  fs.mkdirSync(path.dirname(endpointFile()), { recursive: true });
+  fs.writeFileSync(
+    endpointFile(),
+    JSON.stringify({ port: server.address().port, token: 'test-token' })
+  );
+
+  const agent = new AgentConnection({ readTimeoutMs: 40, walkTimeoutMs: 40 });
+  try {
+    const connected = new Promise((resolve) => {
+      agent.on('status', (status) => {
+        if (status.connected) resolve();
+      });
+    });
+    agent.start();
+    await connected;
+
+    await assert.rejects(agent.call('status'), /did not answer status/);
+    // The socket is untouched: giving up on one call is not losing the agent.
+    assert.equal(agent.isConnected(), true);
+  } finally {
+    agent.stop();
+    fs.rmSync(endpointFile(), { force: true });
+    for (const socket of accepted) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('stopping settles the calls that were still in flight', async () => {
   // "Reconnect to agent" in the tray menu is `stop()` then `start()`. `stop()`
   // dropped the socket and left every pending call in the map, so a call

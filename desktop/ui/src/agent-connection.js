@@ -15,6 +15,37 @@ const { endpointFile } = require('./paths');
 /** Reconnect backoff, in milliseconds. */
 const RETRY_MS = 2000;
 
+/// How long to wait for the agent to answer one call, in milliseconds.
+//
+// Mirrors `READ_TIMEOUT` in `client.rs`, and for the same reason: longer than
+// the protocol's two-minute request ceiling, so a slow human reaching for their
+// phone is never mistaken for a dead agent.
+const READ_TIMEOUT_MS = 150_000;
+
+// The most items a vault may hold, and the most one page may carry. Kept here
+// only to derive the walk budget; `vault.rs` is the source of truth.
+const MAX_ITEMS = 4096;
+const MAX_PAGE_ITEMS = 32;
+
+// Dial, handshake, one page, hang up. A guess until somebody measures a real
+// handset over BLE; the number to revise first if a big listing gives up early.
+const PER_PAGE_BUDGET_MS = 4000;
+
+/**
+ * The same, for a call that walks the vault a page at a time.
+ *
+ * A listing stopped being one request when the walk became one session per
+ * page: the phone answers a frame and closes, so the agent dials, shakes hands
+ * and hangs up once for every thirty-two items. Derived from what the protocol
+ * allows rather than picked.
+ */
+const WALK_TIMEOUT_MS = Math.ceil(MAX_ITEMS / MAX_PAGE_ITEMS) * PER_PAGE_BUDGET_MS;
+
+/** The calls that walk, matching `walks_the_vault` in `client.rs`. */
+function walksTheVault(method) {
+  return method === 'vault.list' || method === 'vault.fill';
+}
+
 /**
  * A reconnecting connection to the agent.
  *
@@ -22,8 +53,12 @@ const RETRY_MS = 2000;
  * agent, forwarded verbatim).
  */
 class AgentConnection extends EventEmitter {
-  constructor() {
+  // The two windows are held rather than read from the constants so a test can
+  // set one it can afford to wait out.
+  constructor({ readTimeoutMs = READ_TIMEOUT_MS, walkTimeoutMs = WALK_TIMEOUT_MS } = {}) {
     super();
+    this.readTimeoutMs = readTimeoutMs;
+    this.walkTimeoutMs = walkTimeoutMs;
     this.socket = null;
     this.token = null;
     this.buffer = '';
@@ -50,8 +85,25 @@ class AgentConnection extends EventEmitter {
       return;
     }
 
+    // Checked rather than trusted. The agent writes this file at startup, so a
+    // torn or half-written read is reachable, and `createConnection` throws
+    // *synchronously* on a port that is not a number -- from a retry timer,
+    // where there is nobody to catch it. A malformed file would have taken the
+    // tray down instead of being reported as an agent that is not up yet.
+    const port = Number(endpoint.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      this.fail('agent endpoint file is malformed');
+      return;
+    }
+
     this.token = endpoint.token;
-    const socket = net.createConnection({ host: '127.0.0.1', port: endpoint.port });
+    let socket;
+    try {
+      socket = net.createConnection({ host: '127.0.0.1', port });
+    } catch (error) {
+      this.fail(`agent not reachable (${error.code || error.message})`);
+      return;
+    }
     this.socket = socket;
 
     socket.on('connect', () => {
@@ -91,6 +143,7 @@ class AgentConnection extends EventEmitter {
       const waiter = this.pending.get(message.id);
       if (!waiter) continue;
       this.pending.delete(message.id);
+      clearTimeout(waiter.timer);
       if (message.ok) waiter.resolve(message.result);
       else waiter.reject(new Error(message.error ? message.error.message : 'agent error'));
     }
@@ -112,7 +165,10 @@ class AgentConnection extends EventEmitter {
       this.socket.destroy();
       this.socket = null;
     }
-    for (const waiter of this.pending.values()) waiter.reject(new Error(reason));
+    for (const waiter of this.pending.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(reason));
+    }
     this.pending.clear();
     this.buffer = '';
   }
@@ -158,7 +214,23 @@ class AgentConnection extends EventEmitter {
         return;
       }
       const id = this.nextId++;
-      this.pending.set(id, { resolve, reject });
+      // A socket that stays up while the answer never comes was the one way a
+      // call could not settle. `discard` rejects everything in flight -- that
+      // is what keeps the UI from spinning on a promise that can never settle
+      // -- but it only ever runs when the socket is lost, and the agent's IPC
+      // is serial per connection behind a process-wide lock, so one call
+      // waiting on a phone that is not answering holds up every later one on a
+      // connection that is perfectly healthy. `client.rs` has bounded this
+      // since it was written; the tray, speaking the same protocol to the same
+      // agent, had no bound at all, and the vault panel simply stayed loading.
+      const wait = walksTheVault(method) ? this.walkTimeoutMs : this.readTimeoutMs;
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`agent did not answer ${method}`));
+      }, wait);
+      // Nothing here should keep the process alive on its own.
+      if (typeof timer.unref === 'function') timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       this.socket.write(`${JSON.stringify({ id, token: this.token, method, params })}\n`);
     });
   }
