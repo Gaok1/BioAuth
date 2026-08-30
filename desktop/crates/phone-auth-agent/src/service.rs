@@ -26,9 +26,9 @@ use phone_auth_verifier::{
 use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
-    PairingBootstrap, PermissionSummary, SshSignParams, SshSignResult, StatusPayload,
-    VaultCopyParams, VaultCopyResult, VaultFillParams, VaultFillResult, VaultItem, VaultListParams,
-    VaultListResult, WebAuthnParams, WebAuthnResult,
+    LuksEnrollParams, LuksEnrollResult, PairingBootstrap, PermissionSummary, SshSignParams,
+    SshSignResult, StatusPayload, VaultCopyParams, VaultCopyResult, VaultFillParams,
+    VaultFillResult, VaultItem, VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::clipboard;
@@ -1003,6 +1003,132 @@ impl Service {
         })
     }
 
+    /// Enrolls a new volume key with a paired phone, for unlocking at boot.
+    ///
+    /// Returns paths and never key material. The volume key is written to
+    /// `key_path`, owner-only, for `cryptsetup luksAddKey` to read and the
+    /// caller to delete as soon as it has; the wrapper is written to
+    /// `wrapped_key_path`, which is public and belongs in the initrd.
+    ///
+    /// Nothing here touches the volume. Adding the keyslot is the caller's job
+    /// because this agent must not be able to write to a block device: it runs
+    /// as root to guard `sudo`, and the less it can reach, the less a bug in it
+    /// can do.
+    pub fn luks_enroll(
+        &mut self,
+        params: &LuksEnrollParams,
+    ) -> Result<LuksEnrollResult, ServiceError> {
+        if params.volume.trim().is_empty() {
+            return Err(ServiceError::new(
+                "bad-params",
+                "the volume needs a name; it is what the phone shows the user",
+            ));
+        }
+        let wrapped_path = absolute_path(&params.wrapped_key_path)?;
+        let key_path = absolute_path(&params.key_path)?;
+        // Claimed before the phone is asked. Finding out that the key has
+        // nowhere to go after a fingerprint has been spent is finding out too
+        // late, and the second attempt would ask for another one.
+        let key_slot = claim_key_file(&key_path)?;
+
+        let (device_id, credential_id) = self.select_boot_credential(&params.credential_id)?;
+        let session = self
+            .transports
+            .connect(&device_id, &credential_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+        let mut session = session;
+
+        let enrolled =
+            crate::luks::enroll(session.as_mut(), &self.config.verifier_name, &params.volume);
+        let enrolled = match enrolled {
+            Ok(enrolled) => enrolled,
+            Err(message) => {
+                let error = ServiceError::new("declined", message);
+                self.record_application(
+                    "luks",
+                    "enroll",
+                    params.volume.clone(),
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
+                return Err(error);
+            }
+        };
+
+        // The phone wraps with the credential the session was opened for. A
+        // different one coming back means the initrd would later look for a
+        // wrapper that credential cannot open, and would fall back to the
+        // passphrase for a reason nobody could see.
+        if enrolled.wrapped.credential_id != credential_id {
+            let error = ServiceError::new(
+                "response-mismatch",
+                "the phone wrapped the key with a different credential",
+            );
+            self.record_application(
+                "luks",
+                "enroll",
+                params.volume.clone(),
+                &device_name,
+                development,
+                Err(&error),
+            );
+            return Err(error);
+        }
+
+        key_slot.write_bytes(enrolled.disk_key.expose())?;
+        std::fs::write(&wrapped_path, enrolled.wrapped.encode())
+            .map_err(|error| ServiceError::new("io-failed", error.to_string()))?;
+        self.record_application(
+            "luks",
+            "enroll",
+            params.volume.clone(),
+            &device_name,
+            development,
+            Ok(()),
+        );
+
+        Ok(LuksEnrollResult {
+            volume: params.volume.clone(),
+            credential_id,
+            wrapped_key_path: wrapped_path.to_string_lossy().into_owned(),
+            key_path: key_path.to_string_lossy().into_owned(),
+            device_name,
+            development,
+        })
+    }
+
+    /// Picks the credential that may wrap a volume key, and refuses a software
+    /// one.
+    ///
+    /// The initrd will only ever use a hardware-backed disk-unlock credential:
+    /// at boot there is no session to revoke and no way to notice a compromise.
+    /// Enrolling a software key here would produce a keyslot that nothing can
+    /// open, discovered at the worst possible moment.
+    fn select_boot_credential(
+        &self,
+        credential_id: &Option<String>,
+    ) -> Result<(String, String), ServiceError> {
+        let (device_id, credential_id) =
+            self.select_service_credential("luks", "disk unlock", credential_id.as_deref())?;
+        let store = self.verifier.store();
+        let usable = store
+            .find_credential(&credential_id)
+            .is_some_and(|(_, credential)| credential.key_kind.allowed_at_boot());
+        if !usable {
+            return Err(ServiceError::new(
+                "policy-denied",
+                format!(
+                    "credential `{credential_id}` is not hardware-backed, and boot unlock only \
+                     accepts a hardware key"
+                ),
+            ));
+        }
+        Ok((device_id, credential_id))
+    }
+
     /// A custodian that dials the phone once for every request it makes.
     ///
     /// Spends `first` on the opening one, so an operation that needs a single
@@ -1558,6 +1684,15 @@ struct RecoverySlot {
 }
 
 impl RecoverySlot {
+    /// Writes key material rather than a code somebody retypes: no trailing
+    /// newline, because `cryptsetup` reads the whole file as the key.
+    fn write_bytes(mut self, bytes: &[u8]) -> Result<(), ServiceError> {
+        std::fs::write(&self.path, bytes)
+            .map_err(|error| ServiceError::new("io-failed", error.to_string()))?;
+        self.written = true;
+        Ok(())
+    }
+
     fn path(&self) -> &Path {
         &self.path
     }
@@ -1579,16 +1714,37 @@ impl Drop for RecoverySlot {
 }
 
 fn claim_recovery_file(path: &Path) -> Result<RecoverySlot, ServiceError> {
+    claim_private_file(
+        path,
+        "recovery-file-exists",
+        "that recovery code file already exists; choose another path",
+    )
+}
+
+/// Where a volume key is put down on its way to `cryptsetup`.
+///
+/// Refusing a path that already exists is what stops an enrollment from
+/// overwriting the key of a volume that is still using it.
+fn claim_key_file(path: &Path) -> Result<RecoverySlot, ServiceError> {
+    claim_private_file(
+        path,
+        "key-file-exists",
+        "that key file already exists; choose another path",
+    )
+}
+
+fn claim_private_file(
+    path: &Path,
+    code: &'static str,
+    message: &'static str,
+) -> Result<RecoverySlot, ServiceError> {
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::AlreadyExists {
-                ServiceError::new(
-                    "recovery-file-exists",
-                    "that recovery code file already exists; choose another path",
-                )
+                ServiceError::new(code, message)
             } else {
                 ServiceError::new("io-failed", error.to_string())
             }

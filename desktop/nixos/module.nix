@@ -175,21 +175,29 @@ in
 
       identityFile = lib.mkOption {
         type = lib.types.path;
-        default = "${systemRoot}/initrd/identity.pkcs8";
+        default = "${systemRoot}/data/identity.pkcs8";
         description = ''
-          Private handshake key the initrd authenticates with.
+          Handshake key the initrd authenticates with.
 
-          Copied into the initrd by {option}`boot.initrd.secrets`, which
-          appends it at `nixos-rebuild` time and keeps it out of the Nix store
-          — a store path is world-readable, which would hand this key to every
-          local user. It still lands on unencrypted boot media, so it is a
-          secret against the cable, not against someone holding the disk.
+          This is **the agent's own identity**, not a key of its own, because
+          the phone accepts nothing else: it verifies the verifier against the
+          key it stored at pairing, and a fresh key would simply be an unknown
+          computer. Boot unlock therefore costs putting that key on the boot
+          partition — `boot.initrd.secrets` keeps it out of the world-readable
+          Nix store, but anyone holding the disk can read it, and with it
+          impersonate this machine to the phone for anything the phone will
+          approve.
+
+          That is the deviation recorded in `luks-initrd-threat-review.md`, and
+          the reason boot unlock is off by default. A separate boot pairing,
+          which would make this key boot-only and revocable on its own, does
+          not exist yet.
         '';
       };
 
       storeFile = lib.mkOption {
         type = lib.types.path;
-        default = "${systemRoot}/initrd/devices.json";
+        default = "${systemRoot}/data/devices.json";
         description = ''
           Pairing store the initrd reads: public keys and policy only. It says
           which phone may be asked, so it must not be writable by anyone who is

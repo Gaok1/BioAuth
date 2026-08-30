@@ -214,6 +214,36 @@ pub struct LockerLockResult {
     pub development: bool,
 }
 
+/// Enrolling a volume key for boot unlock.
+///
+/// Both paths are named by the caller and neither is optional: the agent hands
+/// back where it put things, never what it put there.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuksEnrollParams {
+    /// What the phone shows the user. The volume being opened, in words.
+    pub volume: String,
+    /// Where the public wrapper goes: the file the initrd reads.
+    pub wrapped_key_path: String,
+    /// Where the new volume key goes, owner-only, for `cryptsetup luksAddKey`
+    /// to read and the caller to delete immediately after.
+    pub key_path: String,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuksEnrollResult {
+    pub volume: String,
+    pub credential_id: String,
+    pub wrapped_key_path: String,
+    /// Where the volume key was written. Never the key itself.
+    pub key_path: String,
+    pub device_name: String,
+    pub development: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LockerUnlockParams {

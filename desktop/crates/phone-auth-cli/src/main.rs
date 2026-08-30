@@ -70,12 +70,27 @@ COMMANDS:
                                crosses IPC and is never printed here.
     vault generate             Generate a password straight to the clipboard
 
+    luks enroll --volume <NAME> --disk <DEV> --wrapped-out <FILE>
+                               Enrol boot unlock. The phone wraps a fresh
+                               volume key, cryptsetup adds the keyslot that
+                               carries it, and the public wrapper goes where
+                               the initrd reads it. cryptsetup asks for a
+                               passphrase that already opens the volume: that
+                               prompt is the proof a way in without the phone
+                               still exists.
+
     ssh authorized-key         Print the `authorized_keys` line for each SSH
                                credential this phone holds. Paste it into a
                                server; the private half never leaves the phone.
 
 OPTIONS:
     --root <DIR>               Override the agent's config/data/runtime root
+    --volume <NAME>            Volume being enrolled, as the phone shows it
+    --disk <DEV>               The LUKS device, e.g. /dev/nvme0n1p2
+    --wrapped-out <FILE>       Where the public wrapper is written
+    --key-out <FILE>           Where the volume key is put down for cryptsetup
+                               to read, and deleted right after
+                               [default: /run/phone-auth-luks-enroll.key]
     --credential <ID>          Choose which paired credential to use
     --recovery-out <FILE>      Where to write a new recovery code
     --recovery-file <FILE>     Read a recovery code from this file
@@ -119,6 +134,10 @@ struct Cli {
     batch: bool,
     recovery_out: Option<String>,
     recovery_file: Option<String>,
+    wrapped_out: Option<String>,
+    disk: Option<String>,
+    key_out: Option<String>,
+    volume: Option<String>,
     into: Option<String>,
     keep_original: bool,
     keep_container: bool,
@@ -150,6 +169,10 @@ fn blank_cli(command: String) -> Cli {
         batch: false,
         recovery_out: None,
         recovery_file: None,
+        wrapped_out: None,
+        disk: None,
+        key_out: None,
+        volume: None,
         into: None,
         keep_original: false,
         keep_container: false,
@@ -204,6 +227,10 @@ fn parse() -> Result<Cli, String> {
             "--no-symbols" => cli.no_symbols = true,
             "--batch" => cli.batch = true,
             "--recovery-out" => cli.recovery_out = Some(value()?),
+            "--wrapped-out" => cli.wrapped_out = Some(value()?),
+            "--disk" => cli.disk = Some(value()?),
+            "--key-out" => cli.key_out = Some(value()?),
+            "--volume" => cli.volume = Some(value()?),
             "--recovery-file" => cli.recovery_file = Some(value()?),
             "--into" => cli.into = Some(value()?),
             "--keep-original" => cli.keep_original = true,
@@ -306,6 +333,7 @@ fn run(cli: Cli) -> u8 {
         "authorize" => authorize(&mut client, &cli),
         "locker" => locker(&mut client, &cli),
         "vault" => vault(&mut client, &cli),
+        "luks" => luks(&mut client, &cli),
         "ssh" => ssh(&mut client, &cli),
         other => {
             eprintln!("phone-auth: unknown command `{other}`\n\n{USAGE}");
@@ -792,6 +820,166 @@ fn locker_one(client: &mut AgentClient, cli: &Cli, action: &str, target: &str) -
             }
         }
     }
+}
+
+/// Enrols boot unlock for one volume.
+///
+/// Three things have to line up or the machine will not boot from the phone: a
+/// key the phone can unwrap, a keyslot on the volume that key opens, and a
+/// wrapper file where the initrd looks for it. The phone makes the first, this
+/// makes the other two, and if the keyslot cannot be added the wrapper is
+/// thrown away rather than left pointing at a key no slot carries.
+///
+/// The volume key never crosses IPC. The agent writes it to a file, cryptsetup
+/// reads that file, and this deletes it as soon as cryptsetup is done.
+fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
+    let action = cli.args.first().map(String::as_str).unwrap_or_default();
+    if action != "enroll" {
+        eprintln!("phone-auth: unknown luks action `{action}`\n\n{USAGE}");
+        return EXIT_USAGE;
+    }
+
+    let (Some(volume), Some(device), Some(wrapped_out)) = (
+        cli.volume.as_deref(),
+        cli.disk.as_deref(),
+        cli.wrapped_out.as_deref(),
+    ) else {
+        eprintln!(
+            "phone-auth: luks enroll needs --volume <NAME>, --disk <DEV> and \
+             --wrapped-out <FILE>."
+        );
+        return EXIT_USAGE;
+    };
+
+    let key_out = match cli.key_out.as_deref().or(default_key_out()) {
+        Some(path) => path.to_owned(),
+        None => {
+            eprintln!(
+                "phone-auth: luks enroll needs --key-out <FILE> on this platform.\n\
+                 phone-auth: put it somewhere that is memory, not disk."
+            );
+            return EXIT_USAGE;
+        }
+    };
+    let (wrapped_out, key_out) = match (absolute(wrapped_out), absolute(&key_out)) {
+        (Ok(wrapped), Ok(key)) => (wrapped, key),
+        (Err(error), _) | (_, Err(error)) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_USAGE;
+        }
+    };
+
+    let enrolled = client.call(
+        "luks.enroll",
+        json!({
+            "volume": volume,
+            "wrappedKeyPath": wrapped_out,
+            "keyPath": key_out,
+            "credentialId": cli.credential,
+        }),
+    );
+    let enrolled = match enrolled {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return match error.code() {
+                "declined" | "policy-denied" | "not-paired" | "response-mismatch" => EXIT_DENIED,
+                "bad-params" | "key-file-exists" => EXIT_USAGE,
+                _ => EXIT_UNAVAILABLE,
+            };
+        }
+    };
+
+    let added = add_keyslot(device, &key_out);
+    shred(std::path::Path::new(&key_out));
+
+    if let Err(message) = added {
+        // The wrapper is useless without the keyslot, and worse than useless:
+        // it would send every boot to the phone for a key no slot carries.
+        let _ = std::fs::remove_file(&wrapped_out);
+        eprintln!("phone-auth: {message}");
+        eprintln!("phone-auth: nothing was changed on {device}.");
+        return EXIT_UNAVAILABLE;
+    }
+
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&enrolled).unwrap_or_default()
+        );
+        return EXIT_GRANTED;
+    }
+    print_luks_enrolled(volume, device, &wrapped_out, &enrolled);
+    EXIT_GRANTED
+}
+
+/// Where the volume key is put down between the agent and cryptsetup.
+///
+/// `/run` is a tmpfs, which is the point: overwriting a file does not erase it
+/// on a journalling or copy-on-write filesystem, and a volume key that survives
+/// in a free block is a volume key someone can find.
+fn default_key_out() -> Option<&'static str> {
+    if cfg!(unix) {
+        Some("/run/phone-auth-luks-enroll.key")
+    } else {
+        None
+    }
+}
+
+/// Adds the phone's key to the volume, with cryptsetup asking for an existing
+/// passphrase on this terminal.
+///
+/// That prompt is not a formality, it is the recovery drill: cryptsetup only
+/// adds a keyslot to somebody who can already open the volume, so a machine
+/// where nobody can still type a passphrase cannot get a phone keyslot. That is
+/// exactly the machine that must not have one.
+fn add_keyslot(device: &str, key_path: &str) -> Result<(), String> {
+    eprintln!(
+        "phone-auth: cryptsetup will now ask for a passphrase that already opens {device}.\n\
+         phone-auth: that passphrase stays working; it is how you get in without the phone."
+    );
+    let status = std::process::Command::new("cryptsetup")
+        .arg("luksAddKey")
+        .arg(device)
+        .arg(key_path)
+        .status()
+        .map_err(|error| format!("cannot run cryptsetup: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("cryptsetup luksAddKey failed ({status})"))
+    }
+}
+
+/// Overwrites and removes the key file.
+///
+/// The overwrite is a courtesy, not an erasure: only the tmpfs default makes it
+/// true. Removing it is the part that always matters.
+fn shred(path: &std::path::Path) {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        let _ = std::fs::write(path, vec![0u8; metadata.len() as usize]);
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+fn print_luks_enrolled(volume: &str, device: &str, wrapped_out: &str, value: &Value) {
+    println!("enrolled {volume} on {device}");
+    println!("phone    {}", value["deviceName"].as_str().unwrap_or("?"));
+    println!("wrapper  {wrapped_out}");
+    println!();
+    println!("The passphrase you just typed still opens this volume. Keep it that way:");
+    println!("a phone that is lost, flat or broken must never mean an unbootable machine.");
+    println!();
+    println!("Then, in configuration.nix:");
+    println!();
+    println!("  services.phone-auth.boot = {{");
+    println!("    enable = true;");
+    println!("    verifierId = \"...\";           # phone-auth status prints it");
+    println!("    volumes.{volume}.wrappedKeyFile = \"{wrapped_out}\";");
+    println!("  }};");
+    println!();
+    println!("At boot, plug the phone in and turn USB tethering on. There is no network");
+    println!("involved: the cable is the link.");
 }
 
 fn print_locker(action: &str, value: &Value) {

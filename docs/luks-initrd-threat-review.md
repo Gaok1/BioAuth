@@ -69,28 +69,36 @@ refuses each of those explicitly rather than by omission.
 ### The handshake key on unencrypted boot media
 
 The gate above says the long-lived handshake private key must not be copied
-into the initrd image. **This implementation does copy a key there**, through
+into the initrd image. **This implementation copies it there**, through
 `boot.initrd.secrets`, which appends it at `nixos-rebuild` time and keeps it out
 of the world-readable Nix store — but puts it on a boot partition that anyone
 holding the disk can read. That is a knowing deviation, and it is why boot
 unlock is opt-in and off by default.
 
-What limits it:
+It is not a boot-only key, and it cannot be one today. The phone verifies the
+computer against the identity it stored at pairing, so the initrd has to present
+that same identity or be an unknown machine. Whoever reads it can impersonate
+this computer to the paired phone for anything the phone is willing to approve
+— which is the deviation stated at full size, not a smaller one.
 
-- The key is a **boot-only identity**, separate from the agent's. Reading it
-  buys the ability to impersonate this machine's *boot* to a paired phone. It
-  is not the agent's identity, so it does not authenticate a `sudo`, a vault
-  open or an SSH signature, and the phone can revoke it on its own.
-- Using it still requires the phone, on the cable, and a fingerprint on a
-  prompt that names the machine and the volume. It is an attack that has to be
-  approved by the person being attacked.
-- The volume key is never derived from it. It stays a random 32-byte credential
-  wrapped by a hardware key on the phone.
+What still stands between that and a disk key:
 
-Closing the deviation means a fresh boot identity that is authenticated at boot
-rather than stored — a QR on the console, or a TPM-sealed key released only to
-a measured initrd. Both are follow-up work, and neither is required to keep the
-passphrase fallback honest.
+- Using the key requires the phone, on the cable, and a fingerprint on a prompt
+  that names the machine and the volume. It is an attack that has to be approved
+  by the person being attacked, in front of them.
+- The disk-unlock credential is purpose-separated and hardware-backed. The
+  wrapping key on the phone is a different key from the vault's, the locker's
+  and the session's, and the phone refuses to unwrap for a session that was not
+  opened for disk unlock.
+- The volume key is never derived from the handshake key. It stays a random
+  32-byte credential that only the phone's hardware can unwrap, and the volume
+  keeps an independent passphrase keyslot.
+
+Closing the deviation takes one of two follow-ups, neither of which is required
+to keep the passphrase fallback honest: a **separate boot pairing**, so the key
+on the boot partition authenticates boot unlock and nothing else and can be
+revoked on the phone by itself; or a boot identity that is never stored — a QR
+on the console, or a TPM-sealed key released only to a measured initrd.
 
 ## Trust boundary and assumptions
 

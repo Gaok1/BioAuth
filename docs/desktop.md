@@ -330,11 +330,23 @@ denial, a flat battery or no cable at all leaves `systemd-cryptsetup` asking for
 the passphrase exactly as before. A second unit deletes that file before
 switch-root, because `/run` is handed to the real system.
 
-Two things are still missing before it can be turned on end to end: `LUK-05`,
-which creates the keyslot and proves the offline recovery keyslot first, and
-the `luks.enroll` half of the desktop, which is what writes the
-`wrappedKeyFile` the option above points at. Until then the wiring evaluates
-and installs, and there is nothing for it to unlock.
+Enrolment is `phone-auth luks enroll --volume cryptroot --disk /dev/nvme0n1p2
+--wrapped-out /var/lib/phone-auth/initrd/cryptroot.cbor`. The agent asks the
+phone to wrap a fresh random 32-byte volume key and writes two files: the
+public wrapper, and the key itself, owner-only, on tmpfs. The CLI then runs
+`cryptsetup luksAddKey`, which asks for a passphrase that already opens the
+volume — that prompt is the recovery drill, because cryptsetup adds a keyslot
+only for somebody who can already get in. The key file is deleted immediately
+after, and if the keyslot cannot be added the wrapper is thrown away rather
+than left pointing at a key no slot carries.
+
+The volume key never crosses IPC in either direction. The agent writes it to a
+file the caller named, the same rule the locker's recovery code follows, and
+the agent never touches the block device: it runs as root to guard `sudo`, and
+the less it can reach, the less a bug in it can do.
+
+What is left is `LUK-06`: a real boot, with a real phone, on real hardware —
+success, denial, timeout, no cable, a swapped keyslot and the fallback.
 
 **An offline recovery keyslot is mandatory.** The phone must never be the only
 way into the volume, and `phone-auth-initrd` is written so that every failure
