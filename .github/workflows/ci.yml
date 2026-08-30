@@ -126,6 +126,8 @@ jobs:
       - name: Tray tests
         working-directory: desktop/ui
         run: npm test
+      - name: Nautilus integration tests
+        run: bash desktop/file-manager/tests/linux.sh
       - name: Rust checks
         working-directory: desktop
         run: |
@@ -176,6 +178,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
+      - name: Explorer integration tests
+        shell: powershell
+        run: .\desktop\file-manager\tests\windows.ps1
       # This is a separate job rather than a matrix entry because Linux alone
       # needs BlueZ headers. More importantly, it compiles and runs the code
       # behind cfg(windows): DACLs, clipboard exclusions, hard-link counting
