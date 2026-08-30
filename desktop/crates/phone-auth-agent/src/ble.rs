@@ -66,7 +66,16 @@ struct State {
     /// second one evicts the first.
     sessions: HashMap<(String, Option<String>), ParkedSession>,
     known_peers: HashMap<String, Vec<u8>>,
-    last_error: Option<String>,
+    /// Why the adapter itself is unusable: no runtime, no peripheral role, no
+    /// adapter. Only this decides whether the transport is usable.
+    runtime_error: Option<String>,
+    /// Why the most recent link to a phone ended badly.
+    ///
+    /// Diagnostic, and separate for the reason set out in `qr_network`: a link
+    /// that dropped is not an adapter that is gone, and reporting it as
+    /// availability took the transport out of `TransportRegistry::connect`
+    /// until some later phone happened to connect cleanly.
+    last_link_error: Option<String>,
 }
 
 struct Shared {
@@ -167,7 +176,7 @@ impl BleTransport {
                         .state
                         .lock()
                         .expect("BLE state mutex")
-                        .last_error = Some(error);
+                        .runtime_error = Some(error);
                     server_shared.signal.notify_all();
                 }
             })
@@ -238,7 +247,7 @@ impl Transport for BleTransport {
             .state
             .lock()
             .expect("BLE state mutex")
-            .last_error
+            .runtime_error
         {
             Some(error) => TransportAvailability::Unavailable {
                 reason: error.clone(),
@@ -258,7 +267,17 @@ impl Transport for BleTransport {
     ) -> Result<Box<dyn SecureSession + Send>, String> {
         let session = self
             .take_session(device_id, credential_id, Duration::from_secs(10))
-            .ok_or_else(|| format!("`{device_id}` is not connected over Bluetooth"))?;
+            .ok_or_else(|| {
+                // Why this phone is not here belongs in the answer to "where
+                // is this phone", not in whether Bluetooth works at all.
+                let state = self.shared.state.lock().expect("BLE state mutex");
+                match &state.last_link_error {
+                    Some(reason) => format!(
+                        "`{device_id}` is not connected over Bluetooth (the last link ended: {reason})"
+                    ),
+                    None => format!("`{device_id}` is not connected over Bluetooth"),
+                }
+            })?;
         Ok(Box::new(BleSession {
             channel: session.channel,
             outgoing: Some(session.outgoing),
@@ -409,7 +428,7 @@ async fn run_server(
                                                 .state
                                                 .lock()
                                                 .expect("BLE state mutex")
-                                                .last_error = Some(error);
+                                                .last_link_error = Some(error);
                                         }
                                         hub.finish(id);
                                     });
@@ -546,7 +565,7 @@ async fn serve_link(
                 parked_at: Instant::now(),
             },
         );
-        state.last_error = None;
+        state.last_link_error = None;
         shared.signal.notify_all();
     }
 

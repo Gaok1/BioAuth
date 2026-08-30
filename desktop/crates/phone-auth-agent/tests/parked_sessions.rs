@@ -118,3 +118,45 @@ fn a_credential_with_no_session_is_not_served_by_another_credentials() {
         "a vault session must not stand in for a login credential"
     );
 }
+
+/// A stranger on the port must not take the desktop off the air.
+///
+/// The listener answers the whole LAN, so anything can reach it: a port
+/// scanner, a phone that was forgotten here, a phone whose Wi-Fi roamed
+/// mid-handshake. Each of those ends the connection in an error, and that
+/// error used to be written to the same field the transport reports as its
+/// availability. `TransportRegistry::connect` only considers ready
+/// transports, so one stray connection was enough to make a desktop with a
+/// phone parked in it answer "no transport can reach a phone yet" -- until
+/// some later connection happened to succeed and cleared the field.
+#[test]
+fn a_failed_connection_does_not_take_the_transport_off_the_air() {
+    let phone = IdentityKey::generate();
+    let transport = listening(&phone);
+    let held = dial(&transport, &phone, LOGIN);
+    parked(&transport, 1);
+
+    // Connects, is sent a hello, and hangs up without answering it.
+    let stranger = TcpStream::connect(format!("127.0.0.1:{}", transport.port()))
+        .expect("the listener answers anyone");
+    drop(stranger);
+
+    // The failure is recorded on the connection's own thread, so wait for it
+    // rather than race it -- asserting before it lands would pass for the
+    // wrong reason.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while transport.last_connection_error().is_none() {
+        assert!(Instant::now() < deadline, "the failure was never recorded");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(
+        transport.availability().is_ready(),
+        "a stranger on the port is not a broken listener"
+    );
+    assert!(
+        transport.connect(DEVICE, LOGIN).is_ok(),
+        "the phone was parked the whole time"
+    );
+    drop(held);
+}

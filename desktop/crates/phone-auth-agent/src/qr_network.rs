@@ -96,8 +96,19 @@ struct State {
     armed_pairing: Option<ServerBootstrap>,
     /// A pairing that completed and awaits confirmation.
     proposal: Option<PairingProposal>,
-    /// Most recent listener failure, surfaced in the transport's status.
-    last_error: Option<String>,
+    /// Most recent failure of the listening socket itself, surfaced in the
+    /// transport's status. Only this decides whether the transport is usable.
+    listener_error: Option<String>,
+    /// Why the most recent inbound connection did not become a session.
+    ///
+    /// Diagnostic, and deliberately separate. It used to share a field with
+    /// the listener failure, and since availability reports that field, one
+    /// port scan -- or one phone whose handshake failed, or one that dropped
+    /// mid-handshake when the Wi-Fi roamed -- left the transport reporting
+    /// `Unavailable`. `connect` only considers ready transports, so a desktop
+    /// with a working listener and a phone parked in it answered "no transport
+    /// can reach a phone yet" until some other connection happened to succeed.
+    last_connection_error: Option<String>,
 }
 
 struct Shared {
@@ -248,6 +259,20 @@ impl QrNetworkTransport {
             .retain(|(parked, _), _| parked != device_id);
     }
 
+    /// Why the last inbound connection did not become a session, if one
+    /// failed since the last one that succeeded.
+    ///
+    /// Diagnostic. Deliberately not part of [`Self::availability`]: a stranger
+    /// on the port says nothing about whether this desktop can reach a phone.
+    pub fn last_connection_error(&self) -> Option<String> {
+        self.shared
+            .state
+            .lock()
+            .expect("state mutex")
+            .last_connection_error
+            .clone()
+    }
+
     /// Takes a completed pairing proposal, if one has arrived.
     pub fn take_proposal(&self) -> Option<PairingProposal> {
         self.shared
@@ -363,7 +388,7 @@ impl Transport for QrNetworkTransport {
 
     fn availability(&self) -> TransportAvailability {
         let state = self.shared.state.lock().expect("state mutex");
-        if let Some(error) = &state.last_error {
+        if let Some(error) = &state.listener_error {
             return TransportAvailability::Unavailable {
                 reason: error.clone(),
             };
@@ -386,7 +411,19 @@ impl Transport for QrNetworkTransport {
         let session = self
             .take_session(device_id, credential_id, Duration::from_secs(10))
             .ok_or_else(|| {
-                format!("`{device_id}` is not connected; open PhoneAuth on the phone")
+                // The last inbound failure belongs here rather than in
+                // availability: it explains why this phone is not parked,
+                // which is the question being asked, and it says nothing at
+                // all when the answer is "it is parked".
+                let state = self.shared.state.lock().expect("state mutex");
+                match &state.last_connection_error {
+                    Some(reason) => format!(
+                        "`{device_id}` is not connected; open PhoneAuth on the phone (the last connection to this desktop failed: {reason})"
+                    ),
+                    None => {
+                        format!("`{device_id}` is not connected; open PhoneAuth on the phone")
+                    }
+                }
             })?;
 
         Ok(Box::new(NetworkSession {
@@ -473,6 +510,8 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                // Accepting proves the listener works, whatever it did last.
+                shared.state.lock().expect("state mutex").listener_error = None;
                 let shared = Arc::clone(&shared);
                 // One thread per connection. A phone that connects and then
                 // says nothing must not block every other phone.
@@ -481,12 +520,12 @@ fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
                         // Expected constantly: port scanners, stale phones,
                         // wrong networks. Recorded, not escalated.
                         let mut state = shared.state.lock().expect("state mutex");
-                        state.last_error = Some(error.clone());
+                        state.last_connection_error = Some(error.clone());
                     }
                 });
             }
             Err(error) => {
-                shared.state.lock().expect("state mutex").last_error =
+                shared.state.lock().expect("state mutex").listener_error =
                     Some(format!("accept failed: {error}"));
                 // A failing accept usually fails again immediately -- the
                 // process is out of descriptors, the kernel is out of buffers
@@ -642,7 +681,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
             purpose: enrolment.purpose,
             verification_code: outcome.verification_code,
         });
-        state.last_error = None;
+        state.last_connection_error = None;
         shared.signal.notify_all();
         return Ok(());
     }
@@ -663,7 +702,7 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
             parked_at: Instant::now(),
         },
     );
-    state.last_error = None;
+    state.last_connection_error = None;
     shared.signal.notify_all();
     Ok(())
 }
