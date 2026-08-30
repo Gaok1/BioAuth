@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:phone_auth_native/phone_auth_native.dart';
 
 const _magic = <int>[0x42, 0x41, 0x57, 0x41, 0x31, 0x0a]; // BAWA1\n
@@ -76,6 +76,29 @@ class WebAuthnRelayRequest {
   }
 }
 
+/// What the desktop is told, per reason the phone had for refusing.
+///
+/// Every refusal used to arrive in the browser as the same sentence: that the
+/// operation was cancelled or rejected. Only one of them is that. The phone
+/// also refuses before it shows anything at all -- when desktop passkey
+/// notifications are off there is no prompt to cancel, and telling the person
+/// they cancelled sends them to look at the phone's biometrics, which is the
+/// one part that was working. A reason the phone knew exactly was thrown away
+/// at the last step and replaced with a wrong one.
+///
+/// Keyed by code and closed, rather than forwarding the native message: those
+/// strings are written for this app's own log, one of them carries a parser's
+/// words about the request, and none of them were written to be read by a
+/// stranger's website. A code not named here keeps the old sentence, which is
+/// where `webauthn_cancelled` belongs anyway.
+const _refusals = <String, String>{
+  'background_sessions_unavailable':
+      'Turn on desktop passkey notifications in the PhoneAuth app',
+  'operation_in_progress': 'The phone is already handling another passkey',
+  'invalid_arguments': 'The phone rejected this request as malformed',
+  'webauthn_failed': 'The passkey operation failed on the phone',
+};
+
 class WebAuthnRelayHandler {
   const WebAuthnRelayHandler({
     PhoneAuthWebAuthnRelay native = const PhoneAuthWebAuthnRelay(),
@@ -103,16 +126,20 @@ class WebAuthnRelayHandler {
         'ok': true,
         'response': response,
       });
+    } on PlatformException catch (error) {
+      return _refused(request.requestId, _refusals[error.code]);
     } on Object {
-      return _encode({
-        'version': 1,
-        'type': 'webauthn.response',
-        'requestId': request.requestId,
-        'ok': false,
-        'error': 'Passkey operation was cancelled or rejected',
-      });
+      return _refused(request.requestId, null);
     }
   }
+
+  Uint8List _refused(String requestId, String? reason) => _encode({
+    'version': 1,
+    'type': 'webauthn.response',
+    'requestId': requestId,
+    'ok': false,
+    'error': reason ?? 'Passkey operation was cancelled or rejected',
+  });
 
   Future<void> cancel(String requestId) => _native.cancel(requestId);
 

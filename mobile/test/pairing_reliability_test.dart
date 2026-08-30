@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app_controller.dart';
@@ -425,6 +425,64 @@ void main() {
       );
       expect(relay.cancelled, isEmpty, reason: 'nothing to take down');
     });
+
+    /// The answer the desktop got back, for a phone that refused this way.
+    Future<Map<String, Object?>> refusedWith(PlatformException refusal) async {
+      final session = _FramingSession();
+      final service = PairedSessionService(
+        transport: _StubTransport(session),
+        authorizer: _UnusedAuthorizer(),
+        consent: _UnusedConsent(),
+        webAuthn: WebAuthnRelayHandler(
+          native: _StubWebAuthnRelay(refusal: refusal),
+        ),
+      );
+
+      final serving = service.serveOne(_record);
+      await session.listening.future;
+      session.push(relayRequest());
+      await serving;
+
+      return jsonDecode(utf8.decode(session.sent.last.sublist(6)))
+          as Map<String, Object?>;
+    }
+
+    // Every refusal used to arrive as the sentence for the one reason it
+    // usually was not. A phone with desktop passkey notifications off refuses
+    // before it shows anything -- there is no prompt there to cancel -- and
+    // being told you cancelled sends you to check the biometrics, which is the
+    // part that was already working.
+    test('the desktop is told which refusal this was', () async {
+      final answer = await refusedWith(
+        PlatformException(
+          code: 'background_sessions_unavailable',
+          message: 'Notification permission is required for desktop passkeys',
+        ),
+      );
+
+      expect(answer, containsPair('ok', false));
+      expect(
+        answer['error'],
+        'Turn on desktop passkey notifications in the PhoneAuth app',
+      );
+      expect(
+        answer['error'],
+        isNot(contains('Notification permission')),
+        reason: 'the native message is this app talking to itself',
+      );
+    });
+
+    test(
+      'a refusal without a reason of its own keeps the old sentence',
+      () async {
+        final answer = await refusedWith(
+          PlatformException(code: 'webauthn_cancelled', message: 'Cancelar'),
+        );
+
+        expect(answer, containsPair('ok', false));
+        expect(answer['error'], 'Passkey operation was cancelled or rejected');
+      },
+    );
   });
 
   test('revoking a desktop takes down the sheet it left on screen', () async {
@@ -934,9 +992,10 @@ const _properties = TransportSecurityProperties(
 /// `perform` never completing is the case the timeout exists for: the user has
 /// the system credential sheet on screen and has not answered it.
 class _StubWebAuthnRelay implements PhoneAuthWebAuthnRelay {
-  _StubWebAuthnRelay({this.response});
+  _StubWebAuthnRelay({this.response, this.refusal});
 
   final String? response;
+  final PlatformException? refusal;
   final List<String> cancelled = [];
 
   @override
@@ -946,9 +1005,14 @@ class _StubWebAuthnRelay implements PhoneAuthWebAuthnRelay {
     required String origin,
     required String optionsJson,
   }) {
+    final refused = refusal;
+    if (refused != null) return Future.error(refused);
     final ready = response;
     if (ready == null) return Completer<String>().future;
-    return Future.value(jsonEncode({'responseJson': ready}));
+    // The response JSON itself, which is what the real relay unwraps from the
+    // channel and hands back. The envelope stayed in here and made the answer
+    // on the wire a shape the desktop never sees.
+    return Future.value(ready);
   }
 
   @override
