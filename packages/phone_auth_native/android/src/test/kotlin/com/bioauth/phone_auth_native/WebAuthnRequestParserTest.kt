@@ -97,9 +97,25 @@ internal class WebAuthnRequestParserTest {
         )
         assertTrue(supported.reportCredentialProperties)
 
+        // Attestation conveyance is a preference the relying party states and the
+        // client answers as best it can. Every value the spec defines is accepted
+        // and answered with none attestation; refusing `direct` refused
+        // registration outright on most real sites, before a key was ever touched.
+        for (preference in listOf("none", "indirect", "direct", "enterprise")) {
+            WebAuthnRequestParser.creation(
+                """{
+                  "rp":{"id":"example.org","name":"Example"},
+                  "user":{"id":"AQ","name":"alice"},
+                  "challenge":"$challenge",
+                  "pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}],
+                  "attestation":"$preference"
+                }""",
+            )
+        }
+
         for (unsupported in listOf(
             "\"authenticatorSelection\":{\"authenticatorAttachment\":\"cross-platform\"}",
-            "\"attestation\":\"direct\"",
+            "\"attestation\":\"whatever\"",
             "\"extensions\":{\"largeBlob\":{\"support\":\"required\"}}",
         )) {
             assertFailsWith<IllegalArgumentException> {

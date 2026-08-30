@@ -152,6 +152,46 @@
     }
   });
 
+  // The page asks whether a platform authenticator exists before it offers the
+  // option, and nothing here answered for PhoneAuth. `create` and `get` were
+  // taken over completely, while the one question the platform API exposes
+  // about availability was left to the browser -- which answers about Windows
+  // Hello and has never heard of this extension. A site that gates its
+  // "use this device" path on that answer therefore never offered the path this
+  // bridge had already taken over, and the failure was silent: no error, just
+  // an option that was not there.
+  //
+  // Unconditionally true, and deliberately not a probe of the agent. The
+  // question is whether such an authenticator exists on this machine, not
+  // whether it will succeed this second -- Windows Hello answers true with its
+  // owner out of the room. When the agent is down `create` rejects with a
+  // message saying so, which is a better thing for a person to see than an
+  // option that quietly does not appear.
+  const platformAuthenticator = globalThis.PublicKeyCredential;
+  if (typeof platformAuthenticator === "function") {
+    const nativeCapabilities = platformAuthenticator.getClientCapabilities?.bind(
+      platformAuthenticator,
+    );
+    Object.defineProperty(platformAuthenticator, "isUserVerifyingPlatformAuthenticatorAvailable", {
+      value: async () => true,
+    });
+    // Newer engines ask the same thing through one dictionary instead. Merged
+    // over the browser's answer rather than replacing it: the capabilities this
+    // bridge does not speak for stay the browser's to report -- conditional
+    // mediation above all, which `get` deliberately hands back to the browser's
+    // own authenticator. Only defined when the engine has it, so that feature
+    // detection still sees the engine it is actually running on.
+    if (nativeCapabilities) {
+      Object.defineProperty(platformAuthenticator, "getClientCapabilities", {
+        value: async () => ({
+          ...(await nativeCapabilities().catch(() => ({}))),
+          userVerifyingPlatformAuthenticator: true,
+          passkeyPlatformAuthenticator: true,
+        }),
+      });
+    }
+  }
+
   Object.defineProperties(credentials, {
     __phoneAuthInstalled: { value: true },
     create: {

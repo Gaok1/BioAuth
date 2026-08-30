@@ -13,7 +13,7 @@ class CustomEvent extends Event {
   }
 }
 
-function page({ topLevel = true, permits = true, setTimeout = global.setTimeout } = {}) {
+function page({ topLevel = true, permits = true, setTimeout = global.setTimeout, capabilities } = {}) {
   const document = new EventTarget();
   document.permissionsPolicy = { allowsFeature: () => permits };
   const native = {
@@ -22,6 +22,13 @@ function page({ topLevel = true, permits = true, setTimeout = global.setTimeout 
   };
   const credentials = { ...native };
   const window = {};
+  // The engine's own answers, which the bridge has to leave standing wherever
+  // it does not speak for the capability itself. `getClientCapabilities` is
+  // only defined when the caller asks for it: engines older than Chrome 133 do
+  // not have it, and the bridge must not invent it for them.
+  class PublicKeyCredential {}
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = async () => false;
+  if (capabilities) PublicKeyCredential.getClientCapabilities = async () => ({ ...capabilities });
   window.top = topLevel ? window : {};
   const context = vm.createContext({
     ArrayBuffer,
@@ -35,7 +42,7 @@ function page({ topLevel = true, permits = true, setTimeout = global.setTimeout 
     Event,
     location: { hostname: 'login.example.com' },
     navigator: { credentials },
-    PublicKeyCredential: class PublicKeyCredential {},
+    PublicKeyCredential,
     AuthenticatorAttestationResponse: class AuthenticatorAttestationResponse {},
     AuthenticatorAssertionResponse: class AuthenticatorAssertionResponse {},
     setTimeout,
@@ -45,7 +52,7 @@ function page({ topLevel = true, permits = true, setTimeout = global.setTimeout 
   });
   context.globalThis = context;
   vm.runInContext(fs.readFileSync(path.join(extension, 'page-bridge.js'), 'utf8'), context);
-  return { credentials, document, native };
+  return { credentials, document, native, PublicKeyCredential };
 }
 
 test('page bridge serializes BufferSource and rebuilds a WebAuthn response', async () => {
@@ -115,6 +122,43 @@ test('page bridge handles abort, timeout, iframe policy, and native fallback', a
   const fallback = page();
   assert.equal((await fallback.credentials.create({ password: true })).native, 'create');
   assert.equal((await fallback.credentials.get({ publicKey: {}, mediation: 'conditional' })).native, 'get');
+});
+
+test('page bridge answers that a platform authenticator is available', async () => {
+  // The bug this covers is a silent one. The bridge takes `create` and `get`
+  // over completely and reports `authenticatorAttachment: "platform"`, but the
+  // question a relying party asks *before* offering that path was left to the
+  // browser, which answers for Windows Hello and knows nothing about PhoneAuth.
+  // A site gating "use this device" on it saw false and never offered the
+  // option the extension had already taken over -- no error, nothing in the
+  // console, just a choice that was not on the page.
+  const plain = page();
+  assert.equal(
+    await plain.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+    true,
+  );
+  // Absent in the engine, absent afterwards: feature detection has to keep
+  // seeing the engine it is really running on.
+  assert.equal(plain.PublicKeyCredential.getClientCapabilities, undefined);
+
+  // Newer engines ask for every capability at once. Ours are asserted; the rest
+  // stay the browser's to answer -- conditional mediation above all, because
+  // `get` hands that case straight back to the browser's own authenticator, so
+  // claiming it here would promise something this bridge never handles.
+  const modern = page({
+    capabilities: {
+      userVerifyingPlatformAuthenticator: false,
+      passkeyPlatformAuthenticator: false,
+      conditionalGet: true,
+      hybridTransport: false,
+    },
+  });
+  assert.deepEqual({ ...(await modern.PublicKeyCredential.getClientCapabilities()) }, {
+    userVerifyingPlatformAuthenticator: true,
+    passkeyPlatformAuthenticator: true,
+    conditionalGet: true,
+    hybridTransport: false,
+  });
 });
 
 test('service worker returns native-host errors and rejects invalid origins', async () => {

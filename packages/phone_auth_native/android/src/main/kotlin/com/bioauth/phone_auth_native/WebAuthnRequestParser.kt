@@ -41,7 +41,16 @@ internal object WebAuthnRequestParser {
         selection?.optionalEnum("residentKey", RESIDENT_KEY_VALUES)
         selection?.optionalEnum("userVerification", USER_VERIFICATION_VALUES)
         selection?.optionalBoolean("requireResidentKey")
-        root.optionalEnum("attestation", setOf("none"))
+        // Attestation conveyance is a *preference*, and the spec is explicit that
+        // a client may answer a request for `direct` with none attestation and
+        // leave the relying party to decide whether that is enough. Refusing the
+        // ceremony because the party asked for more than this provider emits was
+        // the wrong end to fail at: `direct` is what most real sites ask for, the
+        // refusal happened before any key was touched, and what the person saw was
+        // the browser reporting that their authenticator would not do it. The
+        // vocabulary stays closed -- a value outside the four the spec defines is
+        // still a malformed request -- and what comes back is still `fmt: "none"`.
+        root.optionalEnum("attestation", ATTESTATION_VALUES)
         val extensions = root.optionalObject("extensions")
         val reportCredentialProperties = extensions?.let {
             require(it.keys().asSequence().all { name -> name == "credProps" }) {
@@ -175,6 +184,7 @@ internal object WebAuthnRequestParser {
     }
 
     private const val BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    private val ATTESTATION_VALUES = setOf("none", "indirect", "direct", "enterprise")
     private val RESIDENT_KEY_VALUES = setOf("discouraged", "preferred", "required")
     private val USER_VERIFICATION_VALUES = setOf("discouraged", "preferred", "required")
 }

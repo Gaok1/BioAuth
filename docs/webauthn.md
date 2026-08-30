@@ -32,12 +32,16 @@ The Android parser validates options before showing UI or touching a key:
 - `residentKey` and `userVerification` accept the standard
   `discouraged`/`preferred`/`required` values; authenticator data always records
   user presence and strong user verification, and credentials are discoverable;
-- only `attestation: "none"` is accepted because the provider emits none
-  attestation;
+- every `attestation` conveyance preference the spec defines is accepted, and
+  all four are answered with none attestation. The preference is a request, not
+  a requirement, and the relying party decides whether none is enough; refusing
+  the ceremony outright meant that a site asking for `direct` — which most real
+  ones do — failed registration before a key was ever touched, with the browser
+  reporting only that the authenticator would not do it;
 - creation supports only the `credProps` extension and reports `rk: true`;
   assertion extensions are currently rejected.
 
-Unsupported attachment, attestation, enum value, or extension fails before the
+Unsupported attachment, enum value, or extension fails before the
 ceremony rather than being accepted with different semantics. This is the
 deliberately narrow Android feature set; new options need byte-level tests before
 they are admitted. The option vocabulary follows the

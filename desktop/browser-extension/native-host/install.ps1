@@ -38,11 +38,20 @@ $browserInfo = @{
 }
 
 function Write-JsonWithoutBom([string]$Path, [hashtable]$Info, [string]$Executable) {
-    $allowed = if ($Info.Allowlist -eq 'allowed_origins') {
-        @("chrome-extension://$($Info.Id)/")
+    # `@(...)` around the whole conditional, not around each branch. PowerShell
+    # unwraps a one-element array on its way out of a block, so
+    # `$allowed = if (...) { @('one') }` assigns the *string* -- and both engines
+    # require a list here. A manifest whose allowlist is a bare string is
+    # rejected outright, and what the browser then reports is that the native
+    # messaging host was not found: indistinguishable from never having
+    # installed it, which is the worst possible way for this to fail. `install.sh`
+    # prints the brackets literally and was never wrong; this is one rule that
+    # two platforms implement and only one of them kept.
+    $allowed = @(if ($Info.Allowlist -eq 'allowed_origins') {
+        "chrome-extension://$($Info.Id)/"
     } else {
-        @($Info.Id)
-    }
+        $Info.Id
+    })
     $manifest = [ordered]@{
         name = $hostName
         description = 'PhoneAuth WebAuthn bridge'

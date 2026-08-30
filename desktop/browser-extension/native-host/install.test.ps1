@@ -18,12 +18,22 @@ try {
         if (-not (Test-Path -LiteralPath $manifestPath)) { throw "$browser manifest was not installed." }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
         if ($manifest.path -ne $hostPath) { throw "$browser manifest has the wrong host path." }
+        # Asserted as a *list*, which is the half the old check could not see.
+        # `-ne` against a bare string compares strings and passes; against a
+        # one-element array it filters and returns nothing, which is falsy and
+        # also passes. Both worlds looked identical to it, and the one PowerShell
+        # actually produced was the broken one -- a scalar allowlist that every
+        # browser rejects.
         if ($browser -eq 'Firefox') {
-            if ($manifest.allowed_extensions -ne 'webauthn@bioauth.local') { throw 'Firefox allowlist is wrong.' }
+            $allowlist = $manifest.allowed_extensions
+            $expected = 'webauthn@bioauth.local'
         } else {
+            $allowlist = $manifest.allowed_origins
             $expected = "chrome-extension://$($ids[$browser])/"
-            if ($manifest.allowed_origins -ne $expected) { throw "$browser allowlist is wrong." }
         }
+        if ($allowlist -isnot [Array]) { throw "$browser allowlist must be a JSON array." }
+        if ($allowlist.Count -ne 1) { throw "$browser allowlist must name exactly one caller." }
+        if ($allowlist[0] -ne $expected) { throw "$browser allowlist is wrong." }
     }
 
     $registryPaths = @(
