@@ -111,7 +111,100 @@ void main() {
     expect(state.stage, PairingStage.awaitingCode);
     expect(state.verifierId, 'new-desktop');
   });
+
+  test('backing out during the write still refreshes the paired list', () async {
+    // The record is committed by `session.confirm()`, and the "Recusar" button
+    // stays on screen while that write is in flight. Backing out then left the
+    // desktop paired durably on both sides and invisible to the app: the
+    // session runner learns which desktops to dial from this provider, so a
+    // pairing it was never told about was one the phone never dialled until
+    // the app was restarted next.
+    final gate = Completer<void>();
+    final session = PairingSession(
+      verificationCode: '123456',
+      proposed: _record('slow-desktop'),
+      session: _TestTransportSession(),
+      store: _GatedStore(gate.future),
+    );
+    final opened = Completer<PairingSession>();
+    final service = _ControlledPairingService({'slow': opened.future});
+
+    var listBuilds = 0;
+    final container = ProviderContainer(
+      overrides: [
+        pairingServiceProvider.overrideWith((ref) async => service),
+        pairedVerifiersProvider.overrideWith((ref) async {
+          listBuilds++;
+          return const <PairingRecord>[];
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.listen(pairedVerifiersProvider, (_, _) {});
+    await container.read(pairedVerifiersProvider.future);
+    expect(listBuilds, 1, reason: 'the list built once to begin with');
+
+    final controller = container.read(pairingControllerProvider.notifier);
+    unawaited(controller.submitScan('slow'));
+    await _waitUntil(() => service.requested.contains('slow'));
+    opened.complete(session);
+    await _waitUntil(
+      () =>
+          container.read(pairingControllerProvider).stage ==
+          PairingStage.awaitingCode,
+    );
+
+    final confirming = controller.confirm();
+    await controller.reset();
+    gate.complete();
+    await confirming;
+    // Invalidation is lazy: this is what makes the rebuild happen, and it
+    // rebuilds nothing if the provider was never invalidated.
+    await container.read(pairedVerifiersProvider.future);
+
+    expect(
+      listBuilds,
+      2,
+      reason:
+          'the record is durable whatever happened to the attempt, so the '
+          'list has to be read again -- the runner dials what it names',
+    );
+  });
 }
+
+/// A store that will not finish saving until it is let go.
+class _GatedStore implements PairingStore {
+  _GatedStore(this._gate);
+
+  final Future<void> _gate;
+  final List<PairingRecord> saved = [];
+
+  @override
+  Future<void> save(PairingRecord record) async {
+    await _gate;
+    saved.add(record);
+  }
+
+  @override
+  Future<List<PairingRecord>> load() async => saved;
+
+  @override
+  Future<void> remove(String verifierId) async =>
+      saved.removeWhere((record) => record.verifierId == verifierId);
+
+  @override
+  Future<String> deviceId() async => 'device-1';
+}
+
+PairingRecord _record(String verifierId) => PairingRecord(
+  verifierId: verifierId,
+  verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
+  endpoint: '192.0.2.1:42371',
+  credentialId: '$verifierId-authorization-v1',
+  keyKind: KeyKind.hardware,
+  purpose: CredentialPurpose.authorization,
+  pairedAt: DateTime.utc(2026, 8, 27),
+);
 
 ProviderContainer _container(PairingService service) => ProviderContainer(
   overrides: [pairingServiceProvider.overrideWith((ref) async => service)],

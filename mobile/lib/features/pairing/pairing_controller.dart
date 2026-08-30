@@ -91,8 +91,15 @@ class PairingController extends Notifier<PairingState> {
     _pending = null;
     try {
       await session.confirm();
-      if (attemptId != _attemptId) return;
+      // The record is committed by now, whatever became of the attempt while
+      // the write was in flight -- and "Recusar" stays on screen for all of
+      // it. Refreshing the list is not a cosmetic follow-up to the success
+      // state below: the session runner learns which desktops to dial from
+      // this provider, so an attempt the user backed out of mid-write left a
+      // desktop paired durably on both sides and dialled by neither until the
+      // app was restarted. Only the screen belongs behind the staleness check.
       ref.invalidate(pairedVerifiersProvider);
+      if (attemptId != _attemptId) return;
       state = PairingState(
         stage: PairingStage.paired,
         verifierId: session.proposed.verifierId,
