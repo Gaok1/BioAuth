@@ -121,6 +121,7 @@ class AppController extends Notifier<AppState> {
           window: _approvalGuard.window,
         ),
       );
+      _refuseUnasked(request.id);
       return;
     }
 
@@ -131,6 +132,13 @@ class AppController extends Notifier<AppState> {
         duplicateCount: existing.duplicateCount + 1,
       );
       state = state.copyWith(requests: List.unmodifiable(requests));
+      // The repeat is folded into the sheet already up, which is the right
+      // thing to *show* and was the wrong thing to leave unanswered. It cannot
+      // share that sheet's answer: a different request id is a different
+      // payload and so its own signature, which the auth-per-use key would
+      // charge a second gesture for. Running `sudo` twice inside the guard's
+      // window is the ordinary way to get here.
+      _refuseUnasked(request.id);
       return;
     }
 
@@ -251,6 +259,15 @@ class AppController extends Notifier<AppState> {
     );
     ref.invalidate(pairedVerifiersProvider);
   }
+
+  /// Refuses a request that will never reach a sheet.
+  ///
+  /// Whoever is waiting on it is a live session on the phone. Returning
+  /// without settling left that session holding a request nobody would ever
+  /// answer until its deadline ran out, and the desktop reading a timeout
+  /// where a decision had in fact been made about it.
+  void _refuseUnasked(String requestId) =>
+      ref.read(interactiveAuthorizerProvider).cancel(requestId);
 
   AuthenticationRequest? _requestById(String id) =>
       state.requests.where((request) => request.id == id).firstOrNull;
