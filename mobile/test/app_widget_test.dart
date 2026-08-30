@@ -49,4 +49,22 @@ void main() {
     expect(find.text('Passkeys ainda não têm backup'), findsOneWidget);
     expect(find.text('Desktop-Casa'), findsNothing);
   });
+
+  testWidgets('Flutter speaks the language the rest of the app does', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const ProviderScope(child: PhoneAuthApp()));
+
+    final context = tester.element(find.byType(Navigator).first);
+    expect(Localizations.localeOf(context), const Locale('pt', 'BR'));
+
+    // The strings nobody writes and everybody reads: the overflow button on
+    // every vault item, the toolbar over every text field, the back button.
+    // With no delegates a `MaterialApp` runs on `DefaultMaterialLocalizations`
+    // and these were English in an app that is Portuguese everywhere else.
+    final material = MaterialLocalizations.of(context);
+    expect(material.pasteButtonLabel, isNot('Paste'));
+    expect(material.backButtonTooltip, isNot('Back'));
+    expect(material.popupMenuLabel, isNot('Show menu'));
+  });
 }

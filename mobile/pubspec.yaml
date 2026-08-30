@@ -12,6 +12,11 @@ dependencies:
   file_selector: ^1.1.0
   flutter:
     sdk: flutter
+  # Flutter's own strings -- "Show menu", "Paste", "Back", the label TalkBack
+  # reads over a dialog -- come from here. Without it they are English in an
+  # app that is otherwise entirely in Portuguese.
+  flutter_localizations:
+    sdk: flutter
   flutter_riverpod: ^3.4.2
   mobile_scanner: ^7.4.0
   phone_auth_native:

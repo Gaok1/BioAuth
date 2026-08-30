@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../features/onboarding/onboarding_screen.dart';
@@ -16,6 +17,19 @@ class PhoneAuthApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       title: 'Phone Auth',
+      // Every string this app writes is in Portuguese; every string Flutter
+      // writes was in English, because with no delegates a `MaterialApp` runs
+      // on `DefaultMaterialLocalizations` and supports `en_US` alone. That is
+      // "Show menu" on each item's overflow button, "Cut / Copy / Paste" over
+      // every text field, "Back" on every back button, and "Alert" announced
+      // by TalkBack on every dialog the vault puts up.
+      //
+      // Pinned rather than resolved from the phone: the interface is written
+      // in Portuguese and nothing here translates it, so following a phone set
+      // to English would produce half an app in each language.
+      locale: const Locale('pt', 'BR'),
+      supportedLocales: const [Locale('pt', 'BR')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       navigatorKey: rootNavigatorKey,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
