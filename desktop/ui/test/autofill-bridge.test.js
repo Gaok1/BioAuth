@@ -84,7 +84,11 @@ function boot({ onMessage = null, runtimeMessage = async () => ({}) } = {}) {
     document: {},
   });
   vm.runInContext(source, context);
-  return context;
+  // The script publishes one namespace rather than a handful of bare globals,
+  // because in the browser every content script of this extension shares one
+  // global scope -- which is what used to make this file collide with
+  // `content-bridge.js` over `runtime` and never run at all.
+  return context.globalThis.bioauthAutofill;
 }
 
 test('a cross-origin iframe is never filled', () => {
@@ -274,10 +278,10 @@ test('a password field outside a form still gets its password', async () => {
 /// starts on a phishing page too, and the listener is the only way in.
 test('loading the script registers one listener and fills nothing', () => {
   const registered = [];
-  const context = boot({ onMessage: (listener) => registered.push(listener) });
+  const autofill = boot({ onMessage: (listener) => registered.push(listener) });
 
   assert.equal(registered.length, 1);
-  assert.equal(typeof context.performFill, 'function');
+  assert.equal(typeof autofill.performFill, 'function');
 });
 
 /// The listener answers its own message type and ignores everything else, so a

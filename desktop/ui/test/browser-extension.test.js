@@ -220,6 +220,63 @@ test('service worker returns native-host errors and rejects invalid origins', as
   assert.equal(JSON.stringify(nativeMessages.at(-1)), '{"operation":"cancel","requestId":"request-1"}');
 });
 
+test('the content scripts share one scope and both survive it', async () => {
+  // Every content script this extension injects into a frame runs in the same
+  // isolated world and shares one global scope with the others. Both isolated
+  // scripts declared `const runtime` at the top level, so the second to load --
+  // `autofill-bridge.js`, at `document_idle` -- threw `Identifier 'runtime' has
+  // already been declared` and never ran. Autofill was not broken, it was
+  // absent: no listener, so the service worker's fill message reached nobody
+  // and answered "Receiving end does not exist". The only sign was a
+  // SyntaxError per frame in a console nobody opens.
+  //
+  // Loading them one context each, which is what the other tests here do, is
+  // exactly the arrangement in which this cannot happen. So load them the way
+  // the browser does: same context, manifest order.
+  const document = new EventTarget();
+  const sent = [];
+  const listeners = [];
+  const context = vm.createContext({
+    Array,
+    CustomEvent,
+    Event,
+    JSON,
+    Promise,
+    chrome: {
+      runtime: {
+        sendMessage: async (payload) => {
+          sent.push(payload);
+          return { ok: true, response: { id: 'credential' } };
+        },
+        onMessage: { addListener: (listener) => listeners.push(listener) },
+      },
+    },
+    console,
+    document,
+    window: {},
+  });
+  context.globalThis = context;
+  context.window.top = context.window;
+
+  for (const script of ['content-bridge.js', 'autofill-bridge.js']) {
+    assert.doesNotThrow(
+      () => vm.runInContext(fs.readFileSync(path.join(extension, script), 'utf8'), context),
+      `${script} must load beside the others`,
+    );
+  }
+
+  // Both are there, and "there" means installed rather than merely parsed.
+  assert.equal(listeners.length, 1, 'autofill must register its listener');
+  assert.equal(typeof context.globalThis.bioauthAutofill.performFill, 'function');
+
+  document.dispatchEvent(new CustomEvent('bioauth-webauthn-request', {
+    detail: JSON.stringify({ id: 'request-1', operation: 'get', options: {} }),
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 1, 'the passkey bridge must still be listening');
+  assert.equal(sent[0].type, 'bioauth-webauthn');
+});
+
 test('isolated bridge cannot bypass iframe policy with a forged page event', async () => {
   const document = new EventTarget();
   document.permissionsPolicy = { allowsFeature: () => false };
