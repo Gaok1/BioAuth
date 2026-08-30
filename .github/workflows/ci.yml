@@ -61,6 +61,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # Without this the runner's user is not in the `kvm` group, the emulator
+      # says "This user doesn't have permissions to use KVM (/dev/kvm)" and
+      # falls back to `-accel off`. An API 35 x86_64 image interpreted in
+      # software does not reach `sys.boot_completed` inside the ten minutes the
+      # runner waits, so the job failed on "Timeout waiting for emulator to
+      # boot" without running a single test -- and this job is the only thing
+      # that ever exercises the credential provider.
+      - name: Let the runner use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.47.1
