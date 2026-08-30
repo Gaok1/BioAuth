@@ -144,7 +144,7 @@ Honest about what is finished:
 | Android biometric signing | **Implemented.** Keystore, `BIOMETRIC_STRONG`, auth-per-use |
 | Android passkeys | Credential Provider, desktop relay, account selection and biometric management implemented; physical/browser matrix pending |
 | Bluetooth LE transport | Android LAN→BLE fallback and Linux/BlueZ GATT server implemented; physical-device validation pending |
-| Disk unlock from the initrd | Authenticated wired transport implemented; wrapping and keyslot integration pending |
+| Disk unlock from the initrd | Authenticated wired transport and biometric wrapping exchange implemented; NixOS keyslot integration pending |
 | iOS | Deferred; outside the first supported matrix |
 
 The end-to-end path has been exercised against a desktop written from the same
@@ -200,6 +200,7 @@ can only be built by a non-publishing manual workflow run and is named
 - [Explorer, Nautilus and drag-and-drop File Locker integration](docs/file-manager-integration.md)
 - [Signed Windows updates and rollback](docs/updates.md)
 - [LUKS initrd transport threat review](docs/luks-initrd-threat-review.md)
+- [LUKS credential and wrapping protocol](docs/luks-wrapping.md)
 - [Architecture](docs/architecture.md)
 - [Threat model](docs/threat-model.md)
 - [Product and security decisions](docs/product-decisions.md)

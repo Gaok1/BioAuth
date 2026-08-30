@@ -104,6 +104,35 @@ class MockPhoneAuthNativePlatform
     required String verifierName,
     bool rekeying = false,
   }) async => Uint8List.fromList(wrapper);
+
+  @override
+  Future<LuksKeyStatus> generateLuksKey() => getLuksKeyStatus();
+
+  @override
+  Future<LuksKeyStatus> getLuksKeyStatus() async => const LuksKeyStatus(
+    keyExists: true,
+    hardwareBacked: true,
+    strongBoxBacked: false,
+    strongBiometrics: true,
+  );
+
+  @override
+  Future<Uint8List> wrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List diskKey,
+    required String volumeName,
+    required String verifierName,
+  }) async => Uint8List.fromList(diskKey);
+
+  @override
+  Future<Uint8List> unwrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String volumeName,
+    required String verifierName,
+  }) async => Uint8List.fromList(wrapper);
 }
 
 void main() {

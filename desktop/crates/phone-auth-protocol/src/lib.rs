@@ -15,6 +15,7 @@ pub mod cbor;
 pub mod encoding;
 mod enrolment;
 pub mod locker;
+pub mod luks;
 mod request;
 mod response;
 pub mod ssh;

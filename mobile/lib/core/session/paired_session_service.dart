@@ -19,6 +19,7 @@ import '../protocol/enrolment.dart';
 import '../protocol/session_attach.dart';
 import '../protocol/webauthn_relay.dart';
 import '../locker/locker_service.dart';
+import '../luks/luks_service.dart';
 import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
 import '../vault/vault_listing.dart';
@@ -67,6 +68,7 @@ class PairedSessionService {
     SshApproval? sshApproval,
     SshSigner? sshSigner,
     LockerKeyGuardian? lockerGuardian,
+    LuksKeyGuardian? luksGuardian,
     WebAuthnRelayHandler? webAuthn,
     Duration? answerTimeout,
     DateTime Function()? clock,
@@ -80,6 +82,7 @@ class PairedSessionService {
        _sshApproval = sshApproval,
        _sshSigner = sshSigner,
        _lockerGuardian = lockerGuardian ?? const NativeLockerKeyGuardian(),
+       _luksGuardian = luksGuardian ?? const NativeLuksKeyGuardian(),
        _clock = clock;
 
   final AuthTransport _transport;
@@ -110,6 +113,11 @@ class PairedSessionService {
   /// credential: the credential id goes into the wrapper's AAD, so the same key
   /// unwrapping for a different credential must not produce the same bytes.
   final LockerKeyGuardian _lockerGuardian;
+
+  /// Held for the same reason, and it matters more here: the volume name
+  /// and the credential id are both in the wrapper's AAD, so a blob wrapped
+  /// for one volume cannot be unwrapped as another.
+  final LuksKeyGuardian _luksGuardian;
 
   /// Whose request ids these are: one desktop, one of its credentials.
   ///
@@ -390,6 +398,19 @@ class PairedSessionService {
           CredentialPurpose.fileLocker =>
             LockerService(
               guardian: _lockerGuardian,
+              credentialId: record.credentialId,
+              retries: _retries,
+            ).handle(
+              frame,
+              sessionBinding: outcome.session.sessionBinding,
+              replayScope: _replayScope(record),
+            ),
+          // Same shape as the locker, and the same reason for it: the
+          // Keystore raises the prompt itself, naming the volume and the
+          // computer, so refusing the fingerprint is the refusal.
+          CredentialPurpose.diskUnlock =>
+            LuksService(
+              guardian: _luksGuardian,
               credentialId: record.credentialId,
               retries: _retries,
             ).handle(

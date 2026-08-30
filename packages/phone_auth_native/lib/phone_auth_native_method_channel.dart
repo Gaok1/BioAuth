@@ -176,6 +176,74 @@ class MethodChannelPhoneAuthNative extends PhoneAuthNativePlatform {
     );
   }
 
+  @override
+  Future<LuksKeyStatus> generateLuksKey() async => _luksStatus(
+    await methodChannel.invokeMapMethod<String, Object?>('generateLuksKey'),
+  );
+
+  @override
+  Future<LuksKeyStatus> getLuksKeyStatus() async => _luksStatus(
+    await methodChannel.invokeMapMethod<String, Object?>('luksKeyStatus'),
+  );
+
+  @override
+  Future<Uint8List> wrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List diskKey,
+    required String volumeName,
+    required String verifierName,
+  }) async {
+    final response = await methodChannel
+        .invokeMapMethod<String, Object?>('luksWrapKey', {
+          'binding': binding,
+          'credentialId': credentialId,
+          'diskKey': diskKey,
+          'volumeName': volumeName,
+          'verifierName': verifierName,
+        });
+    final wrapper = response?['wrapper'];
+    if (wrapper is! Uint8List || wrapper.isEmpty) {
+      throw const FormatException('Wrapper LUKS inválido');
+    }
+    return wrapper;
+  }
+
+  @override
+  Future<Uint8List> unwrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String volumeName,
+    required String verifierName,
+  }) async {
+    final response = await methodChannel
+        .invokeMapMethod<String, Object?>('luksUnwrapKey', {
+          'binding': binding,
+          'credentialId': credentialId,
+          'wrapper': wrapper,
+          'volumeName': volumeName,
+          'verifierName': verifierName,
+        });
+    final diskKey = response?['diskKey'];
+    if (diskKey is! Uint8List || diskKey.length != 32) {
+      throw const FormatException('Credencial LUKS inválida');
+    }
+    return diskKey;
+  }
+
+  LuksKeyStatus _luksStatus(Map<String, Object?>? response) {
+    if (response == null) {
+      throw const FormatException('Estado da chave LUKS ausente');
+    }
+    return LuksKeyStatus(
+      keyExists: _bool(response, 'keyExists'),
+      hardwareBacked: _bool(response, 'hardwareBacked'),
+      strongBoxBacked: _bool(response, 'strongBoxBacked'),
+      strongBiometrics: _bool(response, 'strongBiometrics'),
+    );
+  }
+
   DevicePublicKey _publicKey(Map<String, Object?>? response) {
     final bytes = response?['publicKey'];
     final algorithm = response?['algorithm'];

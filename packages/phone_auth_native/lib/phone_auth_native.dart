@@ -269,6 +269,63 @@ class PhoneAuthLockerKey {
   );
 }
 
+class LuksKeyStatus {
+  const LuksKeyStatus({
+    required this.keyExists,
+    required this.hardwareBacked,
+    required this.strongBoxBacked,
+    required this.strongBiometrics,
+  });
+
+  final bool keyExists;
+  final bool hardwareBacked;
+  final bool strongBoxBacked;
+  final bool strongBiometrics;
+
+  bool get usable => keyExists && hardwareBacked && strongBiometrics;
+}
+
+/// Dedicated biometric-gated Android Keystore key for LUKS credentials.
+///
+/// It is deliberately separate from signing, vault and File Locker keys.
+class PhoneAuthLuksKey {
+  const PhoneAuthLuksKey();
+
+  Future<LuksKeyStatus> generate() =>
+      PhoneAuthNativePlatform.instance.generateLuksKey();
+
+  Future<LuksKeyStatus> status() =>
+      PhoneAuthNativePlatform.instance.getLuksKeyStatus();
+
+  Future<Uint8List> wrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List diskKey,
+    required String volumeName,
+    required String verifierName,
+  }) => PhoneAuthNativePlatform.instance.wrapLuksKey(
+    binding: Uint8List.fromList(binding),
+    credentialId: credentialId,
+    diskKey: Uint8List.fromList(diskKey),
+    volumeName: volumeName,
+    verifierName: verifierName,
+  );
+
+  Future<Uint8List> unwrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String volumeName,
+    required String verifierName,
+  }) => PhoneAuthNativePlatform.instance.unwrapLuksKey(
+    binding: Uint8List.fromList(binding),
+    credentialId: credentialId,
+    wrapper: Uint8List.fromList(wrapper),
+    volumeName: volumeName,
+    verifierName: verifierName,
+  );
+}
+
 class PhoneAuthBlePermissions {
   const PhoneAuthBlePermissions();
 
@@ -317,13 +374,15 @@ class PhoneAuthWebAuthnRelay {
     required String origin,
     required String optionsJson,
   }) async {
-    final response = await _channel
-        .invokeMapMethod<String, Object?>('performWebAuthn', {
-          'requestId': requestId,
-          'operation': operation,
-          'origin': origin,
-          'optionsJson': optionsJson,
-        });
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'performWebAuthn',
+      {
+        'requestId': requestId,
+        'operation': operation,
+        'origin': origin,
+        'optionsJson': optionsJson,
+      },
+    );
     final json = response?['responseJson'];
     if (json is! String || json.isEmpty) {
       throw const FormatException('Invalid native WebAuthn response');

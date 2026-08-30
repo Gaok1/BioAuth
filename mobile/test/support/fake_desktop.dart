@@ -13,6 +13,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:phone_auth/core/protocol/auth_response.dart';
+import 'package:phone_auth/core/protocol/application_frame.dart';
 import 'package:phone_auth/core/protocol/cbor.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
@@ -228,6 +229,12 @@ class DesktopSession {
     socket.add(encodeFrame(await channel.seal(_codec.encodeRequest(request))));
     await socket.flush();
     return _codec.decodeResponse(await channel.open(await _frames.next()));
+  }
+
+  Future<ApplicationFrame> requestApplication(ApplicationFrame request) async {
+    socket.add(encodeFrame(await channel.seal(request.encode())));
+    await socket.flush();
+    return ApplicationFrame.decode(await channel.open(await _frames.next()));
   }
 
   Future<void> close() async => socket.destroy();

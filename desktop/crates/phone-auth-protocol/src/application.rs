@@ -208,6 +208,7 @@ fn valid_operation(value: &str) -> bool {
     let suffix = value
         .strip_prefix("vault.")
         .or_else(|| value.strip_prefix("locker."))
+        .or_else(|| value.strip_prefix("luks."))
         .or_else(|| value.strip_prefix("ssh."));
     matches!(suffix, Some(suffix) if !suffix.is_empty()
         && value.len() <= 64

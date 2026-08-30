@@ -185,6 +185,8 @@ class ApplicationFrame {
       suffix = value.substring(6);
     } else if (value.startsWith('locker.')) {
       suffix = value.substring(7);
+    } else if (value.startsWith('luks.')) {
+      suffix = value.substring(5);
     } else if (value.startsWith('ssh.')) {
       suffix = value.substring(4);
     } else {

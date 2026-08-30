@@ -87,4 +87,26 @@ abstract class PhoneAuthNativePlatform extends PlatformInterface {
     required String verifierName,
     bool rekeying = false,
   }) => throw UnimplementedError('unwrapLockerKey() has not been implemented.');
+
+  Future<LuksKeyStatus> generateLuksKey() =>
+      throw UnimplementedError('generateLuksKey() has not been implemented.');
+
+  Future<LuksKeyStatus> getLuksKeyStatus() =>
+      throw UnimplementedError('getLuksKeyStatus() has not been implemented.');
+
+  Future<Uint8List> wrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List diskKey,
+    required String volumeName,
+    required String verifierName,
+  }) => throw UnimplementedError('wrapLuksKey() has not been implemented.');
+
+  Future<Uint8List> unwrapLuksKey({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String volumeName,
+    required String verifierName,
+  }) => throw UnimplementedError('unwrapLuksKey() has not been implemented.');
 }

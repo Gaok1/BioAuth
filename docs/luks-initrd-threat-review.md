@@ -72,9 +72,9 @@ session and verifier crates, shares the session crate's bounded framing, uses a
 fixed configured port, and enforces one end-to-end timeout. It does not import
 the agent, BlueZ, D-Bus, an HTTP stack or a TLS stack.
 
-`LUK-03` must define a versioned wrapping envelope and a dedicated
-hardware-backed credential. The disk key is random; it is never a signature,
-signature hash or deterministic biometric output.
+`LUK-03` defines the versioned envelope and dedicated hardware-backed wrapping
+credential in [`luks-wrapping.md`](luks-wrapping.md). The disk key is random;
+it is never a signature, signature hash or deterministic biometric output.
 
 `LUK-04` may install a systemd-initrd unit only when the transport and wrapping
 path work **and the handshake private key is not embedded in the public initrd**.

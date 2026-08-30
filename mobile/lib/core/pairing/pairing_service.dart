@@ -100,12 +100,47 @@ abstract interface class AuthorizationCredential {
   );
 }
 
+abstract interface class WrappingKeyProvisioner {
+  Future<({bool hardwareBacked, bool strongBoxBacked})?> ensure(
+    CredentialPurpose purpose,
+  );
+}
+
+class NativeWrappingKeyProvisioner implements WrappingKeyProvisioner {
+  const NativeWrappingKeyProvisioner();
+
+  @override
+  Future<({bool hardwareBacked, bool strongBoxBacked})?> ensure(
+    CredentialPurpose purpose,
+  ) async {
+    switch (purpose) {
+      case CredentialPurpose.fileLocker:
+        final status = await const PhoneAuthLockerKey().generate();
+        return (
+          hardwareBacked: status.hardwareBacked && status.strongBiometrics,
+          strongBoxBacked: status.strongBoxBacked && status.strongBiometrics,
+        );
+      case CredentialPurpose.diskUnlock:
+        final status = await const PhoneAuthLuksKey().generate();
+        return (
+          hardwareBacked: status.hardwareBacked && status.strongBiometrics,
+          strongBoxBacked: status.strongBoxBacked && status.strongBiometrics,
+        );
+      default:
+        return null;
+    }
+  }
+}
+
 class NativeAuthorizationCredential implements AuthorizationCredential {
   const NativeAuthorizationCredential({
     SecureAuthenticator authenticator = const PhoneAuthNative(),
-  }) : _authenticator = authenticator;
+    WrappingKeyProvisioner wrappingKeys = const NativeWrappingKeyProvisioner(),
+  }) : _authenticator = authenticator,
+       _wrappingKeys = wrappingKeys;
 
   final SecureAuthenticator _authenticator;
+  final WrappingKeyProvisioner _wrappingKeys;
 
   @override
   Future<({Uint8List publicKey, String algorithm, KeyKind keyKind})> describe(
@@ -124,11 +159,20 @@ class NativeAuthorizationCredential implements AuthorizationCredential {
     final capabilities = await _authenticator.getSecurityCapabilities(
       purpose: purpose.name,
     );
+    // And for the purposes that wrap rather than sign, the wrapping key is the
+    // one doing the protecting, so it is the one whose backing gets reported.
+    // Both corrections say the same thing: describe the key that will actually
+    // be used, not whichever key happened to answer.
+    final wrapping = await _wrappingKeys.ensure(purpose);
+    final hardwareBacked =
+        wrapping?.hardwareBacked ?? capabilities.hardwareBacked;
+    final strongBoxBacked =
+        wrapping?.strongBoxBacked ?? capabilities.strongBoxBacked;
     // Reported honestly, including when it is bad news: the verifier uses this
     // only to withhold authority, never to grant more of it.
-    final keyKind = capabilities.strongBoxBacked
+    final keyKind = strongBoxBacked
         ? KeyKind.strongBox
-        : capabilities.hardwareBacked
+        : hardwareBacked
         ? KeyKind.hardware
         : KeyKind.software;
     return (publicKey: key.bytes, algorithm: key.algorithm, keyKind: keyKind);

@@ -12,10 +12,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/auth/interactive_authorizer.dart';
 import 'package:phone_auth/core/auth/phone_authenticator.dart';
 import 'package:phone_auth/core/mock/fake_biometric_authorizer.dart';
+import 'package:phone_auth/core/luks/luks_service.dart';
 import 'package:phone_auth/core/pairing/pairing_service.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/protocol/auth_response.dart';
+import 'package:phone_auth/core/protocol/application_frame.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/core/protocol/luks_payloads.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
 import 'package:phone_auth/core/session/paired_session_service.dart';
 import 'package:phone_auth/core/transport/authenticated_session_establisher.dart';
@@ -246,6 +249,68 @@ void main() {
 
     await desktopSession.close();
   });
+
+  test('a disk-unlock credential routes only to the LUKS guardian', () async {
+    final pairingBootstrap = await desktop.bootstrap(
+      purpose: CredentialPurpose.diskUnlock,
+    );
+    final acceptingPairing = desktop.accept(pairingBootstrap);
+    final pairing = await pairingService().begin(pairingBootstrap.toUri());
+    final pairingSession = await acceptingPairing;
+    await pairingSession.readEnrolment();
+    await pairing.confirm();
+    await pairingSession.close();
+
+    final record = (await store.load()).single;
+    final guardian = _FakeLuksGuardian();
+    final service = PairedSessionService(
+      transport: transport,
+      authorizer: await FakeBiometricAuthorizer.create(),
+      consent: InteractiveAuthorizer(onRequest: (_) {}),
+      luksGuardian: guardian,
+    );
+    final acceptingPaired = desktop.accept(
+      await desktop.bootstrap(
+        sessionId: 'session-luks',
+        purpose: CredentialPurpose.diskUnlock,
+      ),
+    );
+    final serving = service.serveOne(record);
+    final desktopSession = await acceptingPaired;
+    // The phone names its credential before it answers anything, and a desktop
+    // that skips that reads the attach as the reply to its first request. This
+    // test was written before the attach existed; its two neighbours above
+    // already do this.
+    await desktopSession.readAttach();
+    final now = DateTime.now().toUtc();
+    final answer = await desktopSession.requestApplication(
+      ApplicationFrame(
+        protocolVersion: 1,
+        kind: ApplicationFrameKind.request,
+        requestId: 'luks-request-1',
+        sessionBinding: desktopSession.binding,
+        operation: luksUnlockOperation,
+        issuedAt: now,
+        expiresAt: now.add(const Duration(minutes: 1)),
+        payload: LuksUnlockRequest(
+          verifierName: 'Desktop-Casa',
+          volumeName: 'cryptroot',
+          volumeBinding: Uint8List(32),
+          credentialId: record.credentialId,
+          wrapper: Uint8List.fromList([8]),
+        ).encode(),
+      ),
+    );
+    await serving;
+
+    expect(answer.kind, ApplicationFrameKind.response);
+    expect(
+      LuksUnlockResponse.decode(answer.payload).diskKey,
+      List.filled(32, 7),
+    );
+    expect(guardian.unlocks, 1);
+    await desktopSession.close();
+  });
 }
 
 /// Waits for the consent bridge to be asked, then answers yes.
@@ -278,5 +343,30 @@ class _FakeCredential implements AuthorizationCredential {
       // unlock, and it can only do that if the phone says what it really has.
       keyKind: KeyKind.software,
     );
+  }
+}
+
+class _FakeLuksGuardian implements LuksKeyGuardian {
+  int unlocks = 0;
+
+  @override
+  Future<Uint8List> wrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List diskKey,
+    required String volumeName,
+    required String verifierName,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Uint8List> unwrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String volumeName,
+    required String verifierName,
+  }) async {
+    unlocks++;
+    return Uint8List.fromList(List.filled(32, 7));
   }
 }

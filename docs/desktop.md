@@ -20,7 +20,7 @@ a view that cannot approve anything even if it is fully compromised.
 | `phone-auth` CLI (the PAM entry point) | done |
 | Electron tray, with a scannable QR | done |
 | NixOS module, systemd units, PAM wiring | done |
-| `phone-auth-initrd` selection and wired authenticated transport | done; wrapping pending |
+| `phone-auth-initrd` selection, wired transport and LUKS wrapping exchange | done; NixOS keyslot pending |
 | Android LAN/BLE peer and hardware-backed signer | implemented; physical matrix pending |
 
 The desktop and Android implementations can connect over TCP, pair and
@@ -289,8 +289,8 @@ On success it writes the key to stdout and exits 0, so it pipes into
 `cryptsetup open --key-file=-`. Everything else exits non-zero and writes
 nothing to stdout — a boot log must never capture key material.
 
-The credential selection, key-separation and hardware-key gates are
-implemented and tested. The initrd attack-surface review selected a minimal
+Credential selection, key separation, hardware-key gates and the dedicated
+LUKS wrapping exchange are implemented and tested. The initrd attack-surface review selected a minimal
 wired IPv4/TCP listener and rejected Wi-Fi and BlueZ; the complete boundary and
 implementation gates are in
 [`luks-initrd-threat-review.md`](luks-initrd-threat-review.md). The accepted
@@ -299,11 +299,14 @@ mutually authenticated handshake the phone already speaks, shared bounded
 framing, one paired identity and one end-to-end timeout. It has no discovery,
 D-Bus, BlueZ, HTTP or TLS stack.
 
-What remains is a dedicated LUKS wrapping exchange and credential — see
-`LUK-03`.
+The phone uses a separate biometric-gated AES-256-GCM wrapping key, while the
+purpose-specific ECDSA key remains pairing identity/policy and is never disk
+key material. The public wrapper and complete flow are specified in
+[`luks-wrapping.md`](luks-wrapping.md).
 
-The module deliberately ships no initrd unit. A unit that cannot work would
-only invite someone to enable it and find out at the next reboot.
+The module deliberately ships no initrd unit until `LUK-04/05` install a
+runtime-provided handshake identity, create the keyslot transactionally and
+prove the independent recovery keyslot before enabling boot unlock.
 
 **An offline recovery keyslot is mandatory.** The phone must never be the only
 way into the volume, and `phone-auth-initrd` is written so that every failure

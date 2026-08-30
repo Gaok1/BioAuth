@@ -79,6 +79,22 @@ class _RecordingKeystore implements SecureAuthenticator {
       throw UnimplementedError();
 }
 
+class _RecordingWrappingKeys implements WrappingKeyProvisioner {
+  final List<CredentialPurpose> generated = [];
+
+  @override
+  Future<({bool hardwareBacked, bool strongBoxBacked})?> ensure(
+    CredentialPurpose purpose,
+  ) async {
+    if (purpose != CredentialPurpose.fileLocker &&
+        purpose != CredentialPurpose.diskUnlock) {
+      return null;
+    }
+    generated.add(purpose);
+    return (hardwareBacked: true, strongBoxBacked: false);
+  }
+}
+
 PairingRecord recordFor(CredentialPurpose purpose) => PairingRecord(
   verifierId: 'desktop-1',
   verifierIdentitySpki: Uint8List(91),
@@ -111,7 +127,11 @@ AuthenticationRequest requestFor(String credentialId) {
 void main() {
   test('a pairing enrols the key named by its own purpose', () async {
     final keystore = _RecordingKeystore();
-    final credential = NativeAuthorizationCredential(authenticator: keystore);
+    final wrappingKeys = _RecordingWrappingKeys();
+    final credential = NativeAuthorizationCredential(
+      authenticator: keystore,
+      wrappingKeys: wrappingKeys,
+    );
 
     for (final purpose in CredentialPurpose.values) {
       await credential.describe(purpose);
@@ -120,6 +140,13 @@ void main() {
     expect(
       keystore.generated,
       CredentialPurpose.values.map((purpose) => purpose.name),
+    );
+    expect(
+      wrappingKeys.generated,
+      unorderedEquals([
+        CredentialPurpose.fileLocker,
+        CredentialPurpose.diskUnlock,
+      ]),
     );
   });
 
@@ -134,8 +161,13 @@ void main() {
     // did not, and this value exists to withhold authority, never to grant it.
     for (final purpose in CredentialPurpose.values) {
       final keystore = _RecordingKeystore();
+      // The wrapping provisioner too, and not only to keep a unit test off
+      // the method channel: for the two purposes that wrap rather than sign,
+      // it is the wrapping key whose backing gets reported, so leaving it out
+      // would test the wrong key -- which is the very mistake this test names.
       final enrolment = await NativeAuthorizationCredential(
         authenticator: keystore,
+        wrappingKeys: _RecordingWrappingKeys(),
       ).describe(purpose);
 
       expect(keystore.described, [purpose.name]);
