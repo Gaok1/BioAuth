@@ -381,9 +381,14 @@ void main() {
         sessionBinding: Uint8List(32),
       ),
     );
-    await _until(() => consent.pendingRequestIds.contains('request-1'));
+    await _untilRealTime(() => consent.pendingRequestIds.contains('request-1'));
 
-    await _until(() => !consent.pendingRequestIds.contains('request-1'));
+    // Real time, not a pumped event queue. The window under test is a timer,
+    // and five hundred turns of the event queue can go by in less than twenty
+    // milliseconds -- which is how this passed here and failed on CI.
+    await _untilRealTime(
+      () => !consent.pendingRequestIds.contains('request-1'),
+    );
 
     expect(
       session.closed,
