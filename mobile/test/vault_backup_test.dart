@@ -168,5 +168,6 @@ class _MemoryStore extends VaultStore {
       throw UnimplementedError();
 
   @override
-  Future<void> delete(VaultItemSummary item) => throw UnimplementedError();
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) =>
+      throw UnimplementedError();
 }

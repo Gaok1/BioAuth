@@ -149,7 +149,8 @@ class _PagedStore extends VaultStore {
       throw UnimplementedError();
 
   @override
-  Future<void> delete(VaultItemSummary item) => throw UnimplementedError();
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) =>
+      throw UnimplementedError();
 }
 
 Map<String, Object> _summary(String id) => {

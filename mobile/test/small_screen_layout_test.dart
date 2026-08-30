@@ -207,7 +207,7 @@ class _Store extends VaultStore {
     VaultItemInput item,
   ) async => VaultWrite(id: current.id, revision: current.revision + 1);
   @override
-  Future<void> delete(VaultItemSummary item) async {}
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) async => null;
 }
 
 /// A vault whose key a new fingerprint invalidated: unopenable, discardable.

@@ -95,10 +95,19 @@ class VaultSecret {
 }
 
 class VaultWrite {
-  const VaultWrite({required this.id, required this.revision});
+  const VaultWrite({required this.id, required this.revision, this.items});
 
   final String id;
   final int revision;
+
+  /// The whole vault as the write left it, when the store had it for free.
+  ///
+  /// A write already decrypts the vault and seals it again, and on a phone
+  /// each of those is its own biometric prompt because the key is
+  /// auth-per-use. Reading the list back afterwards is a third prompt for a
+  /// list the write had computed, so the store that did the writing says.
+  /// Null means it could not, and the caller reads the vault again.
+  final List<VaultItemSummary>? items;
 }
 
 class VaultPage {
@@ -165,7 +174,12 @@ abstract class VaultStore {
   Future<VaultSecret> fetch(String id);
   Future<VaultWrite> create(VaultItemInput item);
   Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item);
-  Future<void> delete(VaultItemSummary item);
+
+  /// Removes an item, answering with the vault it left behind when it can.
+  ///
+  /// See [VaultWrite.items]: null means the caller has to read the list back,
+  /// which costs an unlock.
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item);
 
   /// Every item, secrets included, for one encrypted backup.
   ///
@@ -256,9 +270,17 @@ abstract class VaultStore {
 
 /// What a restore did, for the screen that reports it.
 class VaultRestoreOutcome {
-  const VaultRestoreOutcome({required this.added, required this.skipped});
+  const VaultRestoreOutcome({
+    required this.added,
+    required this.skipped,
+    this.items,
+  });
 
   final int added;
+
+  /// The vault after the restore, when the store had it for free. See
+  /// [VaultWrite.items].
+  final List<VaultItemSummary>? items;
 
   /// Items the vault already held. Counted rather than duplicated, so
   /// restoring the same file twice is harmless.
@@ -305,22 +327,11 @@ class NativeVaultStore extends VaultStore {
       'listAll',
       <String, Object?>{},
     );
-    if (raw == null || raw['items'] is! List) {
+    final items = _summaries(raw);
+    if (items == null) {
       throw const FormatException('Resposta inválida do cofre');
     }
-    final items = raw['items']! as List;
-    // The same ceiling the native store enforces on a restore. A store that
-    // hands back more than a vault can hold is not a vault this build wrote.
-    if (items.length > maxVaultItems) {
-      throw const FormatException('Cofre maior do que o formato permite');
-    }
-    return [
-      for (final value in items)
-        if (value is Map)
-          VaultItemSummary.fromMap(value.cast<Object?, Object?>())
-        else
-          throw const FormatException('Item inválido no cofre'),
-    ];
+    return items;
   }
 
   @override
@@ -361,10 +372,13 @@ class NativeVaultStore extends VaultStore {
   }
 
   @override
-  Future<void> delete(VaultItemSummary item) => _channel.invokeMethod<Object?>(
-    'delete',
-    {'id': item.id, 'expectedRevision': item.revision},
-  );
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) async =>
+      _summaries(
+        await _channel.invokeMapMethod<Object?, Object?>('delete', {
+          'id': item.id,
+          'expectedRevision': item.revision,
+        }),
+      );
 
   @override
   Future<void> discard() =>
@@ -403,6 +417,7 @@ class NativeVaultStore extends VaultStore {
     return VaultRestoreOutcome(
       added: _count(raw, 'added'),
       skipped: _count(raw, 'skipped'),
+      items: _summaries(raw),
     );
   }
 
@@ -427,7 +442,30 @@ class NativeVaultStore extends VaultStore {
     return VaultWrite(
       id: _text(raw, 'id'),
       revision: _positive(raw, 'revision'),
+      items: _summaries(raw),
     );
+  }
+
+  /// The listing an answer carries, or null when it carries none.
+  ///
+  /// Every write answers with one, so the caller never has to unlock the vault
+  /// again just to see what it now holds. Absent is not an error here -- only
+  /// [listAll], where the listing is the whole answer, insists on it.
+  static List<VaultItemSummary>? _summaries(Map<Object?, Object?>? raw) {
+    final items = raw?['items'];
+    if (items is! List) return null;
+    // The same ceiling the native store enforces on a restore. A store that
+    // hands back more than a vault can hold is not a vault this build wrote.
+    if (items.length > maxVaultItems) {
+      throw const FormatException('Cofre maior do que o formato permite');
+    }
+    return [
+      for (final value in items)
+        if (value is Map)
+          VaultItemSummary.fromMap(value.cast<Object?, Object?>())
+        else
+          throw const FormatException('Item inválido no cofre'),
+    ];
   }
 }
 

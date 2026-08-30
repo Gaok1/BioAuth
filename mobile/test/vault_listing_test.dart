@@ -236,6 +236,6 @@ class _Store extends store.VaultStore {
   ) => throw UnimplementedError();
 
   @override
-  Future<void> delete(store.VaultItemSummary item) =>
+  Future<List<store.VaultItemSummary>?> delete(store.VaultItemSummary item) =>
       throw UnimplementedError();
 }

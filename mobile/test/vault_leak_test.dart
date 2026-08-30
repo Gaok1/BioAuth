@@ -178,5 +178,7 @@ class _StoreHolding extends store.VaultStore {
   ) async => store.VaultWrite(id: current.id, revision: current.revision + 1);
 
   @override
-  Future<void> delete(store.VaultItemSummary item) async {}
+  Future<List<store.VaultItemSummary>?> delete(
+    store.VaultItemSummary item,
+  ) async => null;
 }

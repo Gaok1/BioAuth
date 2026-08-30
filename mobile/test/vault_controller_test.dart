@@ -52,6 +52,37 @@ void main() {
     expect(controller.items, isEmpty);
     expect(controller.secretFor(item.id), isNull);
   });
+
+  test(
+    'a write shows the vault it left behind, without reading it again',
+    () async {
+      final store = _AnsweringStore();
+      final controller = VaultController(store: store, copy: (_) async {});
+
+      await controller.unlock();
+      expect(store.reads, 1);
+
+      await controller.create(
+        const VaultItemInput(
+          kind: VaultItemKind.login,
+          name: 'Novo',
+          secret: 'segredo',
+        ),
+      );
+      expect(controller.items.map((item) => item.name), ['Example', 'Novo']);
+      // A write already decrypts the vault and seals it again, and on a phone
+      // each of those is its own biometric prompt. Reading the list afterwards
+      // made adding one item cost three fingerprints for a list the write had
+      // in hand.
+      expect(store.reads, 1);
+
+      await controller.delete(
+        controller.items.firstWhere((item) => item.name == 'Novo'),
+      );
+      expect(controller.items.map((item) => item.name), ['Example']);
+      expect(store.reads, 1);
+    },
+  );
 }
 
 class _MemoryVaultStore extends VaultStore {
@@ -106,7 +137,10 @@ class _MemoryVaultStore extends VaultStore {
   }
 
   @override
-  Future<void> delete(VaultItemSummary item) async => _values.remove(item.id);
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) async {
+    _values.remove(item.id);
+    return null;
+  }
 
   VaultItemSummary _summary(String id, int revision, VaultItemInput item) =>
       VaultItemSummary(
@@ -118,4 +152,48 @@ class _MemoryVaultStore extends VaultStore {
         uri: item.uri,
         updatedAt: DateTime.utc(2026),
       );
+}
+
+/// A store that answers a write with the vault the write left behind, the way
+/// the phone's own store does.
+///
+/// Counts reads rather than writes, because a read of this vault is a
+/// fingerprint: the Keystore key is auth-per-use.
+class _AnsweringStore extends _MemoryVaultStore {
+  int reads = 0;
+
+  @override
+  Future<List<VaultItemSummary>> listAll() async {
+    reads++;
+    return super.listAll();
+  }
+
+  @override
+  Future<VaultWrite> create(VaultItemInput item) async {
+    final written = await super.create(item);
+    return VaultWrite(
+      id: written.id,
+      revision: written.revision,
+      items: await super.listAll(),
+    );
+  }
+
+  @override
+  Future<VaultWrite> update(
+    VaultItemSummary current,
+    VaultItemInput item,
+  ) async {
+    final written = await super.update(current, item);
+    return VaultWrite(
+      id: written.id,
+      revision: written.revision,
+      items: await super.listAll(),
+    );
+  }
+
+  @override
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) async {
+    await super.delete(item);
+    return super.listAll();
+  }
 }

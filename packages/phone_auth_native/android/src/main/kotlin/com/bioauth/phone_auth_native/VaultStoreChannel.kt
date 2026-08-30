@@ -112,7 +112,7 @@ internal class VaultStoreChannel(
                 val updated = VaultStoreData.delete(items, request.id, request.expectedRevision)
                 if (updated.isEmpty()) {
                     storage.delete()
-                    succeed(mapOf("id" to request.id))
+                    succeed(mapOf("id" to request.id) + VaultStoreData.all(emptyList()))
                 } else {
                     persist(updated, mapOf("id" to request.id))
                 }
@@ -125,7 +125,7 @@ internal class VaultStoreChannel(
         // Nothing new means nothing to write. Re-sealing the same items would
         // cost a second biometric prompt to change nothing.
         if (added == 0) {
-            succeed(mapOf("added" to 0, "skipped" to skipped))
+            succeed(mapOf("added" to 0, "skipped" to skipped) + VaultStoreData.all(items))
             return
         }
         persist(updated, mapOf("added" to added, "skipped" to skipped))
@@ -141,13 +141,21 @@ internal class VaultStoreChannel(
         persist(updated, mapOf("id" to item.id, "revision" to item.revision))
     }
 
+    /// Seals [items] and answers with [response] plus the vault it just wrote.
+    ///
+    /// The listing rides along because the caller needs it and this side
+    /// already has it. The key is auth-per-use, so a caller that asks for the
+    /// list afterwards pays a whole extra biometric prompt -- a third one, on
+    /// top of the decrypt and the encrypt a write already costs -- to be told
+    /// something that was in hand here.
     private fun persist(items: List<VaultItem>, response: Map<String, Any>) {
+        val answer = response + VaultStoreData.all(items)
         val plaintext = VaultStoreCodec.encode(items)
         try {
             requireCryptoReady()
             authenticate(keyStore.encryptCipher(), cleanup = { plaintext.fill(0) }) { cipher ->
                 storage.write(VaultCiphertext.seal(cipher, plaintext))
-                succeed(response)
+                succeed(answer)
             }
         } catch (error: Throwable) {
             plaintext.fill(0)

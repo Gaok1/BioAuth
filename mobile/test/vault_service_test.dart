@@ -353,7 +353,9 @@ class _VaultStore extends store.VaultStore {
   }
 
   @override
-  Future<void> delete(store.VaultItemSummary item) async {}
+  Future<List<store.VaultItemSummary>?> delete(
+    store.VaultItemSummary item,
+  ) async => null;
 }
 
 class _RecordingApproval implements VaultApproval {
@@ -392,7 +394,7 @@ class _CountingStore extends _VaultStore {
   }
 
   @override
-  Future<void> delete(store.VaultItemSummary item) {
+  Future<List<store.VaultItemSummary>?> delete(store.VaultItemSummary item) {
     writes++;
     return super.delete(item);
   }

@@ -237,10 +237,10 @@ class VaultController extends ChangeNotifier {
   });
 
   Future<void> create(VaultItemInput input) =>
-      _mutate(() => _store.create(input));
+      _mutate(() async => (await _store.create(input)).items);
 
   Future<void> update(VaultItemSummary item, VaultItemInput input) =>
-      _mutate(() => _store.update(item, input));
+      _mutate(() async => (await _store.update(item, input)).items);
 
   Future<void> delete(VaultItemSummary item) =>
       _mutate(() => _store.delete(item));
@@ -289,10 +289,11 @@ class VaultController extends ChangeNotifier {
     VaultRestoreOutcome? outcome;
     await _run(() async {
       final items = await openVaultExport(file, VaultExportKey.parse(code));
-      outcome = await _store.restore([
+      final restored = await _store.restore([
         for (final item in items) item.toInput(),
       ]);
-      _items = await _store.listAll();
+      outcome = restored;
+      _items = restored.items ?? await _store.listAll();
     });
     return outcome;
   }
@@ -322,19 +323,27 @@ class VaultController extends ChangeNotifier {
   Future<VaultRestoreOutcome?> importItems(List<VaultItemInput> items) async {
     VaultRestoreOutcome? outcome;
     await _run(() async {
-      outcome = await _store.restore(items);
-      _items = await _store.listAll();
+      final restored = await _store.restore(items);
+      outcome = restored;
+      _items = restored.items ?? await _store.listAll();
     });
     return outcome;
   }
 
-  Future<void> _mutate(Future<Object?> Function() action) => _run(() async {
-    await action();
-    _items = await _store.listAll();
-    _revealedId = null;
-    _revealedSecret = null;
-    _clearTotp();
-  });
+  /// Runs a write and shows the vault it left behind.
+  ///
+  /// The list comes from the write itself when the store can say, because a
+  /// write has already decrypted the vault and sealed it again — two
+  /// biometric prompts, since the key is auth-per-use — and asking for the
+  /// list afterwards made adding one item cost three fingerprints. A store
+  /// that cannot say returns null and the vault is read again.
+  Future<void> _mutate(Future<List<VaultItemSummary>?> Function() action) =>
+      _run(() async {
+        _items = await action() ?? await _store.listAll();
+        _revealedId = null;
+        _revealedSecret = null;
+        _clearTotp();
+      });
 
   Future<void> _run(Future<void> Function() action) async {
     if (busy) return;

@@ -145,7 +145,8 @@ class _FailingStore extends VaultStore {
   ) async => _fail();
 
   @override
-  Future<void> delete(VaultItemSummary item) async => _fail();
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) async =>
+      _fail();
 }
 
 /// Inherits the base refusal, which is the behaviour under test.
@@ -165,5 +166,6 @@ class _UndiscardableStore extends VaultStore {
       throw UnimplementedError();
 
   @override
-  Future<void> delete(VaultItemSummary item) => throw UnimplementedError();
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) =>
+      throw UnimplementedError();
 }
