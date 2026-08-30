@@ -14,6 +14,7 @@ const QRCode = require('qrcode');
 const { AgentConnection } = require('./agent-connection');
 const { AgentSupervisor } = require('./agent-supervisor');
 const { endpointFile } = require('./paths');
+const { SecureUpdater } = require('./secure-updater');
 
 /** Methods the renderer may invoke. Anything not listed is refused. */
 const ALLOWED_METHODS = new Set([
@@ -61,6 +62,9 @@ let tray = null;
 let window = null;
 let agent = null;
 let supervisor = null;
+let updater = null;
+let updateTimer = null;
+let updateState = { checking: false, available: null, rollback: null };
 let quitting = false;
 
 function createWindow() {
@@ -121,6 +125,58 @@ function createTray() {
   tray = new Tray(image);
   tray.setToolTip('PhoneAuth');
 
+  rebuildTrayMenu();
+  tray.on('click', toggleWindow);
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return;
+  const updateItems = [];
+  if (updater && updater.enabled) {
+    updateItems.push({
+      label: updateState.checking ? 'Checking for updates…' : 'Check for updates',
+      enabled: !updateState.checking,
+      click: () => checkForUpdates(true),
+    });
+    if (updateState.available) {
+      updateItems.push({
+        label: `Install PhoneAuth ${updateState.available}`,
+        click: async () => {
+          try {
+            await updater.install();
+            quitting = true;
+            app.quit();
+          } catch (error) {
+            updateState.available = null;
+            tray.displayBalloon({
+              title: 'PhoneAuth update was not accepted',
+              content: 'The staged installer changed or is no longer valid.',
+            });
+            rebuildTrayMenu();
+          }
+        },
+      });
+    }
+    if (updateState.rollback) {
+      updateItems.push({
+        label: `Roll back to PhoneAuth ${updateState.rollback}`,
+        click: async () => {
+          try {
+            await updater.rollback();
+            quitting = true;
+            app.quit();
+          } catch (error) {
+            updateState.rollback = null;
+            tray.displayBalloon({
+              title: 'PhoneAuth rollback was not accepted',
+              content: 'The previous installer changed or is no longer valid.',
+            });
+            rebuildTrayMenu();
+          }
+        },
+      });
+    }
+  }
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Open PhoneAuth', click: toggleWindow },
@@ -132,6 +188,7 @@ function createTray() {
           agent.start();
         },
       },
+      ...(updateItems.length ? [{ type: 'separator' }, ...updateItems] : []),
       { type: 'separator' },
       {
         label: 'Quit',
@@ -142,8 +199,60 @@ function createTray() {
       },
     ])
   );
+}
 
-  tray.on('click', toggleWindow);
+async function checkForUpdates(announce = false) {
+  if (!updater || !updater.enabled || updateState.checking) return;
+  updateState.checking = true;
+  rebuildTrayMenu();
+  try {
+    const result = await updater.check();
+    updateState.available = result.available ? result.version : null;
+    if (result.available || announce) {
+      const unsigned = result.reason === 'installed-build-is-not-signed';
+      tray.displayBalloon({
+        title: result.available
+          ? 'PhoneAuth update verified'
+          : unsigned ? 'Automatic updates are disabled' : 'PhoneAuth is up to date',
+        content: result.available
+          ? `Version ${result.version} is signed and ready to install from the tray menu.`
+          : unsigned
+            ? 'This installed build has no valid Authenticode signature.'
+            : 'No newer signed stable release is available.',
+      });
+    }
+  } catch (error) {
+    // A failed check never weakens verification or blocks authentication.
+    // eslint-disable-next-line no-console
+    console.log(`phone-auth-tray: update check failed: ${error.message}`);
+    if (announce) {
+      tray.displayBalloon({
+        title: 'PhoneAuth update was not accepted',
+        content: 'The release could not be verified. The installed version was left unchanged.',
+      });
+    }
+  } finally {
+    updateState.checking = false;
+    rebuildTrayMenu();
+  }
+}
+
+async function initializeUpdater() {
+  updater = new SecureUpdater({
+    packaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    directory: path.join(app.getPath('userData'), 'updates'),
+  });
+  const rollback = await updater.rollbackInfo();
+  updateState.rollback = rollback ? rollback.version : null;
+  rebuildTrayMenu();
+  if (!updater.enabled) return;
+  updateTimer = setTimeout(() => {
+    checkForUpdates(false);
+    updateTimer = setInterval(() => checkForUpdates(false), 6 * 60 * 60 * 1000);
+    updateTimer.unref?.();
+  }, 60 * 1000);
+  updateTimer.unref?.();
 }
 
 /** Pushes a message to the renderer, if there is one. */
@@ -211,6 +320,10 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createTray();
     wireAgent();
+    initializeUpdater().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.log(`phone-auth-tray: updater initialization failed: ${error.message}`);
+    });
 
     ipcMain.handle('agent:call', async (_event, method, params) => {
       if (!ALLOWED_METHODS.has(method)) {
@@ -245,6 +358,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true;
+    if (updateTimer) clearTimeout(updateTimer);
     if (agent) agent.stop();
     // Only stops an agent this process started. One managed by systemd, or
     // launched by hand, outlives the tray.
