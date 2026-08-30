@@ -44,7 +44,7 @@ const VALIDITY_MS: i64 = 120_000;
 /// back on the desktop stopped at "the vault listing did not end". This is
 /// the number the phone's own store enforces, counted the way the phone
 /// counts it: in items, not in pages of them.
-const MAX_ITEMS: usize = 4096;
+pub(crate) const MAX_ITEMS: usize = 4096;
 
 /// Why a vault exchange did not produce an answer.
 ///
