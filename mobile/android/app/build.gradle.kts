@@ -75,11 +75,15 @@ android {
 
     buildTypes {
         release {
-            // Signed only when real material was supplied. Otherwise the build
-            // stays unsigned: reusing the debug key would produce something
-            // that installs and looks official while anyone could forge an
-            // update for it.
+            // The project key when one was supplied, the debug key when not.
+            // An APK with no signature at all is a file Android refuses to
+            // install, and a build nobody can install is not a safer build,
+            // it is an absent one. What the debug key costs is stated where a
+            // person can act on it: an app installed under it cannot be
+            // updated by a build signed with a different key, because that is
+            // exactly the check Android makes on every update.
             signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 }

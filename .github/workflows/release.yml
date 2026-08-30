@@ -5,8 +5,12 @@ name: Release
 #
 #   push to main   bump the workspace version and the release cuts itself
 #   push of a tag  release that exact tag, for anything cut by hand
-#   dispatch       build the whole set; publish only if asked, and then only
-#                  as an unsigned debug prerelease
+#   dispatch       build the whole set; publish only if asked, and then as a
+#                  scratch prerelease that cannot take the version's own tag
+#
+# Signing is per platform and optional. Material present, the artifact is
+# signed; material absent, it still ships. Nothing is held back for the lack of
+# a certificate: an app nobody can install protects nobody.
 #
 # The tag is created by the release step rather than pushed by an earlier job,
 # because a tag pushed with GITHUB_TOKEN does not trigger workflows — GitHub
@@ -52,19 +56,12 @@ jobs:
       tag: ${{ steps.decide.outputs.tag }}
       build: ${{ steps.decide.outputs.build }}
       publish: ${{ steps.decide.outputs.publish }}
-      # `stable` is the released product and must be signed with the project
-      # keys. `debug` is explicitly unsigned, named so on every file, and can
-      # only ever come out as a prerelease.
+      # `stable` is the version's own release, cut once per version. `debug` is
+      # a scratch build of the same commit: every filename says so and it is
+      # always a prerelease, so it can never be mistaken for the version.
+      # Whether anything is signed is a separate question, answered per
+      # platform by whether that platform's material exists.
       channel: ${{ steps.decide.outputs.channel }}
-    # Read here only to answer "could this run sign at all?" before spending
-    # four parallel builds on a stable release that would fail at the last step.
-    env:
-      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
-      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,14 +105,6 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           DISPATCH_PUBLISH: ${{ inputs.publish }}
         run: |
-          # Six secrets, all or nothing. Asking now costs ten seconds and turns
-          # a guaranteed forty-minute failure into an explanation. It lowers no
-          # bar: a run that cannot sign still publishes nothing as stable.
-          signable=true
-          for value in             "$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD"             "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"             "$WINDOWS_CERT_BASE64" "$WINDOWS_CERT_PASSWORD"; do
-            [ -n "$value" ] || signable=false
-          done
-
           emit() {
             echo "tag=$1" >> "$GITHUB_OUTPUT"
             echo "build=$2" >> "$GITHUB_OUTPUT"
@@ -147,12 +136,6 @@ jobs:
               tag="v$VERSION"
               if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
                 echo "$tag already exists — nothing to release."
-                emit "$tag" false false stable
-              elif [ "$signable" = false ]; then
-                # Refuse early and say which door does produce something
-                # installable, instead of failing four builds deep with a
-                # message about a secret.
-                echo "::warning::$tag is unreleased, but signing is not configured, so no stable release can come from this commit. Run this workflow manually with publish=true for an unsigned debug prerelease."
                 emit "$tag" false false stable
               else
                 echo "version bumped to $VERSION — releasing $tag."
@@ -209,13 +192,13 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
-      # A stable release must be signed with the project key. Without the
-      # secrets the build still happens, but only as an explicitly named debug
-      # artifact — which can reach a prerelease and never a stable release.
+      # Signed with the project key when the four secrets are there. Without
+      # them the APK is signed with Android's debug key, because an unsigned
+      # APK is a file no phone will install, and shipping nothing helps nobody.
+      # Partial configuration stays an error: it is the one state that looks
+      # configured and is not.
       - name: Validate and decode signing material
         id: signing
-        env:
-          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
           configured=0
           for value in \
@@ -230,11 +213,8 @@ jobs:
             echo "::error::Android release signing is only partially configured"
             exit 1
           fi
-          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 4 ]; then
-            echo "::error::A stable release requires all four Android signing secrets"
-            exit 1
-          fi
           if [ "$configured" -eq 0 ]; then
+            echo "::warning::No Android signing key configured, so the APK is signed with the debug key. It installs, but Android refuses to update it later from a build signed with a different key. One free keytool command and four secrets fix that."
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -248,23 +228,15 @@ jobs:
           EOF
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build signed release APK
-        if: steps.signing.outputs.signed == 'true'
+      # One build either way. How well the app a person installs is compiled
+      # should not depend on whether the project happens to own a keystore;
+      # only which key signs it does.
+      - name: Build the release APK
         working-directory: mobile
         run: |
           flutter build apk --release --flavor prod --target lib/main_prod.dart
           mkdir -p ../artifacts
-          cp build/app/outputs/flutter-apk/app-prod-release.apk \
-             ../artifacts/PhoneAuth-android.apk
-
-      - name: Build debug-signed APK
-        if: steps.signing.outputs.signed != 'true'
-        working-directory: mobile
-        run: |
-          flutter build apk --debug --flavor prod --target lib/main_prod.dart
-          mkdir -p ../artifacts
-          cp build/app/outputs/flutter-apk/app-prod-debug.apk \
-             ../artifacts/PhoneAuth-android-debug.apk
+          cp build/app/outputs/flutter-apk/app-prod-release.apk ../artifacts/PhoneAuth-android.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -324,8 +296,6 @@ jobs:
 
       - name: Prepare Authenticode signing
         shell: bash
-        env:
-          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
           configured=0
           [ -n "$WINDOWS_CERT_BASE64" ] && configured=$((configured + 1))
@@ -334,11 +304,8 @@ jobs:
             echo "::error::Windows signing is only half configured"
             exit 1
           fi
-          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 2 ]; then
-            echo "::error::A stable release requires both Windows signing secrets"
-            exit 1
-          fi
           if [ "$configured" -eq 0 ]; then
+            echo "::warning::No Authenticode certificate configured, so the installer ships unsigned. Windows will call the publisher unknown, and the built-in updater stays off by its own fail-closed rule."
             echo "SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -359,14 +326,16 @@ jobs:
       # which teaches users to click through exactly the warning that would
       # tell them about a substituted installer.
       #
-      # Same shape as the Android rule: an unsigned installer may ship as a
-      # debug prerelease that says so in its filename, never as stable.
+      # A certificate comes from a CA, costs money and takes days, so its
+      # absence cannot be allowed to mean no installer at all. Unsigned ships.
+      # What it does not do is claim to be signed, and the updater already
+      # refuses to act on a build it cannot verify.
       - name: Verify Authenticode on app, helpers and installer
         id: authenticode
         shell: bash
         run: |
           if [ "$SIGNING_CONFIGURED" != true ]; then
-            echo "::warning::Building an unsigned installer; it can only ship as a debug prerelease"
+            echo "::notice::Unsigned installer, so there is nothing to verify"
             exit 0
           fi
           signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin"             -name signtool.exe -path '*x64*' | sort | tail -1)
@@ -721,10 +690,14 @@ jobs:
 
             That says which commit and which workflow run produced the file.
 
-            The Android APK is signed with the project release key and the
-            Windows installer with the project Authenticode certificate. The
-            workflow refuses to publish when any signing secret is absent, so
-            an unsigned artifact cannot reach a release.
+            Signing is separate from that, and is per platform: each artifact
+            is signed when this project holds the material for it, and ships
+            unsigned when it does not. An unsigned Windows installer makes
+            Windows call the publisher unknown and keeps the built-in updater
+            off; an APK signed with the debug key installs but cannot later be
+            updated by a differently signed build. The build log for this run
+            says which of the two happened. Provenance above does not depend on
+            any of it.
 
             The extension zips are **store uploads, not installable files**.
             Chrome, Edge and Firefox each sign on their side. To install one
@@ -753,28 +726,25 @@ jobs:
           body: |
             ${{ steps.missing.outputs.note }}
 
-            ## Unsigned debug build — for testing, not for use
+            ## Scratch build — not the version's own release
 
-            Nothing in this release is signed, and every filename carries
-            `-debug` so a file that has left this page still says what it is.
+            Everything here is built from the same commit as a real release,
+            but this is not one: every filename carries `-debug`, so a file
+            that has left this page still says what it is, and the tag cannot
+            collide with the version's.
 
-            "Debug" means different things per artifact, and the difference
-            matters:
+            All of it is release-optimised. What signing it carries depends on
+            what this project holds, exactly as in a real release, and the
+            build log for this run says which.
 
-            - **The Android APK is a real debug build** signed with the
-              throwaway debug key.
-            - **The desktop binaries are release-optimised**, just unsigned.
-              Windows will call the publisher unknown and SmartScreen will warn
-              until the download is common, which it never will be.
+            One thing to know before installing:
 
-            Two things to know before installing:
-
-            - **The APK cannot be upgraded in place** to a signed build later.
-              Android refuses an update whose signing key changed, so moving to
-              a real release means uninstalling first — and uninstalling takes
-              the pairings, passkeys and vault entries created while testing.
-              Treat anything you set up here as disposable.
-            - **Provenance still works**, because it needs no project key:
+            - **An APK signed with the debug key cannot be upgraded in place**
+              by a build signed with a real key. Android refuses an update
+              whose signing key changed, so moving over means uninstalling
+              first, and uninstalling takes the pairings, passkeys and vault
+              entries created while testing. Treat those as disposable.
+            - **Provenance works regardless**, because it needs no project key:
 
               ```
               gh attestation verify <file> --repo ${{ github.repository }}
