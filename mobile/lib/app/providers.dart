@@ -133,6 +133,8 @@ final interactiveAuthorizerProvider = Provider<InteractiveAuthorizer>((ref) {
     // the controller from something the controller reads would be a cycle.
     onRequest: (request) =>
         ref.read(appControllerProvider.notifier).receive(request),
+    onWithdrawn: (requestId) =>
+        ref.read(appControllerProvider.notifier).withdraw(requestId),
   );
 });
 

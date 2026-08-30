@@ -20,10 +20,18 @@ import 'phone_authenticator.dart';
 
 class InteractiveAuthorizer
     implements AuthorizationConsent, PhoneAuthenticator {
-  InteractiveAuthorizer({required this.onRequest});
+  InteractiveAuthorizer({required this.onRequest, this.onWithdrawn});
 
   /// Called when a validated request arrives, to put it on screen.
   final void Function(AuthenticationRequest request) onRequest;
+
+  /// Called when a request that was on screen stops being answerable.
+  ///
+  /// Settling the completer told the desktop; it did not take the card down.
+  /// A sheet whose session has ended is still listed, still tappable, and
+  /// tapping it now can only produce an error -- so the screen went on
+  /// offering a `sudo` that had already been refused on the user's behalf.
+  final void Function(String requestId)? onWithdrawn;
 
   final Map<String, Completer<bool>> _consent = {};
   final Map<String, Completer<AuthorizationResult>> _outcome = {};
@@ -91,7 +99,11 @@ class InteractiveAuthorizer
 
   /// Called when a session ends without an answer, so nothing waits forever.
   void abandon(String requestId, Object reason) {
-    _consent.remove(requestId)?.complete(false);
+    final consent = _consent.remove(requestId);
+    consent?.complete(false);
+    // Only if a sheet was actually up for it. A request already past consent
+    // is one the user answered, and its card is the core's to finish.
+    if (consent != null) onWithdrawn?.call(requestId);
     final outcome = _outcome.remove(requestId);
     if (outcome != null && !outcome.isCompleted) outcome.completeError(reason);
   }
@@ -111,6 +123,7 @@ class InteractiveAuthorizer
   void abandonUnanswered() {
     for (final id in _consent.keys.toList()) {
       _consent.remove(id)?.complete(false);
+      onWithdrawn?.call(id);
     }
   }
 

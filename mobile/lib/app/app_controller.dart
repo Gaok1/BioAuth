@@ -222,6 +222,13 @@ class AppController extends Notifier<AppState> {
     final audit = blockedRequests.map(
       (request) => _auditFor(request, AuditOutcome.blocked, now),
     );
+    // Each of those is a desktop still holding a session open on this phone.
+    // Clearing the card is not an answer, and the flood warning is exactly the
+    // case with several of them at once: blocking took five sheets off the
+    // screen and left five sessions waiting out their full deadline.
+    for (final request in blockedRequests) {
+      _refuseUnasked(request.id);
+    }
 
     state = state.copyWith(
       devices: List.unmodifiable(devices),
@@ -265,6 +272,26 @@ class AppController extends Notifier<AppState> {
       clearSecurityWarning: true,
     );
     ref.invalidate(pairedVerifiersProvider);
+  }
+
+  /// Takes down a card whose session has ended without an answer.
+  ///
+  /// The mirror of [blockDevice]'s problem: there the card left the screen
+  /// without the desktop being told, and here the desktop was told without the
+  /// card leaving the screen. A request's presence on screen and its session's
+  /// answer are the same event seen from two sides, and neither one of them
+  /// used to imply the other. Left listed, it accumulated: every desktop that
+  /// asked and gave up added a sheet that could only ever answer with an
+  /// error.
+  void withdraw(String requestId, {DateTime? at}) {
+    final request = _requestById(requestId);
+    if (request == null) return;
+    _finish(
+      request,
+      ConnectionPhase.expired,
+      AuditOutcome.expired,
+      (at ?? DateTime.now()).toUtc(),
+    );
   }
 
   /// Refuses a request that will never reach a sheet.
