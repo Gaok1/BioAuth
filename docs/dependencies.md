@@ -166,13 +166,66 @@ so a truncated or substituted list silently weakens every passphrase without
 failing to produce one. A test pins the count, and a second test pins strict
 alphabetical order, which also proves the 7776 entries are distinct.
 
-## Review rule
+## Extension validation
 
-Before adding or upgrading a package, record maintenance activity, current
-platform support, license, sensitive-data behavior, transitive dependencies,
-and why a platform or standard-library API is insufficient. Production logs
-must never contain challenges, signatures, session secrets, or private-key
-material.
+A **devDependency of `desktop/ui`**, bundled into nothing: `electron-builder`'s
+`files` list names `src`, `renderer`, `assets` and `package.json` only, and the
+extension upload is an explicit file list in the packager. Nothing here reaches
+a user's machine.
+
+| Package | Version | License | Why |
+|---|---|---|---|
+| `addons-linter` | 10.10.0 | MPL-2.0 | Mozilla's own add-on validator, the same one AMO runs on submission. |
+
+`tools/package-extension.js` writes the archives itself and stays
+dependency-free on purpose: it runs in the release workflow before any
+`npm install`, and a packaging step that can pull code from the network is a
+supply-chain step nobody reviewed. That is the one place where the rule below
+does not apply, and the reason is written at the top of the file.
+
+`addons-linter` brings its own ESLint and Babel, taking the tray's dev tree from
+303 to 459 packages (measured against the Electron 44 tray, not the Electron 33
+one this was first written for). Noted for the record, not as an objection — it knows the
+stores' rules as they are rather than as we remember them, which is exactly the
+kind of knowledge worth not reimplementing. On its first run it caught that AMO
+now requires
+`browser_specific_settings.gecko.data_collection_permissions` on new
+submissions — a rule that no amount of reading our own code would have
+surfaced, and that would have bounced the first upload. The extension collects
+nothing, so it declares `required: ["none"]`.
+
+Two warnings remain, both saying `strict_min_version: 128` predates the Firefox
+142 that introduced that key, so the declaration is ignored on 128 through 141.
+The floor is 128 because `world: "MAIN"` content scripts need it. Raising it to
+142 would silence the warnings by dropping those versions, which is a product
+decision, so the warnings stand and only errors fail the build.
+
+## Adding a dependency
+
+Prefer the library. A well-used package has had more eyes and more bug reports
+than anything written here for the same job, and code this project does not
+write is code this project cannot get wrong. A hand-rolled implementation is
+the thing that needs justifying, not the dependency.
+
+Record what you added — name, version, license, what it does, whether it is
+still maintained, what platforms it supports, whether it touches sensitive
+data, and what it drags in behind it — in the section above that fits. That is documentation, not a gate: it exists so a
+future reader knows why something is in the tree, and so licence obligations
+are traceable. It is not a reason to delay adding something useful.
+
+Two things still hold, and neither is about the count:
+
+- **A build-time dependency reaches the artifact.** It runs on the machine that
+  compiles and signs a release, so a compromised one can alter what ships even
+  though it never installs on a user's computer. Pin versions, keep the
+  lockfiles committed, and treat an unexplained lockfile change in review the
+  same way as an unexplained source change.
+- **Nothing fetches at runtime.** A security decision must not depend on a
+  network call that can fail open. Trust data is bundled and hash-checked;
+  see the two `Bundled data` sections above.
+
+Production logs must never contain challenges, signatures, session secrets, or
+private-key material.
 
 ## Upgrade procedure
 

@@ -121,11 +121,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # No `npm ci`: the main-process modules under test require only Node
-      # built-ins, which is what makes them testable without Electron at all.
+      # `npm ci` now, and it did not used to be needed: every other module
+      # under test requires only Node built-ins. One does not -- the extension
+      # is linted with `addons-linter`, Mozilla's own validator, which is the
+      # only check here that knows AMO's current rules rather than what someone
+      # believed them to be. Without the install that test fails to load, and a
+      # file that cannot load takes the whole `node --test` run with it.
+      #
+      # Nothing here launches Electron, so its ~100 MB binary is skipped; the
+      # package is a devDependency of electron-builder's config, not something
+      # this job runs.
       - name: Tray tests
         working-directory: desktop/ui
-        run: npm test
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm ci
+          npm test
       - name: Nautilus integration tests
         run: bash desktop/file-manager/tests/linux.sh
       - name: Rust checks

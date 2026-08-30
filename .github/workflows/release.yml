@@ -70,10 +70,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Four files carry the version independently. They are all read by
+      # Five files carry the version independently. They are all read by
       # something a user sees — the installer filename, the APK's versionName,
-      # the Nix package — so a release where they disagree ships artifacts that
-      # claim to be different versions of each other.
+      # the Nix package, the version a browser shows on its extensions page —
+      # so a release where they disagree ships artifacts that claim to be
+      # different versions of each other.
       - name: Check the declared versions agree
         id: version
         run: |
@@ -95,6 +96,8 @@ jobs:
             "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/ui/package.json | head -1)"
           check desktop/nixos/package.nix \
             "$(sed -n 's/.*version = "\(.*\)".*/\1/p' desktop/nixos/package.nix | head -1)"
+          check desktop/browser-extension/manifest.json \
+            "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/browser-extension/manifest.json | head -1)"
           [ "$fail" = 0 ] || exit 1
 
           echo "version=$version" >> "$GITHUB_OUTPUT"

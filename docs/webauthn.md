@@ -148,7 +148,8 @@ cargo build --release --bin phone-auth-agent --bin phone-auth-webauthn-host
 
 Load `desktop/browser-extension/` as an unpacked extension. Chrome and Edge use
 their extensions developer page; Firefox uses `about:debugging` for a temporary
-development install.
+development install. That is a development path only — see **Distribution**
+below for what an ordinary user gets.
 
 The extension carries both engines' shapes, because they disagree twice.
 Firefox resolves a promise returned from `runtime.onMessage`; Chrome ignores it
