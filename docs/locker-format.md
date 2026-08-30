@@ -199,8 +199,10 @@ Locking and unlocking never write over an existing file:
 5. only then remove the input.
 
 A crash, a full disk, or a kill at any step leaves either the original or a
-complete replacement, never a half-written file under the name of either. The
-temporary file is removed on failure.
+complete replacement, never a half-written file under the name of either. A
+returned write error removes the temporary file. An uncatchable kill can leave
+the hidden random-suffixed temporary behind, but it is never published as the
+destination and a later attempt does not reuse it.
 
 Removal of the original is an ordinary delete. On a journalling filesystem or
 an SSD the plaintext may remain recoverable from unreferenced blocks; the
