@@ -754,6 +754,7 @@ dependencies = [
  "phone-auth-agent",
  "phone-auth-locker",
  "phone-auth-protocol",
+ "serde",
  "serde_json",
 ]
 

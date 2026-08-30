@@ -330,8 +330,11 @@ denial, a flat battery or no cable at all leaves `systemd-cryptsetup` asking for
 the passphrase exactly as before. A second unit deletes that file before
 switch-root, because `/run` is handed to the real system.
 
-Enrolment is `phone-auth luks enroll --volume cryptroot --disk /dev/nvme0n1p2
---wrapped-out /var/lib/phone-auth/initrd/cryptroot.cbor`. The agent asks the
+Enrolment is `sudo phone-auth --root /var/lib/phone-auth luks enroll --volume
+cryptroot --disk /dev/nvme0n1p2 --wrapped-out
+/var/lib/phone-auth/initrd/cryptroot.cbor` — the root is the system agent's,
+because the credential the initrd will ask for has to be in the store the
+initrd reads. The agent asks the
 phone to wrap a fresh random 32-byte volume key and writes two files: the
 public wrapper, and the key itself, owner-only, on tmpfs. The CLI then runs
 `cryptsetup luksAddKey`, which asks for a passphrase that already opens the
@@ -353,7 +356,18 @@ way into the volume, and `phone-auth-initrd` is written so that every failure
 path falls back to the passphrase prompt rather than retrying. Enrolment counts
 the keyslots before and after, prints the slot the phone took beside the slots
 that still open the volume without it, and refuses to call that a clean result
-if the phone's is the only one left. The same goes for PAM: `pam.required` is
+if the phone's is the only one left.
+
+That proof has a date, because a passphrase nobody types may have been changed,
+forgotten, or only ever written on a note that is gone — and the day it matters
+is the day the phone is at the bottom of a river. `phone-auth luks drill
+--volume cryptroot --disk /dev/nvme0n1p2` runs `cryptsetup --test-passphrase`,
+which unlocks nothing and writes nothing to the header, and records the date it
+worked. `phone-auth luks drill --check` reads only those dates, asks nobody
+anything, and exits non-zero when a volume is overdue, which is what lets
+`services.phone-auth.boot.drill` run it weekly: an overdue volume leaves a
+failed unit sitting in `systemctl --failed`. Neither half needs the agent
+running or a phone in the room; that is the situation both exist for. The same goes for PAM: `pam.required` is
 off by default, so a phone that does not answer leaves the password prompt.
 
 ### Other systems

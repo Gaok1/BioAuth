@@ -14,6 +14,8 @@ use serde_json::{json, Value};
 use phone_auth_agent::client::AgentClient;
 use phone_auth_agent::paths::Paths;
 
+mod drill;
+
 /// Verified grant.
 const EXIT_GRANTED: u8 = 0;
 /// The user declined, policy refused, or the request expired. An ordinary,
@@ -79,6 +81,15 @@ COMMANDS:
                                passphrase that already opens the volume: that
                                prompt is the proof a way in without the phone
                                still exists.
+    luks drill --volume <NAME> --disk <DEV>
+                               Prove that proof is still true. cryptsetup only
+                               tests the passphrase: nothing is unlocked and
+                               nothing is written to the header. The date is
+                               recorded, and the date is what --check reads.
+    luks drill --check [--max-age <DAYS>]
+                               Name the volumes nobody has opened by passphrase
+                               lately. Asks nothing of anybody, so a timer can
+                               run it; exits non-zero when one is overdue.
 
     ssh authorized-key         Print the `authorized_keys` line for each SSH
                                credential this phone holds. Paste it into a
@@ -93,6 +104,9 @@ OPTIONS:
                                to read, and deleted right after
                                [default: /run/phone-auth-luks-enroll.key]
     --credential <ID>          Choose which paired credential to use
+    --check                    For `luks drill`: read the dates instead of
+                               asking for a passphrase
+    --max-age <DAYS>           How long a volume may go undrilled [default: 90]
     --recovery-out <FILE>      Where to write a new recovery code
     --recovery-file <FILE>     Read a recovery code from this file
     --into <DIR>               Where to restore an unlocked file
@@ -121,6 +135,8 @@ struct Cli {
     /// subcommands use them: `locker unlock <FILE>` is two of these.
     args: Vec<String>,
     root: Option<std::path::PathBuf>,
+    check: bool,
+    max_age: Option<u32>,
     service: Option<String>,
     action: Option<String>,
     resource: Option<String>,
@@ -156,6 +172,8 @@ fn blank_cli(command: String) -> Cli {
         command,
         args: Vec::new(),
         root: None,
+        check: false,
+        max_age: None,
         service: None,
         action: None,
         resource: None,
@@ -191,6 +209,11 @@ fn parse() -> Result<Cli, String> {
         let mut value = || args.next().ok_or(format!("`{flag}` needs a value"));
         match flag.as_str() {
             "--root" => cli.root = Some(std::path::PathBuf::from(value()?)),
+            "--check" => cli.check = true,
+            "--max-age" => match value()?.parse() {
+                Ok(days) => cli.max_age = Some(days),
+                Err(_) => return Err("--max-age takes a number of days".to_owned()),
+            },
             "--service" => cli.service = Some(value()?),
             "--action" => cli.action = Some(value()?),
             "--resource" => cli.resource = Some(value()?),
@@ -282,6 +305,12 @@ fn run(cli: Cli) -> u8 {
         if let Err(exit) = locker_batch_plan(&cli) {
             return exit;
         }
+    }
+
+    // The drill is the path for the day the phone is gone, so it cannot need
+    // the agent, and it never talks to a phone.
+    if cli.command == "luks" && cli.args.first().map(String::as_str) == Some("drill") {
+        return luks_drill(&cli);
     }
 
     let paths = Paths::resolve(cli.root.clone());
@@ -912,6 +941,19 @@ fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
     };
     report_keyslot_census(device, census.as_ref(), cli.json);
 
+    // The phone's slot is only known when exactly one appeared; two would mean
+    // something else wrote to the header at the same time, and guessing which
+    // is the phone's would be worse than admitting it is unknown.
+    let phone_slot = census.as_ref().and_then(|(before, after)| {
+        let mut gained = after.difference(before);
+        let slot = gained.next().copied();
+        gained.next().is_none().then_some(slot).flatten()
+    });
+    if let Err(error) = record_enrolment(cli, volume, phone_slot) {
+        eprintln!("phone-auth: {error}");
+        eprintln!("phone-auth: the keyslot stands; only the drill reminder was not recorded.");
+    }
+
     if cli.json {
         println!(
             "{}",
@@ -921,6 +963,159 @@ fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
     }
     print_luks_enrolled(volume, device, &wrapped_out, &enrolled);
     EXIT_GRANTED
+}
+
+/// How long a volume may go without anybody proving they can still open it.
+///
+/// A quarter is long enough not to be a chore and short enough that a
+/// passphrase changed, forgotten or never really known is found while the phone
+/// still works. It is only a default; the deployment sets its own.
+const DEFAULT_DRILL_DAYS: u32 = 90;
+
+fn drill_log_path(cli: &Cli) -> std::path::PathBuf {
+    Paths::resolve(cli.root.clone())
+        .data_dir
+        .join("luks-drill.json")
+}
+
+/// Remembers which slot the phone took and that a passphrase worked today.
+///
+/// `luksAddKey` just asked for one and got it, so the enrolment *is* the first
+/// drill; dating it from here is what makes the reminder start counting.
+fn record_enrolment(cli: &Cli, volume: &str, phone_slot: Option<u32>) -> Result<(), String> {
+    let path = drill_log_path(cli);
+    let mut log = drill::read(&path)?;
+    let now = drill::now_ms();
+    log.insert(
+        volume.to_owned(),
+        drill::DrillRecord {
+            phone_slot,
+            enrolled_at_ms: now,
+            last_drill_at_ms: now,
+            // luksAddKey never says which slot the typed passphrase was in.
+            last_drill_slot: None,
+        },
+    );
+    drill::write(&path, &log)
+}
+
+/// `luks drill`: prove the volume still opens without the phone, or say when
+/// somebody last did.
+///
+/// Two commands in one because they answer the same question from two sides.
+/// `--check` asks nobody anything, which is why a timer can run it; the bare
+/// form asks for a passphrase, which is why a person has to.
+fn luks_drill(cli: &Cli) -> u8 {
+    let path = drill_log_path(cli);
+    let mut log = match drill::read(&path) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let max_age = cli.max_age.unwrap_or(DEFAULT_DRILL_DAYS);
+
+    if cli.check {
+        return drill_check(&log, max_age);
+    }
+
+    let (Some(volume), Some(device)) = (cli.volume.as_deref(), cli.disk.as_deref()) else {
+        eprintln!(
+            "phone-auth: luks drill needs --volume <NAME> and --disk <DEV>, \
+             or --check to only read the dates."
+        );
+        return EXIT_USAGE;
+    };
+
+    eprintln!("phone-auth: type a passphrase that opens {device} without the phone.");
+    eprintln!("phone-auth: nothing is unlocked and nothing is written to the header.");
+    // stdout is captured to read the slot back; the prompt and the error text
+    // are cryptsetup's own, on the terminal, where the person typing is.
+    let output = std::process::Command::new("cryptsetup")
+        .arg("open")
+        .arg("--test-passphrase")
+        .arg("--verbose")
+        .arg(device)
+        .stdin(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("phone-auth: cannot run cryptsetup: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    if !output.status.success() {
+        eprintln!(
+            "phone-auth: nothing typed opened {device} ({}).",
+            output.status
+        );
+        eprintln!(
+            "phone-auth: that is the drill failing, and it fails now rather than on the\n\
+             phone-auth: day the phone is gone. Add a passphrase with \
+             `cryptsetup luksAddKey {device}`."
+        );
+        return EXIT_DENIED;
+    }
+
+    let slot = drill::parse_unlocked_slot(&String::from_utf8_lossy(&output.stdout));
+    let now = drill::now_ms();
+    let record = log
+        .entry(volume.to_owned())
+        .or_insert_with(|| drill::DrillRecord {
+            phone_slot: None,
+            enrolled_at_ms: now,
+            last_drill_at_ms: now,
+            last_drill_slot: None,
+        });
+    if slot.is_some() && slot == record.phone_slot {
+        eprintln!(
+            "phone-auth: that opened the phone's own keyslot, so it proves nothing about\n\
+             phone-auth: getting in without the phone. Nothing was recorded."
+        );
+        return EXIT_DENIED;
+    }
+    record.last_drill_at_ms = now;
+    record.last_drill_slot = slot;
+
+    if let Err(error) = drill::write(&path, &log) {
+        eprintln!("phone-auth: the passphrase works, but the date was not saved: {error}");
+        return EXIT_UNAVAILABLE;
+    }
+    println!("drilled  {volume} on {device}");
+    match slot {
+        Some(slot) => println!("slot     {slot}, which is not the phone's"),
+        None => println!("slot     not named by cryptsetup; the passphrase was accepted"),
+    }
+    println!("next     due in {max_age} days");
+    EXIT_GRANTED
+}
+
+/// Reads the dates and nothing else. This is the half a timer can run.
+fn drill_check(log: &drill::DrillLog, max_age: u32) -> u8 {
+    if log.is_empty() {
+        println!("no volume on this machine depends on a phone");
+        return EXIT_GRANTED;
+    }
+    let stale = drill::overdue(log, max_age, drill::now_ms());
+    if stale.is_empty() {
+        println!("{} volume(s), all drilled within {max_age} days", log.len());
+        return EXIT_GRANTED;
+    }
+    for (volume, age) in &stale {
+        eprintln!(
+            "phone-auth: {volume} was last opened by a typed passphrase {}.",
+            drill::describe_age(*age)
+        );
+    }
+    eprintln!(
+        "phone-auth: run `phone-auth luks drill --volume <NAME> --disk <DEV>` and type it.\n\
+         phone-auth: a passphrase nobody has used in {max_age} days is a passphrase\n\
+         phone-auth: nobody knows is still there."
+    );
+    EXIT_DENIED
 }
 
 /// Where the volume key is put down between the agent and cryptsetup.

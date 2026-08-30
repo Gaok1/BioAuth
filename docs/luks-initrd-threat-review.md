@@ -129,6 +129,21 @@ This is the machine-checkable half of `LUK-05`. The other half is the prompt
 the volume, so a machine where nobody can still type a passphrase cannot acquire
 a phone keyslot at all.
 
+### The drill has a date
+
+Both of those prove something about the day of the enrolment and nothing about
+any later day. `phone-auth luks drill` re-establishes it on demand with
+`cryptsetup --test-passphrase`, which opens no volume and writes no header, and
+stamps the volume in a root-owned log; `--check` reads the stamps without
+prompting for anything, so a timer can run it and fail loudly when a volume has
+gone past `boot.drill.maxAge`.
+
+What this is not: proof, at any given moment, that a passphrase works. Nothing
+unattended can produce that, because the passphrase must not be stored anywhere
+the machine can read it — if it were, it would be a keyfile, and a keyfile on
+the machine is not a second way in. So the check verifies that a person did it
+recently, and names the volume when nobody has.
+
 ## Trust boundary and assumptions
 
 - Ethernet, switches, DHCP and every remote address are hostile. They provide

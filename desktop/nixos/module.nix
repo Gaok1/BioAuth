@@ -205,6 +205,44 @@ in
         '';
       };
 
+      drill = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Check on a timer that somebody can still open these volumes without
+            the phone.
+
+            It cannot test a passphrase — nothing running unattended can, since
+            there is nobody to type it — so it tests the date instead: when a
+            volume has gone {option}`maxAge` days since the last
+            `phone-auth luks drill`, the unit fails and stays visible in
+            `systemctl --failed`. A passphrase nobody has used in a year is a
+            passphrase nobody knows is still there.
+          '';
+        };
+
+        maxAge = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 90;
+          description = ''
+            Days a volume may go without anybody proving it still opens without
+            the phone.
+          '';
+        };
+
+        interval = lib.mkOption {
+          type = lib.types.str;
+          default = "weekly";
+          example = "monthly";
+          description = ''
+            How often to look at the dates, as a systemd `OnCalendar` value.
+            This is only how often the question is asked; {option}`maxAge` is
+            the answer that counts as overdue.
+          '';
+        };
+      };
+
       usbTether.enable = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -484,6 +522,28 @@ in
         };
       in
       {
+        systemd.services.phone-auth-luks-drill = lib.mkIf cfg.boot.drill.enable {
+          description = "Check the disk still opens without the phone";
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart =
+              "${cfg.package}/bin/phone-auth --root ${systemRoot} luks drill "
+              + "--check --max-age ${toString cfg.boot.drill.maxAge}";
+          };
+        };
+
+        systemd.timers.phone-auth-luks-drill = lib.mkIf cfg.boot.drill.enable {
+          description = "Check the disk still opens without the phone";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = cfg.boot.drill.interval;
+            # A machine that was off on the day is asked when it comes back:
+            # skipping the check quietly is the one outcome that defeats it.
+            Persistent = true;
+            RandomizedDelaySec = "1h";
+          };
+        };
+
         assertions = [
           {
             assertion = config.boot.initrd.systemd.enable;

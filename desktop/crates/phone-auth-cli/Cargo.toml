@@ -23,4 +23,9 @@ phone-auth-agent.workspace = true
 # For the SSH `authorized_keys` line. The encoding lives in the protocol crate
 # so there is one implementation of it rather than one per caller.
 phone-auth-protocol.workspace = true
+
+# The drill log: which slot the phone took, and when a passphrase last
+# worked. Written here rather than by the agent, because the drill has to
+# run with the agent stopped and the phone gone.
+serde.workspace = true
 serde_json.workspace = true
