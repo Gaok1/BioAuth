@@ -17,7 +17,10 @@ const path = require('node:path');
 // enough to make the endpoint file missing without touching the real one.
 process.env.PHONEAUTH_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'phoneauth-test-'));
 
+const net = require('node:net');
+
 const { AgentConnection } = require('../src/agent-connection');
+const { endpointFile } = require('../src/paths');
 
 test('reports disconnected on the first failure, having never connected', () => {
   // The regression this file exists for. `fail()` used to emit `status` only
@@ -49,4 +52,47 @@ test('isConnected is false before anything succeeds', () => {
   const agent = new AgentConnection();
   assert.equal(agent.isConnected(), false);
   agent.stop();
+});
+
+test('stopping settles the calls that were still in flight', async () => {
+  // "Reconnect to agent" in the tray menu is `stop()` then `start()`. `stop()`
+  // dropped the socket and left every pending call in the map, so a call
+  // issued a moment earlier -- the vault panel loading its list, say -- could
+  // never settle, and the panel stayed loading for as long as the app was
+  // open. `fail()` had always rejected them; `stop()` had not.
+  //
+  // The accepted sockets are kept so the teardown can drop them itself. The
+  // client destroying its end does not reliably close the server's, and
+  // `server.close` waits for every connection: without this the test hung
+  // after having already proved what it came to prove.
+  const accepted = [];
+  const server = net.createServer((socket) => accepted.push(socket));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  fs.mkdirSync(path.dirname(endpointFile()), { recursive: true });
+  fs.writeFileSync(
+    endpointFile(),
+    JSON.stringify({ port: server.address().port, token: 'test-token' })
+  );
+
+  const agent = new AgentConnection();
+  try {
+    const connected = new Promise((resolve) => {
+      agent.on('status', (status) => {
+        if (status.connected) resolve();
+      });
+    });
+    agent.start();
+    await connected;
+
+    // The server accepts and never answers, which is the case that matters.
+    const inFlight = agent.call('status');
+    agent.stop();
+
+    await assert.rejects(inFlight, /agent connection stopped/);
+  } finally {
+    agent.stop();
+    fs.rmSync(endpointFile(), { force: true });
+    for (const socket of accepted) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

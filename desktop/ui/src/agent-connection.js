@@ -96,20 +96,30 @@ class AgentConnection extends EventEmitter {
     }
   }
 
-  fail(reason) {
+  /**
+   * Drops the socket and settles everything that was waiting on it.
+   *
+   * Every in-flight call is unanswerable once the socket is gone; rejecting is
+   * what keeps the UI from spinning on a promise that can never settle. Shared
+   * with `stop`, which used to leave those promises pending -- so "Reconnect to
+   * agent", pressed while the vault panel was loading, left that panel loading
+   * for as long as the app stayed open.
+   */
+  discard(reason) {
     this.connected = false;
-    this.lastError = reason;
-
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.destroy();
       this.socket = null;
     }
-    // Every in-flight call is now unanswerable; reject rather than leaving the
-    // UI spinning on a promise that can never settle.
     for (const waiter of this.pending.values()) waiter.reject(new Error(reason));
     this.pending.clear();
     this.buffer = '';
+  }
+
+  fail(reason) {
+    this.lastError = reason;
+    this.discard(reason);
 
     // Emitted on every failure, including the first. This used to fire only
     // when the connection had previously been up, which deadlocked a fresh
@@ -155,12 +165,7 @@ class AgentConnection extends EventEmitter {
 
   stop() {
     this.stopRetry();
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.destroy();
-      this.socket = null;
-    }
-    this.connected = false;
+    this.discard('agent connection stopped');
   }
 }
 
