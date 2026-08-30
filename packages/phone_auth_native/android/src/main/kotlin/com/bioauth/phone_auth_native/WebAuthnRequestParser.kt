@@ -12,6 +12,7 @@ internal data class WebAuthnCreationOptions(
     val challenge: ByteArray,
     val excludedCredentialIds: List<ByteArray>,
     val reportCredentialProperties: Boolean,
+    val returnAuthenticatorData: Boolean,
 )
 
 internal data class WebAuthnRequestOptions(
@@ -88,6 +89,7 @@ internal object WebAuthnRequestParser {
             challenge = challenge,
             excludedCredentialIds = credentialIds(root.optJSONArray("excludeCredentials")),
             reportCredentialProperties = reportCredentialProperties,
+            returnAuthenticatorData = root.optionalBoolean("returnAuthenticatorData") ?: false,
         )
     }
 

@@ -82,6 +82,20 @@ internal class WebAuthnRequestParserTest {
     }
 
     @Test
+    fun acceptsOnlyAFullWindowsClientDataHash() {
+        val hash = ByteArray(32) { it.toByte() }
+        val client = relayClientData(
+            "https://example.org",
+            """{"clientDataHash":"${b64(hash)}"}""",
+        )
+        assertContentEquals(hash, client.suppliedHash)
+        assertEquals(null, relayClientData("https://example.org", "{}").suppliedHash)
+        assertFailsWith<IllegalArgumentException> {
+            relayClientData("https://example.org", """{"clientDataHash":"${b64(ByteArray(31))}"}""")
+        }
+    }
+
+    @Test
     fun validatesSelectionAttestationVerificationAndExtensions() {
         val challenge = b64(ByteArray(32))
         val supported = WebAuthnRequestParser.creation(
@@ -92,10 +106,12 @@ internal class WebAuthnRequestParserTest {
               "pubKeyCredParams":[{"type":"public-key","alg":-7}],
               "authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},
               "attestation":"none",
-              "extensions":{"credProps":true}
+              "extensions":{"credProps":true},
+              "returnAuthenticatorData":true
             }""",
         )
         assertTrue(supported.reportCredentialProperties)
+        assertTrue(supported.returnAuthenticatorData)
 
         // The one a real site asks for by default, and the one this relay
         // actually is: the browser is on a computer and the authenticator is a

@@ -92,6 +92,75 @@ test('page bridge serializes BufferSource and rebuilds a WebAuthn response', asy
   assert.equal(JSON.stringify(credential.getClientExtensionResults()), '{"credProps":{"rk":true}}');
 });
 
+test('page bridge processes GitHub AppID migration extensions as the WebAuthn client', async () => {
+  const { credentials, document } = page();
+  document.addEventListener('bioauth-webauthn-request', (event) => {
+    const request = JSON.parse(event.detail);
+    assert.deepEqual(request.options.extensions, { credProps: true });
+    document.dispatchEvent(new CustomEvent('bioauth-webauthn-response', {
+      detail: JSON.stringify({
+        id: request.id,
+        ok: true,
+        response: {
+          id: 'github-credential',
+          rawId: 'AQ',
+          response: { clientDataJSON: 'Ag', attestationObject: 'Aw' },
+          clientExtensionResults: { credProps: { rk: true } },
+        },
+      }),
+    }));
+  }, { once: true });
+
+  const created = await credentials.create({
+    publicKey: {
+      challenge: Uint8Array.of(1),
+      user: { id: Uint8Array.of(2) },
+      rp: {},
+      extensions: {
+        appidExclude: 'https://github.com/u2f/trusted_facets',
+        credProps: true,
+        prf: {},
+      },
+    },
+  });
+  assert.equal(
+    JSON.stringify(created.getClientExtensionResults()),
+    '{"credProps":{"rk":true},"appidExclude":false}',
+  );
+  assert.equal(
+    JSON.stringify(created.toJSON().clientExtensionResults),
+    '{"credProps":{"rk":true},"appidExclude":false}',
+  );
+
+  document.addEventListener('bioauth-webauthn-request', (event) => {
+    const request = JSON.parse(event.detail);
+    assert.equal(request.options.extensions, undefined);
+    document.dispatchEvent(new CustomEvent('bioauth-webauthn-response', {
+      detail: JSON.stringify({
+        id: request.id,
+        ok: true,
+        response: {
+          id: 'github-credential',
+          rawId: 'AQ',
+          response: {
+            clientDataJSON: 'Ag',
+            authenticatorData: 'Aw',
+            signature: 'BA',
+            userHandle: 'BQ',
+          },
+        },
+      }),
+    }));
+  }, { once: true });
+  const asserted = await credentials.get({
+    publicKey: {
+      challenge: Uint8Array.of(1),
+      extensions: { appid: 'https://github.com/u2f/trusted_facets' },
+    },
+  });
+  assert.equal(JSON.stringify(asserted.getClientExtensionResults()), '{"appid":false}');
+});
+
 test('page bridge handles abort, timeout, iframe policy, and native fallback', async () => {
   const aborting = page();
   let cancelled;
@@ -158,6 +227,11 @@ test('page bridge answers that a platform authenticator is available', async () 
     passkeyPlatformAuthenticator: true,
     conditionalGet: true,
     hybridTransport: false,
+    'extension:appid': true,
+    'extension:appidExclude': true,
+    'extension:credProps': true,
+    'extension:largeBlob': false,
+    'extension:prf': false,
   });
 });
 

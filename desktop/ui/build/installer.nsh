@@ -14,6 +14,12 @@
   CreateShortCut "$SMPROGRAMS\PhoneAuth File Locker.lnk" "$INSTDIR\resources\file-manager\phone-auth-file-manager.cmd" "" "$INSTDIR\PhoneAuth.exe" 0
   CreateShortCut "$DESKTOP\PhoneAuth File Locker.lnk" "$INSTDIR\resources\file-manager\phone-auth-file-manager.cmd" "" "$INSTDIR\PhoneAuth.exe" 0
 
+  ; Fully updated Windows 11 24H2+ routes WebAuthn from browsers and native apps
+  ; (including Discord) through registered passkey-manager plugins. Older builds
+  ; do not ship the API; registration then fails closed while the extension
+  ; remains available for browsers.
+  nsExec::ExecToLog '"$INSTDIR\resources\bin\phone-auth-windows-webauthn-plugin.exe" --register'
+
   ; Keep the extension's existing default handler intact. PhoneAuth appears in
   ; Open With and adds explicit verbs; installing a security tool must not
   ; silently seize a file type another program already owns.
@@ -30,6 +36,7 @@
 !macroend
 
 !macro customUnInstall
+  nsExec::ExecToLog '"$INSTDIR\resources\bin\phone-auth-windows-webauthn-plugin.exe" --unregister'
   Delete "$SMSTARTUP\PhoneAuth.lnk"
   Delete "$SMPROGRAMS\PhoneAuth File Locker.lnk"
   Delete "$DESKTOP\PhoneAuth File Locker.lnk"

@@ -300,6 +300,10 @@ jobs:
         working-directory: desktop
         run: cargo build --release -p phone-auth-agent -p phone-auth-cli
 
+      - name: Build Windows WebAuthn plugin
+        shell: powershell
+        run: .\desktop\windows-plugin\build.ps1 -Configuration release
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

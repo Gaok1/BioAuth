@@ -53,7 +53,8 @@
           "phone-auth",
           "phone-auth.exe",
           "phone-auth-webauthn-host",
-          "phone-auth-webauthn-host.exe"
+          "phone-auth-webauthn-host.exe",
+          "phone-auth-windows-webauthn-plugin.exe"
         ]
       },
       {

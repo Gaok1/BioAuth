@@ -54,7 +54,7 @@
     return response;
   };
 
-  const credentialObject = (operation, json) => {
+  const credentialObject = (operation, json, clientExtensionResults = {}) => {
     const credential = Object.create(globalThis.PublicKeyCredential?.prototype ?? Object.prototype);
     Object.defineProperties(credential, {
       id: { value: json.id, enumerable: true },
@@ -62,8 +62,18 @@
       type: { value: "public-key", enumerable: true },
       authenticatorAttachment: { value: json.authenticatorAttachment ?? "platform", enumerable: true },
       response: { value: responseObject(operation, json), enumerable: true },
-      getClientExtensionResults: { value: () => ({ ...(json.clientExtensionResults ?? {}) }) },
-      toJSON: { value: () => structuredClone(json) },
+      getClientExtensionResults: {
+        value: () => ({ ...(json.clientExtensionResults ?? {}), ...clientExtensionResults }),
+      },
+      toJSON: {
+        value: () => structuredClone({
+          ...json,
+          clientExtensionResults: {
+            ...(json.clientExtensionResults ?? {}),
+            ...clientExtensionResults,
+          },
+        }),
+      },
     });
     return credential;
   };
@@ -97,6 +107,24 @@
   const relay = (operation, options) => {
     const id = crypto.randomUUID();
     const publicKey = jsonify(options.publicKey);
+    const clientExtensionResults = {};
+    if (publicKey.extensions) {
+      // AppID is processed by the WebAuthn client, not by the authenticator.
+      // This bridge has never created U2F credentials, so neither legacy lookup
+      // can match. GitHub includes these migration extensions in otherwise
+      // ordinary passkey requests; forwarding them to the phone made the phone
+      // reject a valid ceremony as an unsupported authenticator extension.
+      if (operation === "create" && "appidExclude" in publicKey.extensions) {
+        clientExtensionResults.appidExclude = false;
+      }
+      if (operation === "get" && "appid" in publicKey.extensions) {
+        clientExtensionResults.appid = false;
+      }
+      publicKey.extensions = Object.fromEntries(
+        Object.entries(publicKey.extensions).filter(([name]) => name === "credProps"),
+      );
+      if (!Object.keys(publicKey.extensions).length) delete publicKey.extensions;
+    }
     if (operation === "create") {
       publicKey.rp = { ...publicKey.rp, id: publicKey.rp?.id ?? location.hostname };
     } else {
@@ -117,7 +145,7 @@
         }));
         reject(new DOMException("PhoneAuth request timed out", "NotAllowedError"));
       }, deadline(options.publicKey));
-      pending.set(id, { operation, resolve, reject, timer });
+      pending.set(id, { operation, resolve, reject, timer, clientExtensionResults });
       options.signal?.addEventListener("abort", () => {
         const current = pending.get(id);
         if (!current) return;
@@ -146,7 +174,11 @@
       return;
     }
     try {
-      request.resolve(credentialObject(request.operation, message.response));
+      request.resolve(credentialObject(
+        request.operation,
+        message.response,
+        request.clientExtensionResults,
+      ));
     } catch {
       request.reject(new DOMException("Invalid PhoneAuth response", "UnknownError"));
     }
@@ -183,11 +215,16 @@
     // detection still sees the engine it is actually running on.
     if (nativeCapabilities) {
       Object.defineProperty(platformAuthenticator, "getClientCapabilities", {
-        value: async () => ({
+        value: async () => Object.fromEntries(Object.entries({
           ...(await nativeCapabilities().catch(() => ({}))),
           userVerifyingPlatformAuthenticator: true,
           passkeyPlatformAuthenticator: true,
-        }),
+          "extension:appid": true,
+          "extension:appidExclude": true,
+          "extension:credProps": true,
+          "extension:largeBlob": false,
+          "extension:prf": false,
+        }).sort(([left], [right]) => left.localeCompare(right))),
       });
     }
   }

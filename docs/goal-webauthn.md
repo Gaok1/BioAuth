@@ -84,14 +84,16 @@ ser. A defesa real é o celular exibir a origem e o usuário ser o último
 conferente. É o mesmo modelo do Bitwarden, mas tem que estar escrito no
 `threat-model.md`, não implícito.
 
+## Integração nativa adicionada
+
+- **Windows Plugin Authenticator API.** O pedido de suporte ao Discord desktop
+  trouxe este caminho para o escopo. O provider usa a API do Windows 11 build
+  26100.6725+, enquanto sistemas anteriores continuam pela extensão no navegador.
+
 ## Fora de escopo
 
 - **caBLE / hybrid transport.** O Android já é autenticador cross-device pelo
   Play Services. Reimplementar o túnel não ganha nada.
-- **Windows Plugin Authenticator API.** É a integração nativa certa a longo
-  prazo — aparece na UI de passkey do próprio Windows, sem extensão — mas exige
-  Windows 11 24H2+. A máquina de desenvolvimento é Windows 10; anote como item
-  futuro e siga pela extensão.
 - iOS (`ASCredentialProviderExtension`).
 - Sincronizar passkeys entre celulares.
 - Qualquer mudança em transporte, pareamento ou handshake de sessão. Esse
