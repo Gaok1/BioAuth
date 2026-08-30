@@ -93,6 +93,15 @@ class VaultController extends ChangeNotifier {
     return _favourites.order(matching);
   }
 
+  /// Whether the vault holds nothing, as opposed to the search matching
+  /// nothing.
+  ///
+  /// [items] is filtered, so the screen could not tell those apart and said
+  /// the same sentence for both. "No items found", to somebody who has just
+  /// unlocked a vault for the first time, reads as a vault that failed to
+  /// load rather than as one waiting to be filled.
+  bool get isEmpty => _items.isEmpty;
+
   bool isFavourite(String id) => _favourites.contains(id);
 
   /// Stars or unstars an item.

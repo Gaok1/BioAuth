@@ -238,7 +238,18 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
       if (controller.busy) const LinearProgressIndicator(),
       Expanded(
         child: controller.items.isEmpty
-            ? const Center(child: Text('Nenhum item encontrado.'))
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    controller.isEmpty
+                        ? 'O cofre está vazio. Toque em + para guardar o '
+                              'primeiro item.'
+                        : 'Nenhum item corresponde à busca.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
             : ListView.builder(
                 itemCount: controller.items.length,
                 itemBuilder: (context, index) => _item(controller.items[index]),

@@ -37,7 +37,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'missing');
     await tester.pump();
-    expect(find.text('Nenhum item encontrado.'), findsOneWidget);
+    expect(find.text('Nenhum item corresponde à busca.'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'example');
     await tester.pump();
 
@@ -59,6 +59,30 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(find.text('Example'), findsOneWidget);
+  });
+
+  testWidgets('an empty vault invites a first item instead of reporting '
+      'nothing found', (tester) async {
+    final controller = VaultController(
+      store: _ScreenStore(empty: true),
+      copy: (_) async {},
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: VaultScreen(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Desbloquear'));
+    await tester.pumpAndSettle();
+
+    // Both states used to say "Nenhum item encontrado.", and to somebody
+    // opening a brand new vault that reads as a vault that failed to load --
+    // which is exactly what an empty screen behind a fingerprint looks like.
+    // The way out of it is the button this sentence points at.
+    expect(
+      find.text('O cofre está vazio. Toque em + para guardar o primeiro item.'),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Novo item'), findsOneWidget);
   });
 
   testWidgets('leaving the foreground locks the vault', (tester) async {
@@ -93,6 +117,9 @@ void main() {
 }
 
 class _ScreenStore extends VaultStore {
+  _ScreenStore({this.empty = false});
+
+  final bool empty;
   int fetches = 0;
   final item = VaultItemSummary(
     id: 'one',
@@ -106,7 +133,7 @@ class _ScreenStore extends VaultStore {
 
   @override
   Future<VaultPage> listPage([String? cursor]) async =>
-      VaultPage(items: [item]);
+      VaultPage(items: empty ? const [] : [item]);
 
   @override
   Future<VaultSecret> fetch(String id) async {
