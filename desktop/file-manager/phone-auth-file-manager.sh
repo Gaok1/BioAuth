@@ -38,12 +38,19 @@ fail() {
 ((${#paths[@]} > 0)) || fail 'Select at least one regular file.'
 locked=0
 plain=0
+# Collected rather than assigned in place: `path` is the loop's own variable,
+# so resolving it there left `paths` holding whatever was typed. That is the
+# difference between naming a file and naming a name for it, and what it is
+# handed to can delete the original.
+resolved=()
 for path in "${paths[@]}"; do
   [[ "$path" != *$'\n'* ]] || fail 'Filenames containing a newline are not supported by Nautilus scripts.'
   [[ -f "$path" ]] || fail "Not a regular file: $path"
   path="$(realpath -- "$path")"
   [[ "$path" == *.balock ]] && ((locked += 1)) || ((plain += 1))
+  resolved+=("$path")
 done
+paths=("${resolved[@]}")
 
 if [[ "$mode" == auto ]]; then
   if ((locked == ${#paths[@]})); then mode=unlock
