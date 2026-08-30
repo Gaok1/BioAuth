@@ -445,8 +445,14 @@ jobs:
              desktop/target/release/phone-auth-initrd \
              staging/phone-auth/
           cp -r desktop/browser-extension staging/phone-auth/
+          mkdir -p staging/phone-auth/file-manager
+          cp desktop/file-manager/phone-auth-file-manager.* \
+             desktop/file-manager/install-nautilus.sh \
+             staging/phone-auth/file-manager/
           cp README.md docs/desktop.md docs/protocol-handshake.md docs/webauthn.md \
              staging/phone-auth/
+          mkdir -p staging/phone-auth/docs
+          cp docs/file-manager-integration.md staging/phone-auth/docs/
           tar -czf artifacts/phone-auth-linux-x86_64.tar.gz -C staging phone-auth
 
       - uses: actions/setup-node@v4

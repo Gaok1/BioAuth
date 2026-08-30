@@ -191,6 +191,7 @@ by a non-publishing manual workflow run and is named `PhoneAuth-android-debug`.
 
 - [Wire format and test vectors](docs/protocol-handshake.md)
 - [Vault and File Locker application frames](docs/protocol-application.md)
+- [Explorer, Nautilus and drag-and-drop File Locker integration](docs/file-manager-integration.md)
 - [Architecture](docs/architecture.md)
 - [Threat model](docs/threat-model.md)
 - [Product and security decisions](docs/product-decisions.md)

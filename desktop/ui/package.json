@@ -54,6 +54,16 @@
       {
         "from": "../browser-extension/",
         "to": "browser-extension"
+      },
+      {
+        "from": "../file-manager/",
+        "to": "file-manager",
+        "filter": [
+          "phone-auth-file-manager.ps1",
+          "phone-auth-file-manager.cmd",
+          "phone-auth-file-manager.sh",
+          "install-nautilus.sh"
+        ]
       }
     ],
     "win": {
@@ -102,7 +112,7 @@
       }
     },
     "deb": {
-      "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils"]
+      "depends": ["libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "zenity"]
     },
     "publish": null
   }

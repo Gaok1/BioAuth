@@ -46,6 +46,13 @@ rustPlatform.buildRustPackage ({
   postInstall = ''
     mkdir -p $out/share/phone-auth/browser-extension
     cp -r ${../browser-extension}/. $out/share/phone-auth/browser-extension/
+    mkdir -p $out/share/phone-auth/file-manager
+    cp ${../file-manager}/phone-auth-file-manager.* \
+       ${../file-manager}/install-nautilus.sh \
+       $out/share/phone-auth/file-manager/
+    chmod 755 $out/share/phone-auth/file-manager/*.sh
+    mkdir -p $out/share/doc/phone-auth
+    cp ${../../docs/file-manager-integration.md} $out/share/doc/phone-auth/
   '' + lib.optionalString withTray ''
     mkdir -p $out/share/phone-auth
     cp -r ${../ui}/src ${../ui}/renderer ${../ui}/assets ${../ui}/package.json \
