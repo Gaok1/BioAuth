@@ -59,8 +59,9 @@ BLE remains optional and never leaks BLE concepts into protocol/domain types.
 
 - [x] Minimal Rust `phone-auth-initrd`, separate from `phone-auth-agent`
       — credential selection and the key-separation and hardware-key gates are
-      implemented; it has no transport, so it always falls through to the
-      recovery keyslot today
+      implemented
+- [x] Minimal wired IPv4 transport with paired mutual handshake, bounded
+      framing and one boot deadline; no agent, BlueZ or D-Bus dependency
 - [x] NixOS module, with separate system and user agents so that a PAM rule
       never depends on a user-writable pairing store
 - [x] Initrd attack-surface review: wired IPv4/TCP selected; Wi-Fi rejected and
