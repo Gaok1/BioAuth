@@ -11,7 +11,10 @@ import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
 import 'package:phone_auth/core/transport/auth_transport.dart';
 import 'package:phone_auth/core/transport/secure_session_establisher.dart';
+import 'package:phone_auth/core/auth/interactive_authorizer.dart';
+import 'package:phone_auth/core/ssh/ssh_service.dart';
 import 'package:phone_auth/core/vault/vault_approval.dart';
+import 'package:phone_auth/domain/authentication_request.dart';
 
 final _record = PairingRecord(
   verifierId: 'desktop-1',
@@ -172,7 +175,95 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
   });
+
+  // The same rule again, for the two sheets it was never applied to. The
+  // handler stated it in general terms -- a sheet the user can no longer see
+  // must not stay answerable -- and called it on the vault's approval alone,
+  // so an untapped `sudo` and an untapped SSH signature survived a trip to
+  // the background still live. Those are the two that grant more than a
+  // copied password does.
+  testWidgets('leaving refuses the sudo and the ssh prompt too', (
+    tester,
+  ) async {
+    final session = _IdleSession();
+    final transport = _LifecycleTransport(session);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+
+    late InteractiveSshApproval ssh;
+    late InteractiveAuthorizer auth;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appConfigProvider.overrideWithValue(const AppConfig.production()),
+          pairedVerifiersProvider.overrideWith((ref) async => [_record]),
+          backgroundSessionsReadyProvider.overrideWith((ref) async => true),
+          transportProvider.overrideWith((ref) async => transport),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            ssh = ref.watch(sshApprovalProvider);
+            auth = ref.watch(interactiveAuthorizerProvider);
+            return const PhoneAuthApp();
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    bool? signed;
+    unawaited(
+      ssh
+          .confirm(
+            const SshApprovalRequest(
+              id: 'ssh-1',
+              verifierName: 'desktop-1',
+              user: 'alice',
+              destination: 'git@github.com',
+            ),
+          )
+          .then((value) => signed = value),
+    );
+    bool? approved;
+    unawaited(
+      auth.confirm(_sudoRequest, _properties).then((value) => approved = value),
+    );
+    await tester.pumpAndSettle();
+    expect(ssh.pendingRequestIds, contains('ssh-1'));
+    expect(auth.pendingRequestIds, contains('request-1'));
+
+    // Same carve-out as the vault's: losing focus is the biometric prompt
+    // going up, not the user walking away.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(signed, isNull);
+    expect(approved, isNull);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(signed, isFalse, reason: 'an ssh signature nobody read is refused');
+    expect(approved, isFalse, reason: 'so is a sudo nobody read');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
 }
+
+final _sudoRequest = AuthenticationRequest(
+  requestId: 'request-1',
+  verifierId: 'desktop-1',
+  verifierName: 'Desktop-NixOS',
+  credentialId: 'credential-1',
+  challenge: Uint8List(32),
+  origin: 'replaced by session',
+  service: 'sudo',
+  action: 'nixos-rebuild switch',
+  resource: 'Desktop-NixOS',
+  user: 'alice',
+  issuedAt: DateTime.utc(2026, 8, 27, 12),
+  expiresAt: DateTime.utc(2026, 8, 27, 12, 1),
+  sessionBinding: Uint8List(32),
+);
 
 class _LifecycleTransport implements AuthTransport {
   _LifecycleTransport(this.session);

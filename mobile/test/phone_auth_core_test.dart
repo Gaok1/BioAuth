@@ -167,4 +167,55 @@ void main() {
       throwsA(isA<PhoneAuthProtocolException>()),
     );
   });
+
+  test('a tap that lands after the request expired does not sign it', () async {
+    // The validity window was checked once, against the clock of the moment
+    // the request arrived, and consent suspends for as long as a human takes.
+    // This request is good for a minute; this user answers after two.
+    final (_, mobileSession) = await connectedTransport();
+    final authorizer = await FakeBiometricAuthorizer.create();
+    var moment = now;
+    final core = PhoneAuthCore(
+      authorizer: authorizer,
+      consent: _SlowConsent(() => moment = now.add(const Duration(minutes: 2))),
+      policy: const VerifierPolicy(
+        verifierId: 'desktop-1',
+        credentialId: 'desktop-1-sudo-v1',
+        permissions: [
+          VerifierPermission(service: 'sudo', action: 'nixos-rebuild switch'),
+        ],
+      ),
+      clock: () => moment,
+    );
+
+    final response = await core.authorize(
+      request(sessionBinding: mobileSession.sessionBinding),
+      mobileSession,
+    );
+
+    expect(response.decision, AuthorizationDecision.denied);
+    expect(
+      authorizer.authorizationCount,
+      0,
+      reason:
+          'the desktop refuses an answer past the deadline anyway, so a '
+          'fingerprint spent here buys a signature nobody can use',
+    );
+  });
+}
+
+/// Someone who says yes, long after being asked.
+class _SlowConsent implements AuthorizationConsent {
+  _SlowConsent(this.onAsked);
+
+  final void Function() onAsked;
+
+  @override
+  Future<bool> confirm(
+    AuthenticationRequest request,
+    TransportSecurityProperties transport,
+  ) async {
+    onAsked();
+    return true;
+  }
 }

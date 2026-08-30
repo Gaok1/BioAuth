@@ -96,6 +96,24 @@ class InteractiveAuthorizer
     if (outcome != null && !outcome.isCompleted) outcome.completeError(reason);
   }
 
+  /// Refuses every prompt still waiting to be tapped.
+  ///
+  /// Called when the app leaves the foreground: a sheet the user can no longer
+  /// see must not stay answerable, or a tap landing on it as the phone comes
+  /// back approves a `sudo` nobody read.
+  ///
+  /// Only the untapped ones. A request already in [_outcome] is one the user
+  /// consented to and whose biometric prompt is in flight -- and on some
+  /// devices that prompt is itself what puts the app in the background. This
+  /// is the same distinction the lifecycle handler draws between `inactive`
+  /// and `paused`, and getting it wrong here would refuse a request in the
+  /// middle of the gesture approving it.
+  void abandonUnanswered() {
+    for (final id in _consent.keys.toList()) {
+      _consent.remove(id)?.complete(false);
+    }
+  }
+
   Iterable<String> get pendingRequestIds => {
     ..._consent.keys,
     ..._outcome.keys,

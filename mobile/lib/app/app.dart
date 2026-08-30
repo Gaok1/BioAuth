@@ -92,11 +92,20 @@ class _SessionHostState extends ConsumerState<_SessionHost>
       // is not an answer, so it becomes a refusal — otherwise a tap landing
       // on the sheet as the phone comes back would approve a request nobody
       // read.
+      //
+      // All three sheets, not just the vault's. The rule was written here in
+      // general terms and applied to one of them: an untapped `sudo` and an
+      // untapped SSH signature stayed answerable across a trip to the
+      // background, and those are the two that grant more than a copied
+      // password. `InteractiveSshApproval.abandonAll` even documented itself
+      // with this sentence and was never called from here.
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         if (!ref.read(appConfigProvider).mockEnabled) {
           ref.read(vaultApprovalProvider).abandonAll();
+          ref.read(sshApprovalProvider).abandonAll();
+          ref.read(interactiveAuthorizerProvider).abandonUnanswered();
         }
     }
   }

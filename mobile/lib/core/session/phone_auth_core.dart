@@ -133,6 +133,21 @@ class PhoneAuthCore {
       return AuthResponse.denied(request);
     }
 
+    // The window above was measured against the clock of the moment the
+    // request arrived, and `consent.confirm` suspends for as long as a human
+    // takes to answer -- which is not bounded by anything in here. A tap that
+    // lands after the request died is not consent to sign it: the desktop
+    // refuses an answer past `expiresAt`, so what the old code produced was a
+    // fingerprint spent on a signature nobody could use, given by someone who
+    // by then was answering a prompt they had left on screen.
+    //
+    // Checked here rather than after the signature, because this is where the
+    // human delay is. What comes next is a biometric prompt measured in
+    // seconds, and refusing after it would waste the gesture this avoids.
+    if (request.isExpiredAt(_clock().toUtc())) {
+      return AuthResponse.denied(request);
+    }
+
     try {
       final proof = await authorizer.authorize(
         request: request,
