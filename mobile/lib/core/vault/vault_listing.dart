@@ -20,6 +20,8 @@
 /// front of a user who was told which one.
 library;
 
+import 'dart:async';
+
 import '../../features/vault/vault_store.dart';
 
 /// How long a snapshot may sit unused before the next page has to read again.
@@ -52,6 +54,16 @@ class VaultListing {
   List<VaultItemSummary>? _items;
   DateTime? _usedAt;
 
+  /// Enforces the TTL instead of only reporting it.
+  ///
+  /// The check in [items] is consulted when the next page arrives, which for a
+  /// walk that simply stopped is never: the snapshot then sat in memory until
+  /// the app left the foreground, whatever this file said about thirty
+  /// seconds. It is the vault's metadata -- every item's name, username and
+  /// address -- so the bound has to be something that happens rather than
+  /// something that is checked.
+  Timer? _expiry;
+
   /// The vault's metadata, reading it again only when the walk demands it.
   ///
   /// [restart] is true for the first page of a walk, which is what an empty
@@ -68,18 +80,27 @@ class VaultListing {
         _clock().difference(used) < _ttl) {
       // A walk that is still walking keeps what it started from. The clock
       // this bounds is the gap between pages, not the length of the listing.
-      _usedAt = _clock();
+      _touch();
       return held;
     }
     final fresh = await _store.listAll();
     _items = fresh;
-    _usedAt = _clock();
+    _touch();
     return fresh;
   }
 
   /// Drops what is held. Called when the sessions that page through it end.
   void forget() {
+    _expiry?.cancel();
+    _expiry = null;
     _items = null;
     _usedAt = null;
+  }
+
+  /// Marks a page served and restarts the countdown to forgetting.
+  void _touch() {
+    _usedAt = _clock();
+    _expiry?.cancel();
+    _expiry = Timer(_ttl, forget);
   }
 }

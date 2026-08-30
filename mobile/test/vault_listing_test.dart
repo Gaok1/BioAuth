@@ -150,6 +150,49 @@ void main() {
     expect(repository.reads, 2);
   });
 
+  test('a walk that just stops loses its snapshot anyway', () async {
+    // The TTL check in `items` is consulted when the next page arrives, and a
+    // walk that simply stopped never sends one. The snapshot used to sit there
+    // until the app left the foreground -- and it is the vault's metadata,
+    // every item's name, username and address, decrypted.
+    final repository = _Store(40);
+    final listing = VaultListing(
+      store: repository,
+      // Frozen, so the check inside `items` cannot be what drops the
+      // snapshot: by that clock no time passes at all between the two pages.
+      // What is under test is the bound happening on its own.
+      clock: () => now,
+      ttl: const Duration(milliseconds: 20),
+    );
+    final service = VaultService(repository: repository, listing: listing);
+
+    final first = wire.VaultListResponse.decode(
+      ApplicationFrame.decode(
+        await service.handle(
+          listRequest(''),
+          sessionBinding: binding,
+          authorized: true,
+          now: now,
+        ),
+      ).payload,
+    );
+    expect(first.nextCursor, isNotEmpty, reason: 'the walk has more to go');
+    expect(repository.reads, 1);
+
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+
+    // Nothing asked for anything in between and the listing's own clock has
+    // not moved, so a second read here is the snapshot having been dropped on
+    // its own rather than having been found stale or replaced.
+    await service.handle(
+      listRequest(first.nextCursor),
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    expect(repository.reads, 2);
+  });
+
   test('a walk that keeps walking keeps its snapshot', () async {
     final repository = _Store(120);
     var moment = now;
