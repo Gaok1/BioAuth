@@ -24,7 +24,7 @@ use phone_auth_verifier::random;
 
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
-    LockerLockParams, LockerRekeyParams, LockerUnlockParams, RecentParams, Reply,
+    LockerLockParams, LockerRekeyParams, LockerUnlockParams, LuksEnrollParams, RecentParams, Reply,
     SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultFillParams,
     VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
@@ -361,6 +361,20 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
                 )
             }
             Ok(_) => Reply::err(id, "bad-request", "invalid WebAuthn request id"),
+            Err(reply) => reply(id),
+        },
+
+        // Enrollment holds the lock for the length of one phone prompt. Two of
+        // them racing would leave a key file from one and a wrapper from the
+        // other, which is a volume nothing can open.
+        "luks.enroll" => match parse::<LuksEnrollParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").luks_enroll(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
             Err(reply) => reply(id),
         },
 

@@ -12,7 +12,7 @@
 #
 # Running only the user agent and pointing PAM at it would look like it works
 # and would be a privilege escalation.
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, utils, ... }:
 
 let
   cfg = config.services.phone-auth;
@@ -121,6 +121,189 @@ in
         have a tested recovery path that does not involve the phone.
       '';
     };
+
+    boot = {
+      enable = lib.mkEnableOption ''
+        unlocking encrypted volumes from a phone on the USB cable during early
+        boot.
+
+        The phone is an *alternative* to the passphrase, never a replacement:
+        every failure path here leaves the normal prompt in place
+      '';
+
+      verifierId = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "9f2c1d8e4b6a";
+        description = ''
+          Desktop id this machine was paired under, as stored by the phone.
+
+          Early boot has no agent to ask, so the id has to be written down.
+          `phone-auth status` prints it on a running system.
+        '';
+      };
+
+      verifierName = lib.mkOption {
+        type = lib.types.str;
+        default = config.networking.hostName;
+        defaultText = lib.literalExpression "config.networking.hostName";
+        description = ''
+          Name shown in the phone's biometric prompt while booting. It is the
+          only cue the user has that the request came from their own machine.
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8765;
+        description = ''
+          TCP port the initrd listens on over the cable. The phone finds the
+          address on its own but not the port, so this must stay the port the
+          pairing record carries.
+        '';
+      };
+
+      timeout = lib.mkOption {
+        type = lib.types.ints.between 1 300;
+        default = 60;
+        description = ''
+          Seconds to wait for the phone before falling back to the passphrase
+          prompt. The clock covers plugging the cable in, turning USB tethering
+          on and approving with a fingerprint, so it is not only transfer time.
+        '';
+      };
+
+      identityFile = lib.mkOption {
+        type = lib.types.path;
+        default = "${systemRoot}/data/identity.pkcs8";
+        description = ''
+          Handshake key the initrd authenticates with.
+
+          This is **the agent's own identity**, not a key of its own, because
+          the phone accepts nothing else: it verifies the verifier against the
+          key it stored at pairing, and a fresh key would simply be an unknown
+          computer. Boot unlock therefore costs putting that key on the boot
+          partition — `boot.initrd.secrets` keeps it out of the world-readable
+          Nix store, but anyone holding the disk can read it, and with it
+          impersonate this machine to the phone for anything the phone will
+          approve.
+
+          That is the deviation recorded in `luks-initrd-threat-review.md`, and
+          the reason boot unlock is off by default. A separate boot pairing,
+          which would make this key boot-only and revocable on its own, does
+          not exist yet.
+        '';
+      };
+
+      storeFile = lib.mkOption {
+        type = lib.types.path;
+        default = "${systemRoot}/data/devices.json";
+        description = ''
+          Pairing store the initrd reads: public keys and policy only. It says
+          which phone may be asked, so it must not be writable by anyone who is
+          not already root.
+        '';
+      };
+
+      drill = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = ''
+            Check on a timer that somebody can still open these volumes without
+            the phone.
+
+            It cannot test a passphrase — nothing running unattended can, since
+            there is nobody to type it — so it tests the date instead: when a
+            volume has gone {option}`maxAge` days since the last
+            `phone-auth luks drill`, the unit fails and stays visible in
+            `systemctl --failed`. A passphrase nobody has used in a year is a
+            passphrase nobody knows is still there.
+          '';
+        };
+
+        maxAge = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 90;
+          description = ''
+            Days a volume may go without anybody proving it still opens without
+            the phone.
+          '';
+        };
+
+        interval = lib.mkOption {
+          type = lib.types.str;
+          default = "weekly";
+          example = "monthly";
+          description = ''
+            How often to look at the dates, as a systemd `OnCalendar` value.
+            This is only how often the question is asked; {option}`maxAge` is
+            the answer that counts as overdue.
+          '';
+        };
+      };
+
+      usbTether.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Configure the USB tether link in the initrd: the drivers Android's
+          RNDIS/NCM gadget needs, and DHCP on whatever interface they bind.
+
+          The phone is the DHCP server and the only other host on that subnet,
+          so this needs no network of any kind — which is the point at boot,
+          where there usually is none. IPv6, DNS and default routes from the
+          phone are all refused: the cable is a link to one host, not an
+          uplink.
+        '';
+      };
+
+      volumes = lib.mkOption {
+        default = { };
+        example = lib.literalExpression ''
+          { cryptroot.wrappedKeyFile = "/var/lib/phone-auth/initrd/cryptroot.cbor"; }
+        '';
+        description = ''
+          Volumes a phone may unlock, keyed by the mapped name used in
+          {option}`boot.initrd.luks.devices`. LUKS1 and LUKS2 both work: the
+          keyslot is an ordinary passphrase slot and nothing here uses a LUKS2
+          token.
+
+          Every volume must keep a separate, tested, offline recovery keyslot.
+        '';
+        type = lib.types.attrsOf (lib.types.submodule ({ name, ... }: {
+          options = {
+            wrappedKeyFile = lib.mkOption {
+              type = lib.types.path;
+              description = ''
+                Public wrapped volume credential written by
+                `phone-auth luks enroll`: a binding, a credential id and an
+                opaque wrapper. No disk key, no private key.
+              '';
+            };
+
+            credential = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Which disk-unlock credential to use. Only needed when more than
+                one phone is enrolled: the initrd refuses to guess rather than
+                let file order decide which phone opens the machine.
+              '';
+            };
+
+            displayName = lib.mkOption {
+              type = lib.types.str;
+              default = name;
+              description = ''
+                Volume name shown in the phone's prompt. The user approves this
+                string, so it should say what is being opened.
+              '';
+            };
+          };
+        }));
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -195,6 +378,14 @@ in
         }
       ];
 
+      warnings = lib.optional cfg.pam.required ''
+        services.phone-auth.pam.required makes the phone the only way to
+        authenticate: ${lib.concatStringsSep ", " cfg.pam.services}.
+        A phone that is lost, flat or broken is then a lockout with no second
+        option, so keep a root shell open, a rescue medium at hand, or an
+        account these rules do not cover.
+      '';
+
       security.pam.services = lib.genAttrs cfg.pam.services (_: {
         text = lib.mkBefore pamRule;
       });
@@ -241,6 +432,212 @@ in
         fi
       '';
     })
+    (lib.mkIf cfg.boot.enable (
+      let
+        # systemd-cryptsetup reads a key from a file, or it asks the user. That
+        # is the whole fallback design: this script writes the file only when
+        # the phone actually answered, and never fails the boot when it did not.
+        keyFile = name: "/run/phone-auth/${name}.key";
+
+        unlockScript = pkgs.writeShellScript "phone-auth-boot-unlock" ''
+          set -u
+          volume="$1"
+          key="$2"
+          shift 2
+
+          umask 077
+          if ${cfg.package}/bin/phone-auth-initrd "$@" > "$key.partial"; then
+            mv "$key.partial" "$key"
+          else
+            status=$?
+            rm -f "$key.partial"
+            echo "phone-auth: no key for $volume (exit $status);" \
+                 "the passphrase prompt stands" >&2
+          fi
+
+          # Always zero. A declined request, a phone that is not on the cable
+          # and a phone that is flat are all fallbacks, not failed boots.
+          exit 0
+        '';
+
+        cryptUnit = name:
+          "systemd-cryptsetup@${utils.escapeSystemdPath name}.service";
+
+        unlockUnits = lib.mapAttrs' (name: volume:
+          lib.nameValuePair "phone-auth-unlock-${name}" {
+            description = "Ask a paired phone to unlock ${name}";
+
+            # Ordered inside the dependency window of the cryptsetup unit, so
+            # the key exists before the volume is opened, and the prompt is
+            # still there when it does not.
+            before = [ (cryptUnit name) ];
+            wantedBy = [ (cryptUnit name) ];
+            after = [ "network-online.target" ];
+            wants = [ "network-online.target" ];
+            unitConfig.DefaultDependencies = false;
+
+            serviceConfig = {
+              Type = "oneshot";
+              # The key file lives in this runtime directory. Letting systemd
+              # remove it when the unit stops would take it away before
+              # cryptsetup has read it.
+              RemainAfterExit = true;
+              RuntimeDirectory = "phone-auth";
+              RuntimeDirectoryMode = "0700";
+              UMask = "0077";
+              ExecStart = lib.escapeShellArgs ([
+                unlockScript
+                volume.displayName
+                (keyFile name)
+                "--volume" volume.displayName
+                "--store" "/etc/phone-auth/devices.json"
+                "--identity" "/etc/phone-auth/identity.pkcs8"
+                "--wrapped-key" "/etc/phone-auth/${name}.cbor"
+                "--verifier-id" cfg.boot.verifierId
+                "--verifier-name" cfg.boot.verifierName
+                "--port" (toString cfg.boot.port)
+                "--timeout" (toString cfg.boot.timeout)
+              ] ++ lib.optionals (volume.credential != null) [
+                "--credential" volume.credential
+              ]);
+            };
+          }) cfg.boot.volumes;
+
+        # /run is handed to the real system at switch-root, so a disk key left
+        # in it does not stay behind in the initrd: it boots with the machine.
+        # This unit is what keeps a 32-byte volume key out of the running
+        # system.
+        shredUnit = {
+          phone-auth-shred-keys = {
+            description = "Remove disk keys before handing /run to the system";
+            after = [ "cryptsetup.target" ];
+            before = [ "initrd-switch-root.target" ];
+            wantedBy = [ "initrd-switch-root.target" ];
+            unitConfig.DefaultDependencies = false;
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = "${pkgs.coreutils}/bin/rm -rf /run/phone-auth";
+            };
+          };
+        };
+      in
+      {
+        systemd.services.phone-auth-luks-drill = lib.mkIf cfg.boot.drill.enable {
+          description = "Check the disk still opens without the phone";
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart =
+              "${cfg.package}/bin/phone-auth --root ${systemRoot} luks drill "
+              + "--check --max-age ${toString cfg.boot.drill.maxAge}";
+          };
+        };
+
+        systemd.timers.phone-auth-luks-drill = lib.mkIf cfg.boot.drill.enable {
+          description = "Check the disk still opens without the phone";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = cfg.boot.drill.interval;
+            # A machine that was off on the day is asked when it comes back:
+            # skipping the check quietly is the one outcome that defeats it.
+            Persistent = true;
+            RandomizedDelaySec = "1h";
+          };
+        };
+
+        assertions = [
+          {
+            assertion = config.boot.initrd.systemd.enable;
+            message = ''
+              services.phone-auth.boot.enable needs boot.initrd.systemd.enable.
+              The unlock runs as a unit ordered against systemd-cryptsetup, and
+              the scripted initrd has neither.
+            '';
+          }
+          {
+            assertion = cfg.boot.verifierId != "";
+            message = ''
+              services.phone-auth.boot.verifierId is empty. Early boot has no
+              agent to ask which desktop this is, so the id the phone stored
+              has to be written down; `phone-auth status` prints it.
+            '';
+          }
+          {
+            assertion = cfg.boot.volumes != { };
+            message = ''
+              services.phone-auth.boot.enable is on with no volumes, which
+              installs a boot-time listener that can never unlock anything.
+            '';
+          }
+        ] ++ lib.mapAttrsToList (name: _: {
+          assertion = config.boot.initrd.luks.devices ? ${name};
+          message = ''
+            services.phone-auth.boot.volumes.${name} has no matching
+            boot.initrd.luks.devices.${name}. The unlock is ordered against the
+            cryptsetup unit of that volume, and there is none.
+          '';
+        }) cfg.boot.volumes;
+
+        # The USB gadget of an Android phone arrives as one of these. Matching
+        # the driver rather than the interface name keeps it working whether
+        # the kernel calls the link usb0 or enp0s20f0u1.
+        boot.initrd.availableKernelModules =
+          lib.mkIf cfg.boot.usbTether.enable [
+            "usbnet"
+            "rndis_host"
+            "cdc_ether"
+            "cdc_ncm"
+            "cdc_eem"
+          ];
+
+        boot.initrd.network.enable = lib.mkDefault true;
+
+        boot.initrd.systemd.network.networks."40-phone-auth-usb" =
+          lib.mkIf cfg.boot.usbTether.enable {
+            matchConfig.Driver = "rndis_host cdc_ether cdc_ncm cdc_eem";
+            # The DHCP server runs on the phone, at the other end of the cable,
+            # so this needs no network of any kind, which is the point at boot
+            # where there is none. It is also not an uplink: no DNS, no default
+            # route, no IPv6.
+            networkConfig = {
+              DHCP = "ipv4";
+              IPv6AcceptRA = false;
+              LinkLocalAddressing = "no";
+            };
+            dhcpV4Config = {
+              UseDNS = false;
+              UseNTP = false;
+              UseGateway = false;
+              UseRoutes = false;
+            };
+            linkConfig.RequiredForOnline = "routable";
+          };
+
+        # Appended to the initrd at nixos-rebuild time instead of going through
+        # the store, which is world-readable. The handshake key is the one file
+        # here that must not be public.
+        boot.initrd.secrets = {
+          "/etc/phone-auth/identity.pkcs8" = cfg.boot.identityFile;
+          "/etc/phone-auth/devices.json" = cfg.boot.storeFile;
+        } // lib.mapAttrs' (name: volume:
+          lib.nameValuePair "/etc/phone-auth/${name}.cbor" volume.wrappedKeyFile
+        ) cfg.boot.volumes;
+
+        boot.initrd.systemd.storePaths = [
+          "${cfg.package}/bin/phone-auth-initrd"
+          unlockScript
+          "${pkgs.coreutils}/bin/rm"
+        ];
+
+        boot.initrd.systemd.services = unlockUnits // shredUnit;
+
+        # mkDefault throughout: a machine that already unlocks this volume some
+        # other way keeps its own configuration, and the phone is an addition.
+        boot.initrd.luks.devices = lib.mapAttrs (name: _: {
+          keyFile = lib.mkDefault (keyFile name);
+          keyFileTimeout = lib.mkDefault cfg.boot.timeout;
+        }) cfg.boot.volumes;
+      }
+    ))
   ]);
 
   meta.maintainers = [ ];

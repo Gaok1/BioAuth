@@ -1,7 +1,8 @@
 # LUKS initrd transport threat review
 
-Status: accepted and implemented for `LUK-02`; it does not enable boot unlock
-by itself.
+Status: accepted and implemented for `LUK-02`; amended below for `LUK-04`,
+which moves the link from wired Ethernet to the USB cable and turns boot
+unlock on as an opt-in.
 
 ## Decision
 
@@ -29,6 +30,119 @@ Not selected for version 1:
   second radio stack before disk unlock and needs its own review.
 - **USB gadget, QR and Internet relay:** no implemented phone peer, no need in
   the supported boot flow, and materially more code or hardware.
+
+## Amendment: the cable, not the LAN (`LUK-04`)
+
+Status: accepted for the first boot unlock. It replaces the address setup
+above, not the handshake, the framing or the client.
+
+The machine that needs unlocking usually has no network at boot: no DHCP
+reservation has been made for it, the wireless it normally uses is unreachable
+by design, and a laptop away from its desk has nothing at all. So the first
+shipped transport is **the phone on the USB cable, with USB tethering on**.
+
+The phone becomes the DHCP server and the gateway; the booting machine is the
+only client on that subnet. Nothing else is on the link, no router or access
+point is involved, and no infrastructure has to exist for the unlock to work.
+Above it, nothing changes: the same IPv4, the same single inbound TCP listener,
+the same signed handshake, the same `luks.unlock` exchange. The kernel needs
+`usbnet` and the RNDIS/CDC drivers, and the initrd runs DHCP on whatever
+interface they bind.
+
+What this adds over wired Ethernet:
+
+- **Discovery, in one direction only.** The address the phone hands out is not
+  the address saved at pairing, and recent Android randomises the tether
+  prefix, so the phone probes the /24 it is the gateway of for the port it
+  already knows. It probes nothing else: interfaces are matched by name against
+  the USB tether ones, so the user's home network is never swept. The booting
+  machine still discovers nothing and still answers exactly one connection.
+- **A hostile peer that is now certainly present.** The cable is a link to one
+  device instead of a segment shared with many, which is a smaller surface than
+  the accepted one, not a larger one. Everything above still treats the bytes
+  as hostile.
+
+Not changed by this amendment: no Wi-Fi, no BLE, no IPv6, no DNS, no default
+route from the phone, no relay, no unattended retry. The `.network` file
+refuses each of those explicitly rather than by omission.
+
+### The handshake key on unencrypted boot media
+
+The gate above says the long-lived handshake private key must not be copied
+into the initrd image. **This implementation copies it there**, through
+`boot.initrd.secrets`, which appends it at `nixos-rebuild` time and keeps it out
+of the world-readable Nix store — but puts it on a boot partition that anyone
+holding the disk can read. That is a knowing deviation, and it is why boot
+unlock is opt-in and off by default.
+
+It is not a boot-only key, and it cannot be one today. The phone verifies the
+computer against the identity it stored at pairing, so the initrd has to present
+that same identity or be an unknown machine. Whoever reads it can impersonate
+this computer to the paired phone for anything the phone is willing to approve
+— which is the deviation stated at full size, not a smaller one.
+
+What still stands between that and a disk key:
+
+- Using the key requires the phone, on the cable, and a fingerprint on a prompt
+  that names the machine and the volume. It is an attack that has to be approved
+  by the person being attacked, in front of them.
+- The disk-unlock credential is purpose-separated and hardware-backed. The
+  wrapping key on the phone is a different key from the vault's, the locker's
+  and the session's, and the phone refuses to unwrap for a session that was not
+  opened for disk unlock.
+- The volume key is never derived from the handshake key. It stays a random
+  32-byte credential that only the phone's hardware can unwrap, and the volume
+  keeps an independent passphrase keyslot.
+
+Closing the deviation takes one of two follow-ups, neither of which is required
+to keep the passphrase fallback honest: a **separate boot pairing**, so the key
+on the boot partition authenticates boot unlock and nothing else and can be
+revoked on the phone by itself; or a boot identity that is never stored — a QR
+on the console, or a TPM-sealed key released only to a measured initrd.
+
+### The address is a phone number, not a name
+
+Probing the cable subnet is how the phone *reaches* the machine; it is never how
+either side decides who the other is. Both ends hold the other's identity from
+pairing — the phone keeps the verifier's SPKI and dials with `PairedVerifier`,
+the initrd is handed the phone's device id and SPKI from the store baked into
+the image — and the two-message handshake fails closed on any mismatch, before a
+single application frame exists. An attacker who accepts on the swept port gets
+a rejected handshake and the phone moves to the next candidate; an attacker who
+takes the machine's address gets nothing, because it cannot sign as it.
+
+So an address that changes every boot costs nothing here. Nothing is trusted
+because of where it answered.
+
+### The keyslot census
+
+`phone-auth luks enroll` counts the volume's keyslots on both sides of
+`cryptsetup luksAddKey` and prints which slot the phone took and which slots
+still open the volume without it. If the phone's is the only one left, that is
+an error on stderr telling the operator to add a passphrase, not a line of
+report — the check runs even under `--json`, where the rest of the output does
+not. It cannot be defeated by forgetting to read the screen, only by ignoring
+it.
+
+This is the machine-checkable half of `LUK-05`. The other half is the prompt
+`luksAddKey` itself raises: it only adds a slot for someone who can already open
+the volume, so a machine where nobody can still type a passphrase cannot acquire
+a phone keyslot at all.
+
+### The drill has a date
+
+Both of those prove something about the day of the enrolment and nothing about
+any later day. `phone-auth luks drill` re-establishes it on demand with
+`cryptsetup --test-passphrase`, which opens no volume and writes no header, and
+stamps the volume in a root-owned log; `--check` reads the stamps without
+prompting for anything, so a timer can run it and fail loudly when a volume has
+gone past `boot.drill.maxAge`.
+
+What this is not: proof, at any given moment, that a passphrase works. Nothing
+unattended can produce that, because the passphrase must not be stored anywhere
+the machine can read it — if it were, it would be a keyfile, and a keyfile on
+the machine is not a second way in. So the check verifies that a person did it
+recently, and names the volume when nobody has.
 
 ## Trust boundary and assumptions
 

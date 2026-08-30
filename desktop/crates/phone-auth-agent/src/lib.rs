@@ -16,6 +16,7 @@ pub mod framing;
 pub mod identity;
 pub mod ipc;
 pub mod locker;
+pub mod luks;
 pub mod password;
 pub mod paths;
 pub mod private_files;

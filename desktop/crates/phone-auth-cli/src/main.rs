@@ -6,12 +6,15 @@
 //! return non-zero. There is no "unknown" exit code that could be read as a
 //! pass.
 
+use std::collections::BTreeSet;
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
 
 use phone_auth_agent::client::AgentClient;
 use phone_auth_agent::paths::Paths;
+
+mod drill;
 
 /// Verified grant.
 const EXIT_GRANTED: u8 = 0;
@@ -70,13 +73,40 @@ COMMANDS:
                                crosses IPC and is never printed here.
     vault generate             Generate a password straight to the clipboard
 
+    luks enroll --volume <NAME> --disk <DEV> --wrapped-out <FILE>
+                               Enrol boot unlock. The phone wraps a fresh
+                               volume key, cryptsetup adds the keyslot that
+                               carries it, and the public wrapper goes where
+                               the initrd reads it. cryptsetup asks for a
+                               passphrase that already opens the volume: that
+                               prompt is the proof a way in without the phone
+                               still exists.
+    luks drill --volume <NAME> --disk <DEV>
+                               Prove that proof is still true. cryptsetup only
+                               tests the passphrase: nothing is unlocked and
+                               nothing is written to the header. The date is
+                               recorded, and the date is what --check reads.
+    luks drill --check [--max-age <DAYS>]
+                               Name the volumes nobody has opened by passphrase
+                               lately. Asks nothing of anybody, so a timer can
+                               run it; exits non-zero when one is overdue.
+
     ssh authorized-key         Print the `authorized_keys` line for each SSH
                                credential this phone holds. Paste it into a
                                server; the private half never leaves the phone.
 
 OPTIONS:
     --root <DIR>               Override the agent's config/data/runtime root
+    --volume <NAME>            Volume being enrolled, as the phone shows it
+    --disk <DEV>               The LUKS device, e.g. /dev/nvme0n1p2
+    --wrapped-out <FILE>       Where the public wrapper is written
+    --key-out <FILE>           Where the volume key is put down for cryptsetup
+                               to read, and deleted right after
+                               [default: /run/phone-auth-luks-enroll.key]
     --credential <ID>          Choose which paired credential to use
+    --check                    For `luks drill`: read the dates instead of
+                               asking for a passphrase
+    --max-age <DAYS>           How long a volume may go undrilled [default: 90]
     --recovery-out <FILE>      Where to write a new recovery code
     --recovery-file <FILE>     Read a recovery code from this file
     --into <DIR>               Where to restore an unlocked file
@@ -105,6 +135,8 @@ struct Cli {
     /// subcommands use them: `locker unlock <FILE>` is two of these.
     args: Vec<String>,
     root: Option<std::path::PathBuf>,
+    check: bool,
+    max_age: Option<u32>,
     service: Option<String>,
     action: Option<String>,
     resource: Option<String>,
@@ -119,6 +151,10 @@ struct Cli {
     batch: bool,
     recovery_out: Option<String>,
     recovery_file: Option<String>,
+    wrapped_out: Option<String>,
+    disk: Option<String>,
+    key_out: Option<String>,
+    volume: Option<String>,
     into: Option<String>,
     keep_original: bool,
     keep_container: bool,
@@ -136,6 +172,8 @@ fn blank_cli(command: String) -> Cli {
         command,
         args: Vec::new(),
         root: None,
+        check: false,
+        max_age: None,
         service: None,
         action: None,
         resource: None,
@@ -150,6 +188,10 @@ fn blank_cli(command: String) -> Cli {
         batch: false,
         recovery_out: None,
         recovery_file: None,
+        wrapped_out: None,
+        disk: None,
+        key_out: None,
+        volume: None,
         into: None,
         keep_original: false,
         keep_container: false,
@@ -167,6 +209,11 @@ fn parse() -> Result<Cli, String> {
         let mut value = || args.next().ok_or(format!("`{flag}` needs a value"));
         match flag.as_str() {
             "--root" => cli.root = Some(std::path::PathBuf::from(value()?)),
+            "--check" => cli.check = true,
+            "--max-age" => match value()?.parse() {
+                Ok(days) => cli.max_age = Some(days),
+                Err(_) => return Err("--max-age takes a number of days".to_owned()),
+            },
             "--service" => cli.service = Some(value()?),
             "--action" => cli.action = Some(value()?),
             "--resource" => cli.resource = Some(value()?),
@@ -204,6 +251,10 @@ fn parse() -> Result<Cli, String> {
             "--no-symbols" => cli.no_symbols = true,
             "--batch" => cli.batch = true,
             "--recovery-out" => cli.recovery_out = Some(value()?),
+            "--wrapped-out" => cli.wrapped_out = Some(value()?),
+            "--disk" => cli.disk = Some(value()?),
+            "--key-out" => cli.key_out = Some(value()?),
+            "--volume" => cli.volume = Some(value()?),
             "--recovery-file" => cli.recovery_file = Some(value()?),
             "--into" => cli.into = Some(value()?),
             "--keep-original" => cli.keep_original = true,
@@ -256,6 +307,12 @@ fn run(cli: Cli) -> u8 {
         }
     }
 
+    // The drill is the path for the day the phone is gone, so it cannot need
+    // the agent, and it never talks to a phone.
+    if cli.command == "luks" && cli.args.first().map(String::as_str) == Some("drill") {
+        return luks_drill(&cli);
+    }
+
     let paths = Paths::resolve(cli.root.clone());
     let mut client = match AgentClient::connect(&paths) {
         Ok(client) => client,
@@ -306,6 +363,7 @@ fn run(cli: Cli) -> u8 {
         "authorize" => authorize(&mut client, &cli),
         "locker" => locker(&mut client, &cli),
         "vault" => vault(&mut client, &cli),
+        "luks" => luks(&mut client, &cli),
         "ssh" => ssh(&mut client, &cli),
         other => {
             eprintln!("phone-auth: unknown command `{other}`\n\n{USAGE}");
@@ -792,6 +850,441 @@ fn locker_one(client: &mut AgentClient, cli: &Cli, action: &str, target: &str) -
             }
         }
     }
+}
+
+/// Enrols boot unlock for one volume.
+///
+/// Three things have to line up or the machine will not boot from the phone: a
+/// key the phone can unwrap, a keyslot on the volume that key opens, and a
+/// wrapper file where the initrd looks for it. The phone makes the first, this
+/// makes the other two, and if the keyslot cannot be added the wrapper is
+/// thrown away rather than left pointing at a key no slot carries.
+///
+/// The volume key never crosses IPC. The agent writes it to a file, cryptsetup
+/// reads that file, and this deletes it as soon as cryptsetup is done.
+fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
+    let action = cli.args.first().map(String::as_str).unwrap_or_default();
+    if action != "enroll" {
+        eprintln!("phone-auth: unknown luks action `{action}`\n\n{USAGE}");
+        return EXIT_USAGE;
+    }
+
+    let (Some(volume), Some(device), Some(wrapped_out)) = (
+        cli.volume.as_deref(),
+        cli.disk.as_deref(),
+        cli.wrapped_out.as_deref(),
+    ) else {
+        eprintln!(
+            "phone-auth: luks enroll needs --volume <NAME>, --disk <DEV> and \
+             --wrapped-out <FILE>."
+        );
+        return EXIT_USAGE;
+    };
+
+    let key_out = match cli.key_out.as_deref().or(default_key_out()) {
+        Some(path) => path.to_owned(),
+        None => {
+            eprintln!(
+                "phone-auth: luks enroll needs --key-out <FILE> on this platform.\n\
+                 phone-auth: put it somewhere that is memory, not disk."
+            );
+            return EXIT_USAGE;
+        }
+    };
+    let (wrapped_out, key_out) = match (absolute(wrapped_out), absolute(&key_out)) {
+        (Ok(wrapped), Ok(key)) => (wrapped, key),
+        (Err(error), _) | (_, Err(error)) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_USAGE;
+        }
+    };
+
+    let enrolled = client.call(
+        "luks.enroll",
+        json!({
+            "volume": volume,
+            "wrappedKeyPath": wrapped_out,
+            "keyPath": key_out,
+            "credentialId": cli.credential,
+        }),
+    );
+    let enrolled = match enrolled {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return match error.code() {
+                "declined" | "policy-denied" | "not-paired" | "response-mismatch" => EXIT_DENIED,
+                "bad-params" | "key-file-exists" => EXIT_USAGE,
+                _ => EXIT_UNAVAILABLE,
+            };
+        }
+    };
+
+    // Read the slots first, so the one the phone lands in can be named and the
+    // ones that were there already can be shown to still be there.
+    let before = enabled_keyslots(device);
+    let added = add_keyslot(device, &key_out);
+    shred(std::path::Path::new(&key_out));
+
+    if let Err(message) = added {
+        // The wrapper is useless without the keyslot, and worse than useless:
+        // it would send every boot to the phone for a key no slot carries.
+        let _ = std::fs::remove_file(&wrapped_out);
+        eprintln!("phone-auth: {message}");
+        eprintln!("phone-auth: nothing was changed on {device}.");
+        return EXIT_UNAVAILABLE;
+    }
+
+    let census = match (before, enabled_keyslots(device)) {
+        (Ok(before), Ok(after)) => Some((before, after)),
+        _ => None,
+    };
+    report_keyslot_census(device, census.as_ref(), cli.json);
+
+    // The phone's slot is only known when exactly one appeared; two would mean
+    // something else wrote to the header at the same time, and guessing which
+    // is the phone's would be worse than admitting it is unknown.
+    let phone_slot = census.as_ref().and_then(|(before, after)| {
+        let mut gained = after.difference(before);
+        let slot = gained.next().copied();
+        gained.next().is_none().then_some(slot).flatten()
+    });
+    if let Err(error) = record_enrolment(cli, volume, phone_slot) {
+        eprintln!("phone-auth: {error}");
+        eprintln!("phone-auth: the keyslot stands; only the drill reminder was not recorded.");
+    }
+
+    if cli.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&enrolled).unwrap_or_default()
+        );
+        return EXIT_GRANTED;
+    }
+    print_luks_enrolled(volume, device, &wrapped_out, &enrolled);
+    EXIT_GRANTED
+}
+
+/// How long a volume may go without anybody proving they can still open it.
+///
+/// A quarter is long enough not to be a chore and short enough that a
+/// passphrase changed, forgotten or never really known is found while the phone
+/// still works. It is only a default; the deployment sets its own.
+const DEFAULT_DRILL_DAYS: u32 = 90;
+
+fn drill_log_path(cli: &Cli) -> std::path::PathBuf {
+    Paths::resolve(cli.root.clone())
+        .data_dir
+        .join("luks-drill.json")
+}
+
+/// Remembers which slot the phone took and that a passphrase worked today.
+///
+/// `luksAddKey` just asked for one and got it, so the enrolment *is* the first
+/// drill; dating it from here is what makes the reminder start counting.
+fn record_enrolment(cli: &Cli, volume: &str, phone_slot: Option<u32>) -> Result<(), String> {
+    let path = drill_log_path(cli);
+    let mut log = drill::read(&path)?;
+    let now = drill::now_ms();
+    log.insert(
+        volume.to_owned(),
+        drill::DrillRecord {
+            phone_slot,
+            enrolled_at_ms: now,
+            last_drill_at_ms: now,
+            // luksAddKey never says which slot the typed passphrase was in.
+            last_drill_slot: None,
+        },
+    );
+    drill::write(&path, &log)
+}
+
+/// `luks drill`: prove the volume still opens without the phone, or say when
+/// somebody last did.
+///
+/// Two commands in one because they answer the same question from two sides.
+/// `--check` asks nobody anything, which is why a timer can run it; the bare
+/// form asks for a passphrase, which is why a person has to.
+fn luks_drill(cli: &Cli) -> u8 {
+    let path = drill_log_path(cli);
+    let mut log = match drill::read(&path) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("phone-auth: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    let max_age = cli.max_age.unwrap_or(DEFAULT_DRILL_DAYS);
+
+    if cli.check {
+        return drill_check(&log, max_age);
+    }
+
+    let (Some(volume), Some(device)) = (cli.volume.as_deref(), cli.disk.as_deref()) else {
+        eprintln!(
+            "phone-auth: luks drill needs --volume <NAME> and --disk <DEV>, \
+             or --check to only read the dates."
+        );
+        return EXIT_USAGE;
+    };
+
+    eprintln!("phone-auth: type a passphrase that opens {device} without the phone.");
+    eprintln!("phone-auth: nothing is unlocked and nothing is written to the header.");
+    // stdout is captured to read the slot back; the prompt and the error text
+    // are cryptsetup's own, on the terminal, where the person typing is.
+    let output = std::process::Command::new("cryptsetup")
+        .arg("open")
+        .arg("--test-passphrase")
+        .arg("--verbose")
+        .arg(device)
+        .stdin(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("phone-auth: cannot run cryptsetup: {error}");
+            return EXIT_UNAVAILABLE;
+        }
+    };
+    if !output.status.success() {
+        eprintln!(
+            "phone-auth: nothing typed opened {device} ({}).",
+            output.status
+        );
+        eprintln!(
+            "phone-auth: that is the drill failing, and it fails now rather than on the\n\
+             phone-auth: day the phone is gone. Add a passphrase with \
+             `cryptsetup luksAddKey {device}`."
+        );
+        return EXIT_DENIED;
+    }
+
+    let slot = drill::parse_unlocked_slot(&String::from_utf8_lossy(&output.stdout));
+    let now = drill::now_ms();
+    let record = log
+        .entry(volume.to_owned())
+        .or_insert_with(|| drill::DrillRecord {
+            phone_slot: None,
+            enrolled_at_ms: now,
+            last_drill_at_ms: now,
+            last_drill_slot: None,
+        });
+    if slot.is_some() && slot == record.phone_slot {
+        eprintln!(
+            "phone-auth: that opened the phone's own keyslot, so it proves nothing about\n\
+             phone-auth: getting in without the phone. Nothing was recorded."
+        );
+        return EXIT_DENIED;
+    }
+    record.last_drill_at_ms = now;
+    record.last_drill_slot = slot;
+
+    if let Err(error) = drill::write(&path, &log) {
+        eprintln!("phone-auth: the passphrase works, but the date was not saved: {error}");
+        return EXIT_UNAVAILABLE;
+    }
+    println!("drilled  {volume} on {device}");
+    match slot {
+        Some(slot) => println!("slot     {slot}, which is not the phone's"),
+        None => println!("slot     not named by cryptsetup; the passphrase was accepted"),
+    }
+    println!("next     due in {max_age} days");
+    EXIT_GRANTED
+}
+
+/// Reads the dates and nothing else. This is the half a timer can run.
+fn drill_check(log: &drill::DrillLog, max_age: u32) -> u8 {
+    if log.is_empty() {
+        println!("no volume on this machine depends on a phone");
+        return EXIT_GRANTED;
+    }
+    let stale = drill::overdue(log, max_age, drill::now_ms());
+    if stale.is_empty() {
+        println!("{} volume(s), all drilled within {max_age} days", log.len());
+        return EXIT_GRANTED;
+    }
+    for (volume, age) in &stale {
+        eprintln!(
+            "phone-auth: {volume} was last opened by a typed passphrase {}.",
+            drill::describe_age(*age)
+        );
+    }
+    eprintln!(
+        "phone-auth: run `phone-auth luks drill --volume <NAME> --disk <DEV>` and type it.\n\
+         phone-auth: a passphrase nobody has used in {max_age} days is a passphrase\n\
+         phone-auth: nobody knows is still there."
+    );
+    EXIT_DENIED
+}
+
+/// Where the volume key is put down between the agent and cryptsetup.
+///
+/// `/run` is a tmpfs, which is the point: overwriting a file does not erase it
+/// on a journalling or copy-on-write filesystem, and a volume key that survives
+/// in a free block is a volume key someone can find.
+fn default_key_out() -> Option<&'static str> {
+    if cfg!(unix) {
+        Some("/run/phone-auth-luks-enroll.key")
+    } else {
+        None
+    }
+}
+
+/// Adds the phone's key to the volume, with cryptsetup asking for an existing
+/// passphrase on this terminal.
+///
+/// That prompt is not a formality, it is the recovery drill: cryptsetup only
+/// adds a keyslot to somebody who can already open the volume, so a machine
+/// where nobody can still type a passphrase cannot get a phone keyslot. That is
+/// exactly the machine that must not have one.
+fn add_keyslot(device: &str, key_path: &str) -> Result<(), String> {
+    eprintln!(
+        "phone-auth: cryptsetup will now ask for a passphrase that already opens {device}.\n\
+         phone-auth: that passphrase stays working; it is how you get in without the phone."
+    );
+    let status = std::process::Command::new("cryptsetup")
+        .arg("luksAddKey")
+        .arg(device)
+        .arg(key_path)
+        .status()
+        .map_err(|error| format!("cannot run cryptsetup: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("cryptsetup luksAddKey failed ({status})"))
+    }
+}
+
+/// The keyslots cryptsetup reports as able to open a volume.
+///
+/// Both formats are read because both are supported: LUKS1 prints one
+/// `Key Slot N: ENABLED` line per slot, LUKS2 lists them under `Keyslots:`.
+/// Only slots that hold a key count; a `reencrypt` slot opens nothing and
+/// would be a lie in a census meant to prove a way in still exists.
+fn parse_enabled_keyslots(dump: &str) -> BTreeSet<u32> {
+    let mut slots = BTreeSet::new();
+    let mut in_keyslots = false;
+    for line in dump.lines() {
+        let line = line.trim_end();
+        if !line.starts_with(char::is_whitespace) {
+            // Sections are flush left, so any other one closes the list. That
+            // is what keeps `Data segments:` and `Digests:` out: they number
+            // their entries exactly like keyslots do.
+            in_keyslots = line == "Keyslots:";
+        }
+        if let Some(rest) = line.strip_prefix("Key Slot ") {
+            let Some((number, state)) = rest.split_once(':') else {
+                continue;
+            };
+            if state.trim() == "ENABLED" {
+                if let Ok(slot) = number.trim().parse() {
+                    slots.insert(slot);
+                }
+            }
+        } else if in_keyslots {
+            let Some((number, kind)) = line.split_once(':') else {
+                continue;
+            };
+            if kind.trim() == "luks2" {
+                if let Ok(slot) = number.trim().parse() {
+                    slots.insert(slot);
+                }
+            }
+        }
+    }
+    slots
+}
+
+fn enabled_keyslots(device: &str) -> Result<BTreeSet<u32>, String> {
+    let output = std::process::Command::new("cryptsetup")
+        .arg("luksDump")
+        .arg(device)
+        .output()
+        .map_err(|error| format!("cannot run cryptsetup: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("cryptsetup luksDump failed ({})", output.status));
+    }
+    Ok(parse_enabled_keyslots(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+/// Names the slot the phone got, and the slots that open the volume without it.
+///
+/// The phone is meant to sit on top of a passphrase, never to replace it, and
+/// this is the one moment where that can be checked rather than assumed: a
+/// count either side of `luksAddKey` shows what was gained and what was already
+/// there. A volume whose only remaining slot is the phone is a machine one lost
+/// phone away from unbootable, so that case is an error, not a line of output.
+fn keyslot_census(
+    device: &str,
+    census: Option<&(BTreeSet<u32>, BTreeSet<u32>)>,
+) -> Result<(String, String), String> {
+    let list = |slots: &mut dyn Iterator<Item = &u32>| {
+        slots.map(u32::to_string).collect::<Vec<_>>().join(", ")
+    };
+    let Some((before, after)) = census else {
+        return Err(format!(
+            "could not read the keyslots of {device}. Check with \
+             `cryptsetup luksDump {device}` that a passphrase slot is still there."
+        ));
+    };
+    let kept = list(&mut before.intersection(after));
+    if kept.is_empty() {
+        return Err(format!(
+            "WARNING: no keyslot other than the phone opens {device}.\n\
+             phone-auth: add a passphrase now with `cryptsetup luksAddKey {device}`,\n\
+             phone-auth: or a lost phone is an unbootable machine."
+        ));
+    }
+    Ok((list(&mut after.difference(before)), kept))
+}
+
+fn report_keyslot_census(
+    device: &str,
+    census: Option<&(BTreeSet<u32>, BTreeSet<u32>)>,
+    quiet: bool,
+) {
+    match keyslot_census(device, census) {
+        Err(message) => eprintln!("phone-auth: {message}"),
+        Ok((phone, kept)) if !quiet => {
+            println!("phone    slot {phone}");
+            println!("without  slot {kept} (these open {device} with no phone involved)");
+        }
+        Ok(_) => {}
+    }
+}
+
+/// Overwrites and removes the key file.
+///
+/// The overwrite is a courtesy, not an erasure: only the tmpfs default makes it
+/// true. Removing it is the part that always matters.
+fn shred(path: &std::path::Path) {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        let _ = std::fs::write(path, vec![0u8; metadata.len() as usize]);
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+fn print_luks_enrolled(volume: &str, device: &str, wrapped_out: &str, value: &Value) {
+    println!("enrolled {volume} on {device}");
+    println!("phone    {}", value["deviceName"].as_str().unwrap_or("?"));
+    println!("wrapper  {wrapped_out}");
+    println!();
+    println!("The passphrase you just typed still opens this volume. Keep it that way:");
+    println!("a phone that is lost, flat or broken must never mean an unbootable machine.");
+    println!();
+    println!("Then, in configuration.nix:");
+    println!();
+    println!("  services.phone-auth.boot = {{");
+    println!("    enable = true;");
+    println!("    verifierId = \"...\";           # phone-auth status prints it");
+    println!("    volumes.{volume}.wrappedKeyFile = \"{wrapped_out}\";");
+    println!("  }};");
+    println!();
+    println!("At boot, plug the phone in and turn USB tethering on. There is no network");
+    println!("involved: the cable is the link.");
 }
 
 fn print_locker(action: &str, value: &Value) {
@@ -1314,6 +1807,65 @@ fn print_history(value: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_luks1_census_counts_the_enabled_slots_only() {
+        let dump = r"LUKS header information for /dev/sda2
+
+Version:        1
+Cipher name:    aes
+Key Slot 0: ENABLED
+        Iterations:             1000000
+Key Slot 1: DISABLED
+Key Slot 2: ENABLED
+Key Slot 3: DISABLED
+";
+        assert_eq!(parse_enabled_keyslots(dump), BTreeSet::from([0, 2]));
+    }
+
+    #[test]
+    fn a_luks2_census_ignores_segments_digests_and_reencryption() {
+        let dump = r"LUKS header information
+Version:        2
+Data segments:
+  0: crypt
+        offset: 16777216 [bytes]
+
+Keyslots:
+  1: luks2
+        Key:        512 bits
+  3: luks2
+        Key:        512 bits
+  4: reencrypt
+        Requirement: online-reencrypt
+Tokens:
+Digests:
+  0: pbkdf2
+        Hash:       sha256
+";
+        assert_eq!(parse_enabled_keyslots(dump), BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn a_volume_with_nothing_but_the_phone_is_refused_a_clean_report() {
+        // Slot 1 next to the passphrase in slot 0 is the supported shape.
+        let shared = (BTreeSet::from([0]), BTreeSet::from([0, 1]));
+        let (phone, kept) =
+            keyslot_census("/dev/sda2", Some(&shared)).expect("a passphrase slot survived");
+        assert_eq!(phone, "1");
+        assert_eq!(kept, "0");
+
+        // Slot 1 alone is a machine held hostage by one phone.
+        let phone_only = (BTreeSet::new(), BTreeSet::from([1]));
+        let warning =
+            keyslot_census("/dev/sda2", Some(&phone_only)).expect_err("the phone stands alone");
+        assert!(warning.contains("no keyslot other than the phone"));
+        assert!(warning.contains("luksAddKey /dev/sda2"));
+
+        // And a census that could not be taken is never read as a pass.
+        let unknown = keyslot_census("/dev/sda2", None).expect_err("nothing was counted");
+        assert!(unknown.contains("luksDump /dev/sda2"));
+    }
 
     #[test]
     fn destructive_lock_warns_about_attributes_the_container_does_not_store() {

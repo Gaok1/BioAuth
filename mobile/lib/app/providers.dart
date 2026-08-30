@@ -32,6 +32,7 @@ import '../core/transport/fallback_auth_transport.dart';
 import '../core/transport/qr_network_transport.dart';
 import '../core/transport/secure_session_establisher.dart';
 import '../core/transport/session_identity_crypto.dart';
+import '../core/transport/usb_cable_transport.dart';
 
 final pairingStoreProvider = Provider<PairingStore>(
   (ref) => SharedPreferencesPairingStore(),
@@ -75,8 +76,12 @@ final transportProvider = FutureProvider<AuthTransport>((ref) async {
   final network = QrNetworkTransport(sessionEstablisher: establisher);
   if (defaultTargetPlatform != TargetPlatform.android) return network;
 
+  // The cable comes first. At boot there is no network to fall back from --
+  // the machine is sitting at its passphrase prompt with no address of its own
+  // until the phone hands it one -- and on a running desktop it costs one
+  // interface listing when no cable is attached.
   return FallbackAuthTransport(
-    primary: network,
+    primary: UsbCableTransport(link: network),
     discoveredFallback: BleTransport(sessionEstablisher: establisher),
   );
 });

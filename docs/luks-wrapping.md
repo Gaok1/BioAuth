@@ -1,6 +1,8 @@
 # LUKS credential and wrapping protocol
 
-Status: version 1 implemented; NixOS keyslot installation is `LUK-04`.
+Status: version 1 implemented. `phone-auth luks enroll` creates the keyslot
+and the NixOS module installs the initrd unit; what is untested is a real boot
+(`LUK-06`).
 
 PhoneAuth never derives a disk key from ECDSA, a biometric result, or a
 signature. Setup generates a fresh random **32-byte LUKS credential**. The

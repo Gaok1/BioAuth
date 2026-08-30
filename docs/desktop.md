@@ -304,13 +304,71 @@ purpose-specific ECDSA key remains pairing identity/policy and is never disk
 key material. The public wrapper and complete flow are specified in
 [`luks-wrapping.md`](luks-wrapping.md).
 
-The module deliberately ships no initrd unit until `LUK-04/05` install a
-runtime-provided handshake identity, create the keyslot transactionally and
-prove the independent recovery keyslot before enabling boot unlock.
+The transport at boot is the **USB cable**, not the LAN. A machine sitting at
+its passphrase prompt normally has no address and no network, and the phone in
+the user's hand can hand it both: with USB tethering on, the phone is the DHCP
+server and the booting machine is the only client on that subnet. Above the
+link nothing changes — same IPv4 listener, same handshake, same `luks.unlock`.
+The module configures the RNDIS/CDC drivers and one DHCP `.network` file that
+refuses DNS, default routes and IPv6. The phone finds the machine by probing
+the cable subnet it is the gateway of, and only that one; the amendment in
+[`luks-initrd-threat-review.md`](luks-initrd-threat-review.md) records why that
+is a smaller surface than the segment it replaces, and what it costs.
+
+The unit is opt-in and off by default:
+
+```nix
+services.phone-auth.boot = {
+  enable = true;
+  verifierId = "9f2c1d8e4b6a";
+  volumes.cryptroot.wrappedKeyFile = "/var/lib/phone-auth/initrd/cryptroot.cbor";
+};
+```
+
+It writes the key to a file under `/run` only when the phone answered, so a
+denial, a flat battery or no cable at all leaves `systemd-cryptsetup` asking for
+the passphrase exactly as before. A second unit deletes that file before
+switch-root, because `/run` is handed to the real system.
+
+Enrolment is `sudo phone-auth --root /var/lib/phone-auth luks enroll --volume
+cryptroot --disk /dev/nvme0n1p2 --wrapped-out
+/var/lib/phone-auth/initrd/cryptroot.cbor` — the root is the system agent's,
+because the credential the initrd will ask for has to be in the store the
+initrd reads. The agent asks the
+phone to wrap a fresh random 32-byte volume key and writes two files: the
+public wrapper, and the key itself, owner-only, on tmpfs. The CLI then runs
+`cryptsetup luksAddKey`, which asks for a passphrase that already opens the
+volume — that prompt is the recovery drill, because cryptsetup adds a keyslot
+only for somebody who can already get in. The key file is deleted immediately
+after, and if the keyslot cannot be added the wrapper is thrown away rather
+than left pointing at a key no slot carries.
+
+The volume key never crosses IPC in either direction. The agent writes it to a
+file the caller named, the same rule the locker's recovery code follows, and
+the agent never touches the block device: it runs as root to guard `sudo`, and
+the less it can reach, the less a bug in it can do.
+
+What is left is `LUK-06`: a real boot, with a real phone, on real hardware —
+success, denial, timeout, no cable, a swapped keyslot and the fallback.
 
 **An offline recovery keyslot is mandatory.** The phone must never be the only
 way into the volume, and `phone-auth-initrd` is written so that every failure
-path falls back to the passphrase prompt rather than retrying.
+path falls back to the passphrase prompt rather than retrying. Enrolment counts
+the keyslots before and after, prints the slot the phone took beside the slots
+that still open the volume without it, and refuses to call that a clean result
+if the phone's is the only one left.
+
+That proof has a date, because a passphrase nobody types may have been changed,
+forgotten, or only ever written on a note that is gone — and the day it matters
+is the day the phone is at the bottom of a river. `phone-auth luks drill
+--volume cryptroot --disk /dev/nvme0n1p2` runs `cryptsetup --test-passphrase`,
+which unlocks nothing and writes nothing to the header, and records the date it
+worked. `phone-auth luks drill --check` reads only those dates, asks nobody
+anything, and exits non-zero when a volume is overdue, which is what lets
+`services.phone-auth.boot.drill` run it weekly: an overdue volume leaves a
+failed unit sitting in `systemctl --failed`. Neither half needs the agent
+running or a phone in the room; that is the situation both exist for. The same goes for PAM: `pam.required` is
+off by default, so a phone that does not answer leaves the password prompt.
 
 ### Other systems
 
@@ -319,8 +377,10 @@ path falls back to the passphrase prompt rather than retrying.
 - **Windows** — the agent, CLI and tray already build and run on Windows; the
   paths module handles `%LOCALAPPDATA%`. A Credential Provider is roadmap
   phase 4 and is not started.
-- **polkit** — not wired. `phone-auth authorize` is a plain exit-code program,
-  so a polkit agent could shell out to it.
+- **polkit** — reachable the same way: polkit authenticates through the
+  `polkit-1` PAM service, so adding it to `pam.services` puts the phone in
+  front of pkexec and the GNOME/KDE authentication dialogs. Not validated on a
+  real desktop yet (`SYS-04`).
 
 ## Wire format
 
