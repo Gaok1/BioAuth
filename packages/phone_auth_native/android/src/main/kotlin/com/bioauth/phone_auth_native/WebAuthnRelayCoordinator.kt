@@ -20,6 +20,25 @@ internal object WebAuthnRelayCoordinator {
         }
     }
 
+    /**
+     * Claims a request before an irreversible operation, then publishes its result.
+     *
+     * Cancellation and this claim race on the same `pending.remove`: if cancel
+     * wins, [operation] never runs; if this wins, a later cancel cannot turn a
+     * committed passkey into one the relying party never received.
+     */
+    fun completeWith(requestId: String, operation: () -> String): Boolean {
+        val result = pending.remove(requestId) ?: return false
+        cancellationListeners.remove(requestId)
+        runCatching(operation).fold(
+            onSuccess = { result.success(mapOf("responseJson" to it)) },
+            onFailure = {
+                result.error("webauthn_failed", "Passkey operation failed", null)
+            },
+        )
+        return true
+    }
+
     fun attachCancellationListener(requestId: String, listener: () -> Unit): Boolean {
         if (!pending.containsKey(requestId)) return false
         cancellationListeners[requestId] = listener

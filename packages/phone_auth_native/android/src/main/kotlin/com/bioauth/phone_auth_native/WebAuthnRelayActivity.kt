@@ -57,9 +57,13 @@ class WebAuthnRelayActivity : FragmentActivity() {
         RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
         runOnUiThread {
             if (cancelled) return@runOnUiThread
-            authenticate("Criar passkey", "${options.rpId} via $origin", NO_BACKUP_WARNING, null) {
-                core.create(options, WebAuthnClientData(origin, null))
-            }
+            authenticate(
+                "Criar passkey",
+                "${options.rpId} via $origin",
+                NO_BACKUP_WARNING,
+                null,
+                claimBeforeOperation = true,
+            ) { core.create(options, WebAuthnClientData(origin, null)) }
         }
     }
 
@@ -113,6 +117,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
         subtitle: String,
         description: String?,
         crypto: BiometricPrompt.CryptoObject?,
+        claimBeforeOperation: Boolean = false,
         finishOperation: (BiometricPrompt.AuthenticationResult) -> String,
     ) {
         var completed = false
@@ -123,6 +128,11 @@ class WebAuthnRelayActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     if (completed) return
                     completed = true
+                    if (claimBeforeOperation) {
+                        WebAuthnRelayCoordinator.completeWith(requestId) { finishOperation(result) }
+                        finishRelay()
+                        return
+                    }
                     runCatching { finishOperation(result) }
                         .onSuccess(::succeed)
                         .onFailure { fail("Passkey operation failed") }
