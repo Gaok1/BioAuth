@@ -10,7 +10,7 @@
 //! three without a platform abstraction layer for one small channel.
 
 use std::collections::HashMap;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -155,18 +155,45 @@ pub fn clear_endpoint(paths: &Paths) {
     let _ = std::fs::remove_file(paths.endpoint_file());
 }
 
+/// The longest line this endpoint will read.
+///
+/// The token check happens after a whole line has been read, so until then the
+/// peer is unauthenticated -- and `BufRead::lines` will buffer whatever it is
+/// sent until the process runs out of memory. Nothing legitimate comes close:
+/// every payload that reaches the phone fits in a
+/// [`phone_auth_protocol::MAX_FRAME_BYTES`] frame, and the widest of the rest
+/// is a WebAuthn options blob capped at 6000 bytes. This is an order of
+/// magnitude above both, so it bounds the damage without bounding the caller.
+const MAX_CALL_BYTES: u64 = 64 * 1024;
+
 fn handle_connection(
     stream: TcpStream,
     service: Arc<Mutex<Service>>,
     token: &str,
 ) -> io::Result<()> {
-    let reader = BufReader::new(stream.try_clone()?);
+    let mut reader = BufReader::new(stream.try_clone()?);
     // Both the reply path and the event pump write to this socket, so writes
     // are serialised through one lock.
     let writer = Arc::new(Mutex::new(stream));
 
-    for line in reader.lines() {
-        let line = line?;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        // Bounded rather than `lines()`. `take` wraps the buffered reader, not
+        // the socket, so nothing already buffered is lost between iterations.
+        let read = (&mut reader)
+            .take(MAX_CALL_BYTES + 1)
+            .read_line(&mut line)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if read as u64 > MAX_CALL_BYTES {
+            write_line(
+                &writer,
+                &Reply::err(0, "bad-request", "call exceeds the line limit"),
+            )?;
+            return Ok(());
+        }
         if line.trim().is_empty() {
             continue;
         }
@@ -175,7 +202,12 @@ fn handle_connection(
             Ok(call) => call,
             Err(error) => {
                 write_line(&writer, &Reply::err(0, "bad-request", error.to_string()))?;
-                continue;
+                // Closed, not continued, for the same reason a wrong token
+                // closes: a peer that is not speaking this protocol is not a
+                // peer. Continuing let anything that could reach the port hold
+                // a thread and a socket indefinitely without ever having to
+                // produce the token -- the one check this endpoint has.
+                return Ok(());
             }
         };
 
@@ -192,7 +224,6 @@ fn handle_connection(
         let reply = dispatch(&call, &service, &writer);
         write_line(&writer, &reply)?;
     }
-    Ok(())
 }
 
 fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpStream>>) -> Reply {
@@ -770,6 +801,71 @@ mod concurrent_client_tests {
         assert!(impostor.call("status", json!({})).is_err());
 
         assert!(honest.call("status", json!({})).is_ok());
+    }
+
+    /// Garbage never reaches the token check, so a peer that sends only
+    /// garbage never has to produce the token — the one check this endpoint
+    /// has. It used to be answered and then listened to again, indefinitely.
+    #[test]
+    fn a_client_that_does_not_speak_the_protocol_is_disconnected() {
+        let (_service, paths) = start_agent("garbage");
+        let honest = AgentClient::connect(&paths).expect("honest connects");
+        let endpoint = Endpoint::read(&paths).expect("endpoint");
+
+        let (reply, rest) = raw_exchange(
+            endpoint.port,
+            "not json at all
+",
+        );
+        assert_eq!(reply["error"]["code"], json!("bad-request"));
+        assert_eq!(rest, "", "the agent hung up rather than reading more");
+
+        let mut honest = honest;
+        assert!(honest.call("status", json!({})).is_ok());
+    }
+
+    /// The line is read before anyone knows who is sending it, so its length is
+    /// the one thing an unauthenticated peer gets to choose about this
+    /// process's memory.
+    #[test]
+    fn a_line_past_the_limit_is_refused_rather_than_buffered() {
+        let (_service, paths) = start_agent("long-line");
+        let endpoint = Endpoint::read(&paths).expect("endpoint");
+
+        // No newline anywhere in it: the point is that the read stops on the
+        // limit and not on a delimiter the sender never has to send.
+        let flood = "x".repeat(MAX_CALL_BYTES as usize + 64);
+        let (reply, rest) = raw_exchange(endpoint.port, &flood);
+        assert_eq!(reply["error"]["code"], json!("bad-request"));
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("line limit")),
+            "the refusal names the limit, not a parse failure: {reply}"
+        );
+        assert_eq!(rest, "", "and the connection ends there");
+    }
+
+    /// Writes `payload`, reads the first reply line, then reads to end of
+    /// stream. The tail is empty exactly when the agent hung up.
+    fn raw_exchange(port: u16, payload: &str) -> (serde_json::Value, String) {
+        use std::net::TcpStream as RawStream;
+        let mut socket = RawStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("read timeout");
+        socket.write_all(payload.as_bytes()).expect("write");
+        socket.flush().expect("flush");
+
+        let mut reader = BufReader::new(socket);
+        let mut first = String::new();
+        reader.read_line(&mut first).expect("a reply line");
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest).expect("read to end");
+        (
+            serde_json::from_str(&first).expect("the reply is one JSON object"),
+            rest,
+        )
     }
 
     /// The claim the whole module rests on: the password reaches the clipboard
