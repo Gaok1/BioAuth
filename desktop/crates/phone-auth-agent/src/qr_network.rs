@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -42,6 +42,15 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long a parked session stays usable before it is discarded.
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long the client half waits for a socket to open.
+///
+/// The same ten seconds the mobile transport gives its own dial. Without one,
+/// an endpoint that is routable but silent -- a desktop that moved networks and
+/// left its address behind a firewall that drops rather than refuses -- is not
+/// a failed connection, it is the operating system's SYN retry schedule, which
+/// is minutes.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the reaper looks, as a fraction of the timeout it enforces.
 ///
@@ -889,6 +898,36 @@ pub(crate) fn peek_device_id(client_frame: &[u8]) -> Result<String, String> {
 pub mod client {
     use super::*;
 
+    /// Opens a socket to `endpoint`, bounded in every direction it can block.
+    ///
+    /// `serve_connection` sets both timeouts on the sockets it accepts. This
+    /// side set only the read one, which leaves the same handshake, over the
+    /// same socket, bounded on one end and not the other: a peer that stops
+    /// reading holds `write_frame` for as long as it likes, and dialling
+    /// happened on whatever schedule the kernel felt like. Being the reference
+    /// the mobile implementation is written against is the reason to get this
+    /// right here rather than only there.
+    ///
+    /// Resolution is not bounded, and does not need to be: an endpoint is the
+    /// `host:port` from a scanned code or a pairing record, so it is a literal
+    /// address and there is nothing to look up.
+    pub(super) fn dial(endpoint: &str) -> Result<TcpStream, String> {
+        let address = endpoint
+            .to_socket_addrs()
+            .map_err(|error| error.to_string())?
+            .next()
+            .ok_or_else(|| format!("endpoint `{endpoint}` resolved to no address"))?;
+        let stream =
+            TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
+        stream
+            .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+            .map_err(|error| error.to_string())?;
+        stream
+            .set_write_timeout(Some(HANDSHAKE_TIMEOUT))
+            .map_err(|error| error.to_string())?;
+        Ok(stream)
+    }
+
     /// Connects, pairs, and sends an enrolment.
     pub fn pair(
         endpoint: &str,
@@ -898,10 +937,7 @@ pub mod client {
         enrolment: &Enrolment,
         now_ms: i64,
     ) -> Result<(SecureChannel, TcpStream, String), String> {
-        let mut stream = TcpStream::connect(endpoint).map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
-            .map_err(|error| error.to_string())?;
+        let mut stream = dial(endpoint)?;
 
         let hello = read_frame(&mut stream).map_err(|error| error.to_string())?;
         let (client_frame, outcome) = ClientHandshake::respond(
@@ -938,10 +974,7 @@ pub mod client {
         credential_id: &str,
         now_ms: i64,
     ) -> Result<(SecureChannel, TcpStream), String> {
-        let mut stream = TcpStream::connect(endpoint).map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
-            .map_err(|error| error.to_string())?;
+        let mut stream = dial(endpoint)?;
 
         let hello = read_frame(&mut stream).map_err(|error| error.to_string())?;
         let (client_frame, outcome) = ClientHandshake::respond(
@@ -970,6 +1003,30 @@ pub mod client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every socket this side opens is bounded in both directions.
+    ///
+    /// The read timeout was set here and the write one was not -- on the same
+    /// socket, carrying the same handshake, that `serve_connection` bounds both
+    /// ways from the other end. A peer that stops reading held `write_frame`
+    /// for as long as it liked.
+    #[test]
+    fn the_client_socket_is_bounded_in_both_directions() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+        let endpoint = listener.local_addr().expect("local addr").to_string();
+
+        let stream = client::dial(&endpoint).expect("dial");
+
+        assert_eq!(
+            stream.read_timeout().expect("read timeout"),
+            Some(HANDSHAKE_TIMEOUT)
+        );
+        assert_eq!(
+            stream.write_timeout().expect("write timeout"),
+            Some(HANDSHAKE_TIMEOUT),
+            "a write with no deadline is the half that was missing"
+        );
+    }
 
     /// The port is half the address a phone was given, so the agent asks for
     /// the same one every start.
