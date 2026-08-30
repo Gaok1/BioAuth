@@ -42,8 +42,27 @@ internal class BleController(
     private var gatt: BluetoothGatt? = null
     private var requestCharacteristic: BluetoothGattCharacteristic? = null
     private var pendingConnect: MethodChannel.Result? = null
-    private var pendingMtu: MethodChannel.Result? = null
-    private var pendingWrite: MethodChannel.Result? = null
+
+    // Both carry a deadline. Only connecting had one, and it is the operations
+    // *after* connecting that hold the radio: see [PendingGattOp]. The MTU
+    // failing does not take the link down, because the Dart side is written to
+    // carry on at the 23-byte minimum -- but a write whose completion never
+    // arrives means the stack's one operation slot is stuck, so every later
+    // write on this link would wait behind it. That link is finished; saying so
+    // is what lets the next connection have the client back.
+    private val pendingMtu = PendingGattOp(
+        errorCode = "mtu_failed",
+        timeoutMs = OPERATION_TIMEOUT_MS,
+        schedule = { runnable, delay -> main.postDelayed(runnable, delay) },
+        unschedule = { runnable -> main.removeCallbacks(runnable) },
+    )
+    private val pendingWrite = PendingGattOp(
+        errorCode = "write_failed",
+        timeoutMs = OPERATION_TIMEOUT_MS,
+        schedule = { runnable, delay -> main.postDelayed(runnable, delay) },
+        unschedule = { runnable -> main.removeCallbacks(runnable) },
+        onExpired = { closeGatt(emitDisconnected = true) },
+    )
     private var expectedService: UUID? = null
     private var expectedRequestCharacteristic: UUID? = null
     private var expectedResponseCharacteristic: UUID? = null
@@ -165,14 +184,12 @@ internal class BleController(
             result.error("invalid_arguments", "Invalid MTU or disconnected BLE link", null)
             return
         }
-        if (pendingMtu != null) {
+        if (!pendingMtu.arm(result)) {
             result.error("operation_in_progress", "An MTU request is active", null)
             return
         }
-        pendingMtu = result
         if (!currentGatt.requestMtu(requested)) {
-            pendingMtu = null
-            result.error("mtu_failed", "Unable to request BLE MTU", null)
+            pendingMtu.fail("Unable to request BLE MTU")
         }
     }
 
@@ -185,11 +202,10 @@ internal class BleController(
             result.error("invalid_arguments", "Invalid BLE write", null)
             return
         }
-        if (pendingWrite != null) {
+        if (!pendingWrite.arm(result)) {
             result.error("operation_in_progress", "A BLE write is active", null)
             return
         }
-        pendingWrite = result
         val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             currentGatt.writeCharacteristic(
                 characteristic,
@@ -202,8 +218,7 @@ internal class BleController(
             currentGatt.writeCharacteristic(characteristic)
         }
         if (!started) {
-            pendingWrite = null
-            result.error("write_failed", "Unable to start BLE write", null)
+            pendingWrite.fail("Unable to start BLE write")
         }
     }
 
@@ -283,11 +298,11 @@ internal class BleController(
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                val result = pendingMtu ?: return
-                pendingMtu = null
-                main.post {
-                    if (status == BluetoothGatt.GATT_SUCCESS) result.success(mtu)
-                    else result.error("mtu_failed", "BLE MTU negotiation failed", null)
+                pendingMtu.settle { result ->
+                    main.post {
+                        if (status == BluetoothGatt.GATT_SUCCESS) result.success(mtu)
+                        else result.error("mtu_failed", "BLE MTU negotiation failed", null)
+                    }
                 }
             }
 
@@ -296,11 +311,11 @@ internal class BleController(
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
-                val result = pendingWrite ?: return
-                pendingWrite = null
-                main.post {
-                    if (status == BluetoothGatt.GATT_SUCCESS) result.success(null)
-                    else result.error("write_failed", "BLE write failed", null)
+                pendingWrite.settle { result ->
+                    main.post {
+                        if (status == BluetoothGatt.GATT_SUCCESS) result.success(null)
+                        else result.error("write_failed", "BLE write failed", null)
+                    }
                 }
             }
 
@@ -351,10 +366,15 @@ internal class BleController(
         requestCharacteristic = null
         runCatching { current?.disconnect() }
         runCatching { current?.close() }
-        pendingMtu?.let { main.post { it.error("disconnected", "BLE disconnected", null) } }
-        pendingWrite?.let { main.post { it.error("disconnected", "BLE disconnected", null) } }
-        pendingMtu = null
-        pendingWrite = null
+        // Posted, not settled here: this runs from the GATT callback thread as
+        // well as from the main one, and a reply has to go back on the main
+        // looper.
+        val disconnected = { result: MethodChannel.Result ->
+            main.post { result.error("disconnected", "BLE disconnected", null) }
+            Unit
+        }
+        pendingMtu.settle(disconnected)
+        pendingWrite.settle(disconnected)
         if (emitDisconnected) emitEvent(mapOf("type" to "disconnected"))
     }
 
@@ -398,6 +418,11 @@ internal class BleController(
         private const val SCAN_CHANNEL = "phone_auth_native/ble_scan"
         private const val EVENT_CHANNEL = "phone_auth_native/ble_events"
         private const val CONNECT_TIMEOUT_MS = 15_000L
+
+        // One GATT operation on a live link is milliseconds; this is sized to
+        // sit well above the stack's own supervision timeout so it can only
+        // fire for a callback that is never coming, never for a slow one.
+        private const val OPERATION_TIMEOUT_MS = 10_000L
         private val CLIENT_CONFIGURATION = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 }
