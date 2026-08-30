@@ -24,6 +24,29 @@ class WebAuthnRelayCoordinatorTest {
         verify(result).error("webauthn_cancelled", "cancelled", null)
     }
 
+    private fun describe(failure: Throwable): String = "failed: ${failure.message}"
+
+    @Test
+    fun aFailedCommitReportsWhyRatherThanThatItFailed() {
+        val result = mock(MethodChannel.Result::class.java)
+        val requestId = "commit-fails-${System.nanoTime()}"
+
+        assertTrue(WebAuthnRelayCoordinator.add(requestId, result))
+        // Claimed and then unable to finish: the request is spent either way,
+        // and the only thing left to decide is whether anyone can find out
+        // what went wrong. A fixed sentence here is the same erasure that made
+        // a rejected `authenticatorAttachment` indistinguishable from someone
+        // pressing Cancel, three layers further along.
+        assertTrue(
+            WebAuthnRelayCoordinator.completeWith(requestId, ::describe) {
+                throw IllegalStateException("ES256 is not offered")
+            },
+        )
+
+        verify(result).error("webauthn_failed", "failed: ES256 is not offered", null)
+        verifyNoMoreInteractions(result)
+    }
+
     @Test
     fun cancellationWinningTheRacePreventsTheIrreversibleOperation() {
         val result = mock(MethodChannel.Result::class.java)
@@ -32,7 +55,7 @@ class WebAuthnRelayCoordinatorTest {
 
         assertTrue(WebAuthnRelayCoordinator.add(requestId, result))
         assertTrue(WebAuthnRelayCoordinator.cancel(requestId, "cancelled"))
-        assertFalse(WebAuthnRelayCoordinator.completeWith(requestId) {
+        assertFalse(WebAuthnRelayCoordinator.completeWith(requestId, ::describe) {
             commits += 1
             "created"
         })
@@ -49,7 +72,7 @@ class WebAuthnRelayCoordinatorTest {
         var commits = 0
 
         assertTrue(WebAuthnRelayCoordinator.add(requestId, result))
-        assertTrue(WebAuthnRelayCoordinator.completeWith(requestId) {
+        assertTrue(WebAuthnRelayCoordinator.completeWith(requestId, ::describe) {
             commits += 1
             "created"
         })

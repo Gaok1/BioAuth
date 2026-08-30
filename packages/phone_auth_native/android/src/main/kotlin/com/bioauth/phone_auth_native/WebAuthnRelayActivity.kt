@@ -129,19 +129,30 @@ class WebAuthnRelayActivity : FragmentActivity() {
                     if (completed) return
                     completed = true
                     if (claimBeforeOperation) {
-                        WebAuthnRelayCoordinator.completeWith(requestId) { finishOperation(result) }
+                        WebAuthnRelayCoordinator.completeWith(
+                            requestId,
+                            { "Passkey operation failed: ${reasonOf(it)}" },
+                        ) { finishOperation(result) }
                         finishRelay()
                         return
                     }
                     runCatching { finishOperation(result) }
                         .onSuccess(::succeed)
-                        .onFailure { fail("Passkey operation failed") }
+                        .onFailure { fail("Passkey operation failed: ${reasonOf(it)}") }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     if (completed) return
                     completed = true
-                    fail("Biometric verification did not complete")
+                    // The system's own words, which name the thing that
+                    // happened: too many attempts, no hardware, the person
+                    // pressed the negative button. Reduced to one sentence,
+                    // a phone that cannot do biometrics at all and a person
+                    // who changed their mind arrive looking identical.
+                    fail(
+                        "Biometric verification did not complete: " +
+                            "${errString.toString().trim().take(120)} ($errorCode)",
+                    )
                 }
             },
         )

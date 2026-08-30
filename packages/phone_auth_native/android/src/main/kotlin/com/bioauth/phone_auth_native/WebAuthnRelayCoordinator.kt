@@ -27,14 +27,24 @@ internal object WebAuthnRelayCoordinator {
      * wins, [operation] never runs; if this wins, a later cancel cannot turn a
      * committed passkey into one the relying party never received.
      */
-    fun completeWith(requestId: String, operation: () -> String): Boolean {
+    fun completeWith(
+        requestId: String,
+        describeFailure: (Throwable) -> String,
+        operation: () -> String,
+    ): Boolean {
         val result = pending.remove(requestId) ?: return false
         cancellationListeners.remove(requestId)
         runCatching(operation).fold(
             onSuccess = { result.success(mapOf("responseJson" to it)) },
-            onFailure = {
-                result.error("webauthn_failed", "Passkey operation failed", null)
-            },
+            // Asked for, rather than written here, because this object has
+            // nothing to say about why creating a credential failed and the
+            // caller does. A single sentence standing in for every way it can
+            // go wrong is the one thing this path cannot afford to lose: what
+            // reaches the website is deliberately undifferentiated either way,
+            // so this sentence is the only account anyone ever gets, and it is
+            // read from the desktop's audit log by someone trying to find out
+            // why a passkey will not work.
+            onFailure = { result.error("webauthn_failed", describeFailure(it), null) },
         )
         return true
     }
