@@ -15,6 +15,17 @@ final phoneAuthenticatorProvider = Provider<PhoneAuthenticator>(
   (ref) => const UnavailablePhoneAuthenticator(),
 );
 
+/// How many decisions the history keeps.
+///
+/// The list used to grow only when a person tapped something, so nothing
+/// bounded it and nothing had to. Now a session that ends without an answer
+/// files its own entry, which is the honest thing to record and also something
+/// a desktop that keeps asking and giving up produces on its own, unattended,
+/// for as long as the app is open. Two hundred is far past what anyone scrolls
+/// and the list is lost on restart anyway, so the cost of the bound is a row
+/// nobody was going to read.
+const int maxAuditEntries = 200;
+
 final appControllerProvider = NotifierProvider<AppController, AppState>(
   AppController.new,
 );
@@ -324,10 +335,12 @@ class AppController extends Notifier<AppState> {
         state.requests.where((candidate) => candidate.id != request.id),
       ),
       requestPhases: Map.unmodifiable(phases),
-      auditEntries: List.unmodifiable([
-        _auditFor(request, outcome, at),
-        ...state.auditEntries,
-      ]),
+      auditEntries: List.unmodifiable(
+        [
+          _auditFor(request, outcome, at),
+          ...state.auditEntries,
+        ].take(maxAuditEntries),
+      ),
     );
   }
 

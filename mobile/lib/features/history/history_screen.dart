@@ -13,20 +13,28 @@ class HistoryScreen extends ConsumerWidget {
     final entries = ref.watch(
       appControllerProvider.select((state) => state.auditEntries),
     );
-    return ListView(
-      children: [
-        const PageHeading(
-          title: 'Histórico',
-          subtitle: 'Decisões registradas somente neste aparelho',
-        ),
-        if (entries.isEmpty)
-          const Padding(
+    // Built lazily, not spread into a `ListView`'s children. This screen is a
+    // tab of an `IndexedStack`, so it is in the tree whichever tab is showing
+    // -- an eager list rebuilt every tile on every change to the log, off
+    // screen, while the user was somewhere else. That was affordable while
+    // only a person's taps could add a row.
+    return ListView.builder(
+      itemCount: entries.isEmpty ? 2 : entries.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return const PageHeading(
+            title: 'Histórico',
+            subtitle: 'Decisões registradas somente neste aparelho',
+          );
+        }
+        if (entries.isEmpty) {
+          return const Padding(
             padding: EdgeInsets.all(24),
             child: Center(child: Text('Nenhuma atividade registrada.')),
-          )
-        else
-          ...entries.map((entry) => AuditEntryTile(entry: entry)),
-      ],
+          );
+        }
+        return AuditEntryTile(entry: entries[index - 1]);
+      },
     );
   }
 }

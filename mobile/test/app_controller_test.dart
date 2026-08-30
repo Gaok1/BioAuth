@@ -344,6 +344,46 @@ void main() {
     expect(answers, hasLength(3));
   });
 
+  test('the history keeps a bounded number of decisions', () {
+    // Nothing bounded this while only a person's taps could add a row. A
+    // session that ends unanswered now files its own entry, which a desktop
+    // that keeps asking and giving up produces unattended for as long as the
+    // app is open.
+    final controller = container.read(appControllerProvider.notifier);
+    // Spaced past the flood guard's thirty-second window, so each one is an
+    // ordinary request rather than the same device hammering.
+    for (var i = 0; i < maxAuditEntries + 50; i++) {
+      final at = now.add(Duration(seconds: i * 31));
+      controller.receive(
+        AuthenticationRequest(
+          requestId: 'logged-$i',
+          verifierId: 'desktop-casa',
+          verifierName: 'Desktop-Casa',
+          credentialId: 'desktop-casa-login-v1',
+          challenge: Uint8List.fromList(List<int>.filled(32, i % 256)),
+          origin: 'BLE pareado',
+          service: 'SSH',
+          action: 'Login',
+          resource: 'server-$i',
+          user: 'alice',
+          issuedAt: at,
+          expiresAt: at.add(const Duration(minutes: 1)),
+          sessionBinding: Uint8List(32),
+        ),
+        at: at,
+      );
+      controller.deny('logged-$i', at: at);
+    }
+
+    final entries = container.read(appControllerProvider).auditEntries;
+    expect(entries, hasLength(maxAuditEntries));
+    expect(
+      entries.first.requestId,
+      'logged-${maxAuditEntries + 49}',
+      reason: 'the newest is kept and the oldest is what falls off',
+    );
+  });
+
   test('denial and revocation update local state', () async {
     final controller = container.read(appControllerProvider.notifier);
     controller.deny('mock-request-1', at: now);
