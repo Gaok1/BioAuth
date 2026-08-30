@@ -340,6 +340,14 @@ in
         }
       ];
 
+      warnings = lib.optional cfg.pam.required ''
+        services.phone-auth.pam.required makes the phone the only way to
+        authenticate: ${lib.concatStringsSep ", " cfg.pam.services}.
+        A phone that is lost, flat or broken is then a lockout with no second
+        option, so keep a root shell open, a rescue medium at hand, or an
+        account these rules do not cover.
+      '';
+
       security.pam.services = lib.genAttrs cfg.pam.services (_: {
         text = lib.mkBefore pamRule;
       });

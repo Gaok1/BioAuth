@@ -132,11 +132,14 @@ mod tests {
     use phone_auth_verifier::session::TransportSecurity;
     use std::io;
 
+    /// How a scripted phone replies to whatever it was sent.
+    type Answer = Box<dyn Fn(&ApplicationFrame) -> Vec<u8> + Send>;
+
     /// A session that answers with whatever the test queued.
     struct ScriptedSession {
         security: TransportSecurity,
         sent: Vec<Vec<u8>>,
-        answer: Box<dyn Fn(&ApplicationFrame) -> Vec<u8> + Send>,
+        answer: Answer,
     }
 
     impl SecureSession for ScriptedSession {

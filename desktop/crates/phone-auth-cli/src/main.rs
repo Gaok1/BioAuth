@@ -6,6 +6,7 @@
 //! return non-zero. There is no "unknown" exit code that could be read as a
 //! pass.
 
+use std::collections::BTreeSet;
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
@@ -890,6 +891,9 @@ fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
         }
     };
 
+    // Read the slots first, so the one the phone lands in can be named and the
+    // ones that were there already can be shown to still be there.
+    let before = enabled_keyslots(device);
     let added = add_keyslot(device, &key_out);
     shred(std::path::Path::new(&key_out));
 
@@ -901,6 +905,12 @@ fn luks(client: &mut AgentClient, cli: &Cli) -> u8 {
         eprintln!("phone-auth: nothing was changed on {device}.");
         return EXIT_UNAVAILABLE;
     }
+
+    let census = match (before, enabled_keyslots(device)) {
+        (Ok(before), Ok(after)) => Some((before, after)),
+        _ => None,
+    };
+    report_keyslot_census(device, census.as_ref(), cli.json);
 
     if cli.json {
         println!(
@@ -948,6 +958,106 @@ fn add_keyslot(device: &str, key_path: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("cryptsetup luksAddKey failed ({status})"))
+    }
+}
+
+/// The keyslots cryptsetup reports as able to open a volume.
+///
+/// Both formats are read because both are supported: LUKS1 prints one
+/// `Key Slot N: ENABLED` line per slot, LUKS2 lists them under `Keyslots:`.
+/// Only slots that hold a key count; a `reencrypt` slot opens nothing and
+/// would be a lie in a census meant to prove a way in still exists.
+fn parse_enabled_keyslots(dump: &str) -> BTreeSet<u32> {
+    let mut slots = BTreeSet::new();
+    let mut in_keyslots = false;
+    for line in dump.lines() {
+        let line = line.trim_end();
+        if !line.starts_with(char::is_whitespace) {
+            // Sections are flush left, so any other one closes the list. That
+            // is what keeps `Data segments:` and `Digests:` out: they number
+            // their entries exactly like keyslots do.
+            in_keyslots = line == "Keyslots:";
+        }
+        if let Some(rest) = line.strip_prefix("Key Slot ") {
+            let Some((number, state)) = rest.split_once(':') else {
+                continue;
+            };
+            if state.trim() == "ENABLED" {
+                if let Ok(slot) = number.trim().parse() {
+                    slots.insert(slot);
+                }
+            }
+        } else if in_keyslots {
+            let Some((number, kind)) = line.split_once(':') else {
+                continue;
+            };
+            if kind.trim() == "luks2" {
+                if let Ok(slot) = number.trim().parse() {
+                    slots.insert(slot);
+                }
+            }
+        }
+    }
+    slots
+}
+
+fn enabled_keyslots(device: &str) -> Result<BTreeSet<u32>, String> {
+    let output = std::process::Command::new("cryptsetup")
+        .arg("luksDump")
+        .arg(device)
+        .output()
+        .map_err(|error| format!("cannot run cryptsetup: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("cryptsetup luksDump failed ({})", output.status));
+    }
+    Ok(parse_enabled_keyslots(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+/// Names the slot the phone got, and the slots that open the volume without it.
+///
+/// The phone is meant to sit on top of a passphrase, never to replace it, and
+/// this is the one moment where that can be checked rather than assumed: a
+/// count either side of `luksAddKey` shows what was gained and what was already
+/// there. A volume whose only remaining slot is the phone is a machine one lost
+/// phone away from unbootable, so that case is an error, not a line of output.
+fn keyslot_census(
+    device: &str,
+    census: Option<&(BTreeSet<u32>, BTreeSet<u32>)>,
+) -> Result<(String, String), String> {
+    let list = |slots: &mut dyn Iterator<Item = &u32>| {
+        slots.map(u32::to_string).collect::<Vec<_>>().join(", ")
+    };
+    let Some((before, after)) = census else {
+        return Err(format!(
+            "could not read the keyslots of {device}. Check with \
+             `cryptsetup luksDump {device}` that a passphrase slot is still there."
+        ));
+    };
+    let kept = list(&mut before.intersection(after));
+    if kept.is_empty() {
+        return Err(format!(
+            "WARNING: no keyslot other than the phone opens {device}.\n\
+             phone-auth: add a passphrase now with `cryptsetup luksAddKey {device}`,\n\
+             phone-auth: or a lost phone is an unbootable machine."
+        ));
+    }
+    Ok((list(&mut after.difference(before)), kept))
+}
+
+fn report_keyslot_census(
+    device: &str,
+    census: Option<&(BTreeSet<u32>, BTreeSet<u32>)>,
+    quiet: bool,
+) {
+    match keyslot_census(device, census) {
+        Err(message) => eprintln!("phone-auth: {message}"),
+        Ok((phone, kept)) if !quiet => {
+            println!("phone    slot {phone}");
+            println!("without  slot {kept} (these open {device} with no phone involved)");
+        }
+        Ok(_) => {}
     }
 }
 
@@ -1502,6 +1612,65 @@ fn print_history(value: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_luks1_census_counts_the_enabled_slots_only() {
+        let dump = r"LUKS header information for /dev/sda2
+
+Version:        1
+Cipher name:    aes
+Key Slot 0: ENABLED
+        Iterations:             1000000
+Key Slot 1: DISABLED
+Key Slot 2: ENABLED
+Key Slot 3: DISABLED
+";
+        assert_eq!(parse_enabled_keyslots(dump), BTreeSet::from([0, 2]));
+    }
+
+    #[test]
+    fn a_luks2_census_ignores_segments_digests_and_reencryption() {
+        let dump = r"LUKS header information
+Version:        2
+Data segments:
+  0: crypt
+        offset: 16777216 [bytes]
+
+Keyslots:
+  1: luks2
+        Key:        512 bits
+  3: luks2
+        Key:        512 bits
+  4: reencrypt
+        Requirement: online-reencrypt
+Tokens:
+Digests:
+  0: pbkdf2
+        Hash:       sha256
+";
+        assert_eq!(parse_enabled_keyslots(dump), BTreeSet::from([1, 3]));
+    }
+
+    #[test]
+    fn a_volume_with_nothing_but_the_phone_is_refused_a_clean_report() {
+        // Slot 1 next to the passphrase in slot 0 is the supported shape.
+        let shared = (BTreeSet::from([0]), BTreeSet::from([0, 1]));
+        let (phone, kept) =
+            keyslot_census("/dev/sda2", Some(&shared)).expect("a passphrase slot survived");
+        assert_eq!(phone, "1");
+        assert_eq!(kept, "0");
+
+        // Slot 1 alone is a machine held hostage by one phone.
+        let phone_only = (BTreeSet::new(), BTreeSet::from([1]));
+        let warning =
+            keyslot_census("/dev/sda2", Some(&phone_only)).expect_err("the phone stands alone");
+        assert!(warning.contains("no keyslot other than the phone"));
+        assert!(warning.contains("luksAddKey /dev/sda2"));
+
+        // And a census that could not be taken is never read as a pass.
+        let unknown = keyslot_census("/dev/sda2", None).expect_err("nothing was counted");
+        assert!(unknown.contains("luksDump /dev/sda2"));
+    }
 
     #[test]
     fn destructive_lock_warns_about_attributes_the_container_does_not_store() {

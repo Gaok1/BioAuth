@@ -100,6 +100,35 @@ on the boot partition authenticates boot unlock and nothing else and can be
 revoked on the phone by itself; or a boot identity that is never stored — a QR
 on the console, or a TPM-sealed key released only to a measured initrd.
 
+### The address is a phone number, not a name
+
+Probing the cable subnet is how the phone *reaches* the machine; it is never how
+either side decides who the other is. Both ends hold the other's identity from
+pairing — the phone keeps the verifier's SPKI and dials with `PairedVerifier`,
+the initrd is handed the phone's device id and SPKI from the store baked into
+the image — and the two-message handshake fails closed on any mismatch, before a
+single application frame exists. An attacker who accepts on the swept port gets
+a rejected handshake and the phone moves to the next candidate; an attacker who
+takes the machine's address gets nothing, because it cannot sign as it.
+
+So an address that changes every boot costs nothing here. Nothing is trusted
+because of where it answered.
+
+### The keyslot census
+
+`phone-auth luks enroll` counts the volume's keyslots on both sides of
+`cryptsetup luksAddKey` and prints which slot the phone took and which slots
+still open the volume without it. If the phone's is the only one left, that is
+an error on stderr telling the operator to add a passphrase, not a line of
+report — the check runs even under `--json`, where the rest of the output does
+not. It cannot be defeated by forgetting to read the screen, only by ignoring
+it.
+
+This is the machine-checkable half of `LUK-05`. The other half is the prompt
+`luksAddKey` itself raises: it only adds a slot for someone who can already open
+the volume, so a machine where nobody can still type a passphrase cannot acquire
+a phone keyslot at all.
+
 ## Trust boundary and assumptions
 
 - Ethernet, switches, DHCP and every remote address are hostile. They provide

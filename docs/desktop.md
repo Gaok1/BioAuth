@@ -350,7 +350,11 @@ success, denial, timeout, no cable, a swapped keyslot and the fallback.
 
 **An offline recovery keyslot is mandatory.** The phone must never be the only
 way into the volume, and `phone-auth-initrd` is written so that every failure
-path falls back to the passphrase prompt rather than retrying.
+path falls back to the passphrase prompt rather than retrying. Enrolment counts
+the keyslots before and after, prints the slot the phone took beside the slots
+that still open the volume without it, and refuses to call that a clean result
+if the phone's is the only one left. The same goes for PAM: `pam.required` is
+off by default, so a phone that does not answer leaves the password prompt.
 
 ### Other systems
 
