@@ -38,6 +38,54 @@ void main() {
     expect(session.closed, isTrue);
     await expectLater(serving, throwsA(anything));
   });
+
+  test('a session that fails its first write is still closed', () async {
+    final session = _WriteFailsSession();
+    final service = PairedSessionService(
+      transport: _LifecycleTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: _UnusedConsent(),
+    );
+
+    await expectLater(
+      service.serveOne(
+        PairingRecord(
+          verifierId: 'desktop-1',
+          verifierIdentitySpki: Uint8List.fromList([1, 2, 3]),
+          endpoint: '192.0.2.1:42371',
+          credentialId: 'credential-1',
+          keyKind: KeyKind.hardware,
+          purpose: CredentialPurpose.authorization,
+          pairedAt: DateTime.utc(2026, 8, 27),
+        ),
+      ),
+      throwsA(anything),
+    );
+
+    // The attach frame is the first write on a freshly established link, and
+    // it going nowhere is the ordinary way a link dies. What matters is not
+    // that the throw escapes -- the caller dials again -- but that the session
+    // does not stay open behind it. Over the Bluetooth fallback that session
+    // holds the phone's only GATT client, and whatever is waiting on it next
+    // waits with no timeout.
+    expect(session.closed, isTrue);
+  });
+}
+
+/// A session whose first write fails, the way a link lost right after the
+/// handshake does.
+class _WriteFailsSession extends _IdleSession {
+  @override
+  Future<void> send(Uint8List frame) async {
+    throw StateError('link lost');
+  }
+
+  // Nothing ever listens to this one's frames, and an unlistened controller's
+  // `close` waits for a listener that is not coming.
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
 }
 
 class _LifecycleTransport implements AuthTransport {

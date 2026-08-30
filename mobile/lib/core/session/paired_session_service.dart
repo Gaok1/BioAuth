@@ -244,58 +244,71 @@ class PairedSessionService {
         'O computador respondeu como se nunca tivesse sido pareado',
       );
     }
-    // Which of this phone's credentials the session is for. The desktop parks
-    // one session per credential and picks the one matching the request it is
-    // about to send; without this it picked whichever arrived last, and a
-    // vault request going out over the login session comes back refused.
-    await outcome.session.send(
-      SessionAttach(credentialId: record.credentialId).encode(),
-    );
-    _active[_key(record)] = outcome.session;
-    // The channel is authenticated from here on. Reporting it now is what
-    // separates "connected" from "has already answered something": waiting for
-    // a request would leave an idle, working link looking like it is still
-    // dialling for up to the idle timeout.
-    onEstablished?.call();
-
-    final vault = VaultService(
-      repository: _vaultStore,
-      listing: _listing,
-      approval: onRequestRaised == null
-          ? _vaultApproval
-          : _ScopedVaultApproval(_vaultApproval, onRequestRaised),
-    );
-    final ssh = SshService(
-      approval: onRequestRaised == null
-          ? _sshApproval
-          : _ScopedSshApproval(_sshApproval, onRequestRaised),
-      signer: _sshSigner,
-    );
-    final core = PhoneAuthCore(
-      authorizer: _authorizer,
-      consent: onRequestRaised == null
-          ? _consent
-          : _SessionScopedConsent(_consent, onRequestRaised),
-      policy: policyFor(record),
-      clock: _clock,
-    );
-    final frames = StreamIterator<Uint8List>(outcome.session.incomingFrames);
+    // Everything from here on owns the session, so everything from here on
+    // has to give it back. The `finally` used to start below, after the attach
+    // frame and the services were built -- and an attach that fails is not
+    // exotic: it is the first write on a link that has just been established,
+    // which over BLE is exactly where writes fail. That threw with the session
+    // still open. On the LAN that leaks a socket; over the fallback it leaks
+    // the phone's one GATT client, whose gate the next connection waits on
+    // with no timeout at all. One failed write and the phone stops answering
+    // over Bluetooth until it is restarted, silently, with nothing raised.
+    StreamIterator<Uint8List>? frames;
     try {
-      if (!await frames.moveNext().timeout(pairedSessionIdleTimeout)) {
+      // Which of this phone's credentials the session is for. The desktop parks
+      // one session per credential and picks the one matching the request it is
+      // about to send; without this it picked whichever arrived last, and a
+      // vault request going out over the login session comes back refused.
+      await outcome.session.send(
+        SessionAttach(credentialId: record.credentialId).encode(),
+      );
+      _active[_key(record)] = outcome.session;
+      // The channel is authenticated from here on. Reporting it now is what
+      // separates "connected" from "has already answered something": waiting for
+      // a request would leave an idle, working link looking like it is still
+      // dialling for up to the idle timeout.
+      onEstablished?.call();
+
+      final vault = VaultService(
+        repository: _vaultStore,
+        listing: _listing,
+        approval: onRequestRaised == null
+            ? _vaultApproval
+            : _ScopedVaultApproval(_vaultApproval, onRequestRaised),
+      );
+      final ssh = SshService(
+        approval: onRequestRaised == null
+            ? _sshApproval
+            : _ScopedSshApproval(_sshApproval, onRequestRaised),
+        signer: _sshSigner,
+      );
+      final core = PhoneAuthCore(
+        authorizer: _authorizer,
+        consent: onRequestRaised == null
+            ? _consent
+            : _SessionScopedConsent(_consent, onRequestRaised),
+        policy: policyFor(record),
+        clock: _clock,
+      );
+      final incoming = StreamIterator<Uint8List>(
+        outcome.session.incomingFrames,
+      );
+      frames = incoming;
+      if (!await incoming.moveNext().timeout(pairedSessionIdleTimeout)) {
         throw StateError('Desktop closed before sending a request');
       }
-      final frame = frames.current;
+      final frame = incoming.current;
       if (WebAuthnRelayRequest.recognizes(frame)) {
         final request = WebAuthnRelayRequest.decode(
           frame,
           expectedVerifierId: record.verifierId,
         );
         final response = _webAuthn.perform(request);
-        final nextFrame = frames.moveNext().then((available) {
+        final nextFrame = incoming.moveNext().then((available) {
           if (!available) {
             throw StateError('Desktop closed the passkey session');
           }
-          return frames.current;
+          return incoming.current;
         });
         // A read that produced no frame is `null` rather than a throw, because
         // the race below has to be able to lose to it. Whichever side loses is
@@ -377,7 +390,7 @@ class PairedSessionService {
       // Nothing was asked for. Not an error: the desktop is simply idle.
       return null;
     } finally {
-      await frames.cancel();
+      await frames?.cancel();
       if (identical(_active[_key(record)], outcome.session)) {
         _active.remove(_key(record));
       }
