@@ -20,10 +20,10 @@ class BackgroundSessionService : Service() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "Conexoes com computadores",
+                    "Conexões com computadores",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
-                    description = "Mantem computadores pareados disponiveis para autenticacao"
+                    description = "Mantém computadores pareados disponíveis para autenticação"
                     setShowBadge(false)
                 },
             )
@@ -41,7 +41,15 @@ class BackgroundSessionService : Service() {
                 0
             },
         )
-        return START_STICKY
+        // Not sticky, because nothing in this process would come back with
+        // it. The sessions are Dart, running in the app's Flutter engine;
+        // there is no headless entrypoint. Restarted after the process was
+        // killed, this service would put "PhoneAuth está disponível" back on
+        // screen over a process with no engine, no runner and no connection to
+        // any desktop -- a notification promising exactly the thing that had
+        // just stopped being true. The app coming back is what brings the
+        // sessions back, and it starts this again itself.
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -64,8 +72,8 @@ class BackgroundSessionService : Service() {
             ?: android.R.drawable.stat_sys_data_bluetooth
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(icon)
-            .setContentTitle("PhoneAuth esta disponivel")
-            .setContentText("Aguardando solicitacoes de computadores pareados")
+            .setContentTitle("PhoneAuth está disponível")
+            .setContentText("Aguardando solicitações de computadores pareados")
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
