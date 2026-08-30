@@ -20,6 +20,19 @@ $pdb = Join-Path $output 'phone-auth-windows-webauthn-plugin.pdb'
 $optimize = if ($Configuration -eq 'release') { '/O2 /DNDEBUG' } else { '/Od /Zi' }
 
 $command = "call `"$vcvars`" >nul && cl.exe /nologo /std:c++20 /EHsc /W4 /DUNICODE /D_UNICODE $optimize `"$source`" /Fo:`"$object`" /Fd:`"$pdb`" /Fe:`"$exe`""
-cmd.exe /d /c $command
-if ($LASTEXITCODE -ne 0) { throw "MSVC failed with exit code $LASTEXITCODE" }
+
+# vcvars64 writes benign notes to stderr (it looks for vswhere on PATH and says
+# so when it is not there). Under `$ErrorActionPreference = 'Stop'` PowerShell
+# turns any stderr line from a native command into a terminating error, so the
+# build died before cl.exe ever ran — on a machine where cl.exe works. Judge the
+# compiler by its exit code, which is the thing that actually answers.
+$previous = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$log = cmd.exe /d /c $command 2>&1
+$code = $LASTEXITCODE
+$ErrorActionPreference = $previous
+if ($code -ne 0) {
+    $log | ForEach-Object { Write-Output $_ }
+    throw "MSVC failed with exit code $code"
+}
 Write-Output $exe
