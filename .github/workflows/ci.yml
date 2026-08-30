@@ -180,12 +180,24 @@ jobs:
       # needs BlueZ headers. More importantly, it compiles and runs the code
       # behind cfg(windows): DACLs, clipboard exclusions, hard-link counting
       # and process-interruption atomicity.
+      # `shell: bash` rather than the Windows default. A multi-command `run`
+      # under PowerShell only reports the exit code of the *last* command:
+      # `$ErrorActionPreference` governs cmdlets, not native executables, so a
+      # failing `cargo fmt` or `cargo clippy` here would scroll past and the
+      # job would go green on the strength of `cargo test` alone. Which is the
+      # worst way for a check to fail, because nobody looks at a green job.
+      #
+      # `--all-features` for the same reason it is on the Linux job: the tests
+      # that drive a phone over a real socket are gated on `dev-simulator`, and
+      # without the flag they compile to nothing and report "0 passed", which
+      # reads exactly like passing.
       - name: Rust checks on Windows
         working-directory: desktop
+        shell: bash
         run: |
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
 
   # Four ecosystems, four lockfiles, one scanner. Rust and npm each have their
   # own auditing tool and pub has none at all, so a per-ecosystem approach
