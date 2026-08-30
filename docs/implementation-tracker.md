@@ -234,7 +234,7 @@ isso é o comportamento seguro enquanto os itens abaixo não existem.
 
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
-| LUK-01 | P1 | ⛔ | Revisar a superfície de ataque do initrd e escolher o transporte. Ethernet é o primeiro candidato; Wi-Fi não pode exigir PSK em claro no `/boot`. |
+| LUK-01 | P1 | ✅ | Revisão em `docs/luks-initrd-threat-review.md`: primeira implementação é Ethernet cabeada, IPv4 e um listener TCP, usando o handshake autenticado existente sobre rede integralmente hostil. Endereço estável e porta fixa substituem discovery; DHCP só dá disponibilidade. Wi-Fi foi recusado por exigir PSK/stack no initrd normalmente legível, e BLE ficou para revisão HCI própria porque BlueZ/D-Bus não existe antes do root. O documento fixa ameaças, assumptions de Secure Boot, timeout único, limites, stdout/stderr, fallback e gatilhos de nova revisão. |
 | LUK-02 | P1 | ⬜ | Implementar transporte mínimo no initrd sem reutilizar `ble.rs`: ele depende de `bluetoothd`/D-Bus e não funciona antes do sistema subir. BLE exigiria caminho HCI próprio e revisão adicional. |
 | LUK-03 | P1 | ⬜ | Criar credencial e esquema de wrapping dedicados a LUKS. ECDSA é assinatura, não chave determinística; nunca derivar chave de disco de uma assinatura. |
 | LUK-04 | P1 | ⬜ | Criar keyslot PhoneAuth e unidade/configuração initrd no módulo NixOS. Hoje o módulo não instala nenhum serviço no initrd. |

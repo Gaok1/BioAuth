@@ -56,13 +56,14 @@
   `BIOMETRIC_WEAK`, or system-credential fallback.
 - No permanent secret, password, private key, or LUKS key in a QR/deep link.
 
-## LUKS-specific future constraints
+## LUKS-specific constraints
 
-LUKS work starts only after the core, BLE, and QR/network transports are solid.
-It uses a separate wrapping credential and a dedicated keyslot. An offline
-recovery keyslot is mandatory; the phone must never be the sole recovery path.
-Initrd networking, Wi-Fi credentials, DHCP, firewall exposure, QR hardware, and
-BLE stack size require a separate review before implementation.
+The first transport review is complete in
+[`luks-initrd-threat-review.md`](luks-initrd-threat-review.md): wired IPv4/TCP,
+with the network treated as hostile and availability-only. Wi-Fi and BLE remain
+outside that decision. LUKS uses a separate wrapping credential and dedicated
+keyslot. An offline recovery keyslot is mandatory; the phone must never be the
+sole recovery path.
 
 ## Residual risks
 
