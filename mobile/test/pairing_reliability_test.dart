@@ -472,17 +472,51 @@ void main() {
       );
     });
 
+    // The catch-all under the table was the same mistake one level down: a
+    // sentence claiming the person cancelled, standing in for every refusal
+    // the table had not been taught. These are the phone's own words and they
+    // were written to be read.
     test(
-      'a refusal without a reason of its own keeps the old sentence',
+      'a refusal the table does not name keeps the words it came with',
       () async {
         final answer = await refusedWith(
-          PlatformException(code: 'webauthn_cancelled', message: 'Cancelar'),
+          PlatformException(
+            code: 'webauthn_failed',
+            message: 'Passkey is no longer available',
+          ),
         );
 
         expect(answer, containsPair('ok', false));
-        expect(answer['error'], 'Passkey operation was cancelled or rejected');
+        expect(
+          answer['error'],
+          'Passkey is no longer available (webauthn_failed)',
+        );
       },
     );
+
+    test('a refusal that says nothing still names the path it took', () async {
+      final answer = await refusedWith(
+        PlatformException(code: 'webauthn_cancelled'),
+      );
+
+      expect(
+        answer['error'],
+        'The phone refused the passkey (webauthn_cancelled)',
+      );
+    });
+
+    // It reaches a DOMException on somebody's website, and nothing the phone
+    // says is long.
+    test('a refusal that will not stop talking is cut short', () async {
+      final answer = await refusedWith(
+        PlatformException(code: 'webauthn_failed', message: 'x' * 400),
+      );
+
+      expect(
+        (answer['error']! as String).length,
+        120 + ' (webauthn_failed)'.length,
+      );
+    });
   });
 
   test('revoking a desktop takes down the sheet it left on screen', () async {

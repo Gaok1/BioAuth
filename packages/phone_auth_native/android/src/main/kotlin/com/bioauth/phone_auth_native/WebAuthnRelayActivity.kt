@@ -48,7 +48,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
                     OP_GET -> prepareGet(origin, optionsJson)
                     else -> throw IllegalArgumentException("Unsupported WebAuthn operation")
                 }
-            }.onFailure { fail("Desktop passkey request was rejected") }
+            }.onFailure { fail("Desktop passkey request was rejected: ${reasonOf(it)}") }
         }
     }
 
@@ -150,6 +150,19 @@ class WebAuthnRelayActivity : FragmentActivity() {
         WebAuthnRelayCoordinator.complete(requestId, responseJson, null)
         finishRelay()
     }
+
+    /// Why one of the checks above refused, in the words of the check itself.
+    ///
+    /// Everything reachable from there fails through `require`, and those
+    /// messages are written here, one rule each: the challenge is the wrong
+    /// size, ES256 is not among the algorithms offered, the browser origin is
+    /// not authorized for this relying party. Collapsing a dozen of them into
+    /// "the request was rejected" left the only readable account of what went
+    /// wrong on the floor, while the person read on a website that their
+    /// authenticator would not do it.
+    private fun reasonOf(failure: Throwable): String =
+        failure.message?.trim()?.take(120)?.takeIf { it.isNotEmpty() }
+            ?: "no reason given"
 
     private fun fail(message: String) {
         runOnUiThread {

@@ -76,28 +76,41 @@ class WebAuthnRelayRequest {
   }
 }
 
-/// What the desktop is told, per reason the phone had for refusing.
+/// Refusals whose native wording is not fit to be read by the person.
 ///
-/// Every refusal used to arrive in the browser as the same sentence: that the
-/// operation was cancelled or rejected. Only one of them is that. The phone
-/// also refuses before it shows anything at all -- when desktop passkey
-/// notifications are off there is no prompt to cancel, and telling the person
-/// they cancelled sends them to look at the phone's biometrics, which is the
-/// one part that was working. A reason the phone knew exactly was thrown away
-/// at the last step and replaced with a wrong one.
+/// Only these two. `background_sessions_unavailable` says "notification
+/// permission is required", which is a fact about Android and not an
+/// instruction anyone can act on; what a person needs is the setting to go
+/// turn on. Everything else the phone says about a refusal was written to be
+/// read -- "the passkey is no longer available", "the browser origin is not
+/// authorized for this relying party", "biometric verification did not
+/// complete" -- and passes through with the code that carried it.
 ///
-/// Keyed by code and closed, rather than forwarding the native message: those
-/// strings are written for this app's own log, one of them carries a parser's
-/// words about the request, and none of them were written to be read by a
-/// stranger's website. A code not named here keeps the old sentence, which is
-/// where `webauthn_cancelled` belongs anyway.
+/// It did not, at first. A closed table with a catch-all beneath it looked
+/// careful and was not: the sentence underneath claimed the operation was
+/// cancelled or rejected, which for anything the table did not name was a
+/// guess, and usually a wrong one. It hid a message this same relay had just
+/// written, and cost a round trip with a person at a keyboard to find out
+/// what the phone had said all along.
 const _refusals = <String, String>{
   'background_sessions_unavailable':
       'Turn on desktop passkey notifications in the PhoneAuth app',
   'operation_in_progress': 'The phone is already handling another passkey',
-  'invalid_arguments': 'The phone rejected this request as malformed',
-  'webauthn_failed': 'The passkey operation failed on the phone',
 };
+
+/// The phone's own words, bounded, with the code that carried them.
+///
+/// Bounded because this ends up in a DOMException on a website and none of
+/// these are long. The code is always one of a handful of fixed identifiers
+/// the plugin writes itself, so it names the path without describing the
+/// request.
+String _reported(PlatformException error) {
+  final detail = error.message?.trim() ?? '';
+  final bounded = detail.length > 120 ? detail.substring(0, 120) : detail;
+  return bounded.isEmpty
+      ? 'The phone refused the passkey (${error.code})'
+      : '$bounded (${error.code})';
+}
 
 class WebAuthnRelayHandler {
   const WebAuthnRelayHandler({
@@ -127,7 +140,10 @@ class WebAuthnRelayHandler {
         'response': response,
       });
     } on PlatformException catch (error) {
-      return _refused(request.requestId, _refusals[error.code]);
+      return _refused(
+        request.requestId,
+        _refusals[error.code] ?? _reported(error),
+      );
     } on Object {
       return _refused(request.requestId, null);
     }
