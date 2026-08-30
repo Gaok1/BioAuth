@@ -290,13 +290,15 @@ On success it writes the key to stdout and exits 0, so it pipes into
 nothing to stdout — a boot log must never capture key material.
 
 The credential selection, key-separation and hardware-key gates are
-implemented and tested. What is missing:
+implemented and tested. The initrd attack-surface review selected a minimal
+wired IPv4/TCP listener and rejected Wi-Fi and BlueZ; the complete boundary and
+implementation gates are in
+[`luks-initrd-threat-review.md`](luks-initrd-threat-review.md). What is missing:
 
 - a transport that works in an initrd. This is not the desktop transport with
   a different config: there is no NetworkManager, no D-Bus and no BlueZ, and
   adding any of them expands what runs before the disk is decrypted. The
-  roadmap gates this behind a separate attack-surface review, which has not
-  happened.
+  accepted first path is wired Ethernet with no discovery, D-Bus or TLS stack.
 - a dedicated LUKS wrapping credential — see pendência 4.
 
 The module deliberately ships no initrd unit. A unit that cannot work would

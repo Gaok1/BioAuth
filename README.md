@@ -199,6 +199,7 @@ can only be built by a non-publishing manual workflow run and is named
 - [Vault and File Locker application frames](docs/protocol-application.md)
 - [Explorer, Nautilus and drag-and-drop File Locker integration](docs/file-manager-integration.md)
 - [Signed Windows updates and rollback](docs/updates.md)
+- [LUKS initrd transport threat review](docs/luks-initrd-threat-review.md)
 - [Architecture](docs/architecture.md)
 - [Threat model](docs/threat-model.md)
 - [Product and security decisions](docs/product-decisions.md)

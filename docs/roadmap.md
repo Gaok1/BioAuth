@@ -63,7 +63,8 @@ BLE remains optional and never leaks BLE concepts into protocol/domain types.
       recovery keyslot today
 - [x] NixOS module, with separate system and user agents so that a PAM rule
       never depends on a user-writable pairing store
-- Selected BLE/network transports in initrd after attack-surface review
+- [x] Initrd attack-surface review: wired IPv4/TCP selected; Wi-Fi rejected and
+      BLE/HCI deferred to a separate review
 - Dedicated LUKS wrapping credential and PhoneAuth keyslot
 - Mandatory offline recovery keyslot and recovery drills
 
