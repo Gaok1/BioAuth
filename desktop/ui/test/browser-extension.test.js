@@ -390,3 +390,47 @@ test('a refused fill says why, where the button is', async () => {
   assert.equal(insecure.action.badge, '!');
   assert.equal(insecure.action.title, 'PhoneAuth: só páginas https podem ser preenchidas');
 });
+
+test('a bridge that cannot reach the extension says which way it failed', async () => {
+  // One sentence used to stand for every way the message did not get through,
+  // and they are not one problem. A content script outlives the extension that
+  // injected it whenever the extension is reloaded: the script stays in the
+  // page, every request from that tab fails for good, and the fix is to reload
+  // the page -- which is the one thing the person could have done and the one
+  // thing "PhoneAuth bridge failed" never said.
+  const answer = async (failure) => {
+    const document = new EventTarget();
+    let response;
+    document.addEventListener('bioauth-webauthn-response', (event) => {
+      response = JSON.parse(event.detail);
+    });
+    const top = {};
+    const context = vm.createContext({
+      browser: { runtime: { sendMessage: async () => { throw failure; } } },
+      CustomEvent,
+      document,
+      Event,
+      window: { top },
+    });
+    context.window.top = context.window;
+    context.globalThis = context;
+    vm.runInContext(fs.readFileSync(path.join(extension, 'content-bridge.js'), 'utf8'), context);
+    document.dispatchEvent(new CustomEvent('bioauth-webauthn-request', {
+      detail: JSON.stringify({ id: 'request-1', operation: 'get', options: {} }),
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return response;
+  };
+
+  const orphaned = await answer(new Error('Extension context invalidated.'));
+  assert.equal(orphaned.ok, false);
+  assert.equal(orphaned.error, 'PhoneAuth was updated — reload this page and try again');
+
+  const absent = await answer(new Error('Could not establish connection. Receiving end does not exist.'));
+  assert.match(absent.error, /Receiving end does not exist/);
+
+  // A throw with nothing to say still gets the old sentence rather than an
+  // empty one.
+  const mute = await answer(new Error(''));
+  assert.equal(mute.error, 'PhoneAuth bridge failed');
+});

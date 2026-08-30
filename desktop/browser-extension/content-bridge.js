@@ -44,9 +44,24 @@
         options: request.options,
       });
       reply(request.id, response);
-    } catch {
+    } catch (failure) {
       if (!request?.id) return;
-      reply(request.id, { ok: false, error: "PhoneAuth bridge failed" });
+      // The browser's own words, rather than one sentence standing in for all
+      // of them. They are different problems: "Extension context invalidated"
+      // means this script outlived the extension that injected it and every
+      // request from this tab will fail until the page is reloaded, which is
+      // the one failure a person can fix and the one they were not told about.
+      // "Receiving end does not exist" means the worker was never there, and
+      // "the message port closed" means it went away mid-request.
+      const detail = String(failure?.message ?? failure ?? "").slice(0, 200);
+      reply(request.id, {
+        ok: false,
+        error: /context invalidated/i.test(detail)
+          ? "PhoneAuth was updated — reload this page and try again"
+          : detail
+            ? `PhoneAuth bridge failed: ${detail}`
+            : "PhoneAuth bridge failed",
+      });
     }
   });
 
