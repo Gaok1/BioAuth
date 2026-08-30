@@ -793,7 +793,7 @@ impl Service {
 
         let (device_id, credential_id) =
             self.select_locker_credential(params.credential_id.as_deref())?;
-        let mut session = self
+        let session = self
             .transports
             .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
@@ -807,14 +807,9 @@ impl Service {
             remove_original: false,
         };
         let outcome = {
-            let mut custodian = PhoneCustodian::new(
-                &mut session,
-                self.config.verifier_name.clone(),
-                credential_id.clone(),
-            );
+            let mut custodian = self.phone_custodian(session, &device_id, &credential_id);
             phone_auth_locker::lock_file(&source, &plan, &mut custodian)
         };
-        let _ = session.close();
 
         let outcome = match outcome {
             Ok(outcome) => outcome,
@@ -859,7 +854,7 @@ impl Service {
 
         let (device_id, credential_id) =
             self.select_locker_credential(params.credential_id.as_deref())?;
-        let mut session = self
+        let session = self
             .transports
             .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
@@ -867,11 +862,7 @@ impl Service {
         let development = session.security().is_development;
 
         let outcome = {
-            let mut custodian = PhoneCustodian::new(
-                &mut session,
-                self.config.verifier_name.clone(),
-                credential_id,
-            );
+            let mut custodian = self.phone_custodian(session, &device_id, &credential_id);
             phone_auth_locker::unlock_file(
                 &container,
                 destination.as_deref(),
@@ -879,7 +870,6 @@ impl Service {
                 UnlockKey::Phone(&mut custodian),
             )
         };
-        let _ = session.close();
 
         match outcome {
             Ok(outcome) => {
@@ -920,7 +910,7 @@ impl Service {
 
         let (device_id, credential_id) =
             self.select_locker_credential(params.credential_id.as_deref())?;
-        let mut session = self
+        let session = self
             .transports
             .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
@@ -928,12 +918,9 @@ impl Service {
         let development = session.security().is_development;
 
         let outcome = {
-            let mut custodian = PhoneCustodian::new(
-                &mut session,
-                self.config.verifier_name.clone(),
-                credential_id,
-            )
-            .rekeying();
+            let mut custodian = self
+                .phone_custodian(session, &device_id, &credential_id)
+                .rekeying();
             phone_auth_locker::rekey_file(
                 &container,
                 &mut custodian,
@@ -941,7 +928,6 @@ impl Service {
                 params.new_recovery_code,
             )
         };
-        let _ = session.close();
 
         let code = match outcome {
             Ok(code) => code,
@@ -967,6 +953,32 @@ impl Service {
             device_name,
             development,
         })
+    }
+
+    /// A custodian that dials the phone once for every request it makes.
+    ///
+    /// Spends `first` on the opening one, so an operation that needs a single
+    /// exchange still costs a single dial. A rekey needs two -- unwrap the old
+    /// key, wrap the new one -- and the phone closes a session as soon as it
+    /// has answered on it.
+    fn phone_custodian<'a>(
+        &'a self,
+        first: Box<dyn phone_auth_verifier::SecureSession + Send>,
+        device_id: &'a str,
+        credential_id: &'a str,
+    ) -> PhoneCustodian<'a> {
+        let mut first = Some(first);
+        let transports = &self.transports;
+        PhoneCustodian::new(
+            move || match first.take() {
+                Some(session) => Ok(session),
+                None => transports
+                    .connect(device_id, credential_id)
+                    .map_err(phone_auth_locker::LockerError::Denied),
+            },
+            self.config.verifier_name.clone(),
+            credential_id,
+        )
     }
 
     /// Every item's metadata, spending `first` on the opening page and dialling
