@@ -29,6 +29,16 @@
     return value;
   };
 
+  // A real credential carries its methods on the prototype, where a library is
+  // free to shadow one by assigning to the instance. `@github/webauthn-json`
+  // does exactly that with `toJSON`, and it is on the path of every site using
+  // it — github.com included. Defining ours without `writable` made that
+  // assignment a TypeError, so the ceremony died *after* the phone had already
+  // signed: the person approved with a fingerprint and then read "registration
+  // failed". Own properties that shadow a prototype method must be as writable
+  // as the method they stand in for.
+  const method = { writable: true, configurable: true };
+
   const responseObject = (operation, json) => {
     const fields = operation === "create"
       ? ["clientDataJSON", "attestationObject"]
@@ -41,14 +51,18 @@
       Object.defineProperty(response, field, {
         value: json.response[field] == null ? null : fromBase64url(json.response[field]),
         enumerable: true,
+        configurable: true,
       });
     }
     if (operation === "create") {
       const spki = json.response.publicKey;
       Object.defineProperties(response, {
-        getTransports: { value: () => [...(json.response.transports ?? [])] },
-        getPublicKey: { value: () => (spki == null ? null : fromBase64url(spki)) },
-        getPublicKeyAlgorithm: { value: () => json.response.publicKeyAlgorithm ?? -7 },
+        getTransports: { ...method, value: () => [...(json.response.transports ?? [])] },
+        getPublicKey: { ...method, value: () => (spki == null ? null : fromBase64url(spki)) },
+        getPublicKeyAlgorithm: {
+          ...method,
+          value: () => json.response.publicKeyAlgorithm ?? -7,
+        },
       });
     }
     return response;
@@ -57,15 +71,21 @@
   const credentialObject = (operation, json, clientExtensionResults = {}) => {
     const credential = Object.create(globalThis.PublicKeyCredential?.prototype ?? Object.prototype);
     Object.defineProperties(credential, {
-      id: { value: json.id, enumerable: true },
-      rawId: { value: fromBase64url(json.rawId), enumerable: true },
-      type: { value: "public-key", enumerable: true },
-      authenticatorAttachment: { value: json.authenticatorAttachment ?? "platform", enumerable: true },
-      response: { value: responseObject(operation, json), enumerable: true },
+      id: { value: json.id, enumerable: true, configurable: true },
+      rawId: { value: fromBase64url(json.rawId), enumerable: true, configurable: true },
+      type: { value: "public-key", enumerable: true, configurable: true },
+      authenticatorAttachment: {
+        value: json.authenticatorAttachment ?? "platform",
+        enumerable: true,
+        configurable: true,
+      },
+      response: { value: responseObject(operation, json), enumerable: true, configurable: true },
       getClientExtensionResults: {
+        ...method,
         value: () => ({ ...(json.clientExtensionResults ?? {}), ...clientExtensionResults }),
       },
       toJSON: {
+        ...method,
         value: () => structuredClone({
           ...json,
           clientExtensionResults: {

@@ -132,6 +132,16 @@ test('page bridge processes GitHub AppID migration extensions as the WebAuthn cl
     '{"credProps":{"rk":true},"appidExclude":false}',
   );
 
+  // What actually broke on github.com, after the phone had already signed:
+  // `@github/webauthn-json` shadows `toJSON` by assigning to the credential it
+  // was handed. On a real one that is an own property shadowing a prototype
+  // method; on ours it hit a property defined without `writable` and threw,
+  // and the page reported a failed registration for a credential that exists.
+  created.toJSON = () => ({ patched: true });
+  assert.deepEqual(created.toJSON(), { patched: true });
+  created.response.getPublicKey = () => null;
+  assert.equal(created.response.getPublicKey(), null);
+
   document.addEventListener('bioauth-webauthn-request', (event) => {
     const request = JSON.parse(event.detail);
     assert.equal(request.options.extensions, undefined);
