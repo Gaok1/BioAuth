@@ -39,6 +39,28 @@ class VaultStoreTest {
     }
 
     @Test
+    fun `future storage versions fail closed without looking corrupt`() {
+        val futurePlaintext = """{"version":2,"items":[]}""".toByteArray()
+        assertEquals(
+            "store_version_unsupported",
+            assertFailsWith<VaultStoreFailure> {
+                VaultStoreCodec.decode(futurePlaintext)
+            }.code,
+        )
+
+        val futureCiphertext = ByteArray(19).also {
+            it[0] = 2
+            it[1] = 1
+        }
+        assertEquals(
+            "store_version_unsupported",
+            assertFailsWith<VaultStoreFailure> {
+                VaultCiphertext.iv(futureCiphertext)
+            }.code,
+        )
+    }
+
+    @Test
     fun `revisions start at one advance and reject stale or zero writes`() {
         val (createdItems, created) = VaultStoreData.create(emptyList(), input(), 10, "item-1")
         assertEquals(1, created.revision)
