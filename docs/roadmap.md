@@ -66,7 +66,8 @@ BLE remains optional and never leaks BLE concepts into protocol/domain types.
       never depends on a user-writable pairing store
 - [x] Initrd attack-surface review: wired IPv4/TCP selected; Wi-Fi rejected and
       BLE/HCI deferred to a separate review
-- Dedicated LUKS wrapping credential and PhoneAuth keyslot
+- [x] Dedicated random LUKS credential, biometric AES-GCM wrapper and initrd exchange
+- PhoneAuth keyslot and initrd unit with runtime-provided handshake identity
 - Mandatory offline recovery keyslot and recovery drills
 
 ## Phase 3 — Physical access

@@ -61,9 +61,11 @@
 The first transport review is complete in
 [`luks-initrd-threat-review.md`](luks-initrd-threat-review.md): wired IPv4/TCP,
 with the network treated as hostile and availability-only. Wi-Fi and BLE remain
-outside that decision. LUKS uses a separate wrapping credential and dedicated
-keyslot. An offline recovery keyslot is mandatory; the phone must never be the
-sole recovery path.
+outside that decision. LUKS uses a random 32-byte disk credential and a
+separate biometric AES-GCM wrapping key; ECDSA is never key material. The
+public wrapper format and release path are in
+[`luks-wrapping.md`](luks-wrapping.md). An offline recovery keyslot is
+mandatory; the phone must never be the sole recovery path.
 
 ## Residual risks
 

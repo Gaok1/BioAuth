@@ -76,7 +76,7 @@ continuar passando enquanto os produtos novos são construídos.
 | BAS-06 | ✅ | Agent com IPC local autenticado, CLI com exit codes, tray Electron, QR no main process, audit log e permissões por verifier/credencial. |
 | BAS-07 | ✅ | Credential Provider Android, CTAP2/ES256, alias por passkey, validação de caller/origin/RP/PSL, extensão Chrome/Firefox, Permissions Policy e native relay. |
 | BAS-08 | ✅ | Builds NSIS, AppImage, deb, tarball e Nix; gate que exige a mesma versão nos quatro manifests; ícones de produção. |
-| BAS-09 | ✅ | `phone-auth-initrd` seleciona somente credencial hardware de propósito LUKS e preserva contrato stdout/stderr seguro; ainda não desbloqueia disco. |
+| BAS-09 | ✅ | `phone-auth-initrd` seleciona somente credencial hardware de propósito LUKS, executa `luks.unlock` e preserva o contrato: chave somente no stdout no sucesso, diagnóstico somente no stderr e fallback não-zero. |
 | BAS-10 | ✅ | PAM via `pam_exec` para `sudo`/`login`, com separação entre agent de sistema e de usuário no módulo NixOS. |
 | BAS-11 | ✅ | CI executa formatação, análise, Clippy, Rust, Flutter, Kotlin e tray; vetores v1/v2 preservam compatibilidade. |
 
@@ -229,14 +229,14 @@ modelo de confiança e ficam fora do MVP.
 ## Criptografia de disco (LUKS)
 
 LUKS e File Locker compartilham ideias de envelope/recovery, mas não formato,
-credencial ou chave. O scaffold atual sempre retorna código 3 e cai na senha;
-isso é o comportamento seguro enquanto os itens abaixo não existem.
+credencial ou chave. O protocolo e o cliente initrd já desbloqueiam; a
+instalação segura do keyslot e da unidade continua bloqueada até `LUK-04/05`.
 
 | ID | Pri. | Estado | Trabalho e critério de aceite |
 |---|---:|---:|---|
 | LUK-01 | P1 | ✅ | Revisão em `docs/luks-initrd-threat-review.md`: primeira implementação é Ethernet cabeada, IPv4 e um listener TCP, usando o handshake autenticado existente sobre rede integralmente hostil. Endereço estável e porta fixa substituem discovery; DHCP só dá disponibilidade. Wi-Fi foi recusado por exigir PSK/stack no initrd normalmente legível, e BLE ficou para revisão HCI própria porque BlueZ/D-Bus não existe antes do root. O documento fixa ameaças, assumptions de Secure Boot, timeout único, limites, stdout/stderr, fallback e gatilhos de nova revisão. |
 | LUK-02 | P1 | ✅ | `phone-auth-initrd` agora abre um único listener IPv4 em porta fixa, aceita somente a identidade de sessão do telefone escolhido e executa o handshake mútuo `QrNetworkTransport` que o telefone já fala. Framing limitado foi movido para `phone-auth-session` e é compartilhado com agent/initrd; comprimento hostil é recusado antes da alocação. Accept, handshake, read e write consomem um deadline global de 1–300 s, sem retry infinito. A crate não importa agent, BlueZ, D-Bus, HTTP ou TLS. `--identity`, `--verifier-id` e `--port` tornam explícito o material que `LUK-04` deverá fornecer em runtime; a chave privada **não pode** ser embutida no initrd público. 3 testes de rede TCP real + 2 de framing; suíte do agent permanece verde. |
-| LUK-03 | P1 | ⬜ | Criar credencial e esquema de wrapping dedicados a LUKS. ECDSA é assinatura, não chave determinística; nunca derivar chave de disco de uma assinatura. |
+| LUK-03 | P1 | ✅ | Esquema v1 em Rust/Dart (`luks.enroll`/`luks.unlock`) usa uma chave de disco aleatória de 32 bytes e persiste somente binding, credential id e wrapper canônico. Android ganhou AES-256-GCM `bioauth_luks_wrapping_v1`, domínio AAD próprio, StrongBox preferido e biometria forte por uso; ECDSA permanece apenas identidade/política. O pairing provisiona e reporta a segurança da chave de wrapping, e `PairedSessionService` agora roteia credenciais LUKS e também liga o handler real do File Locker. O initrd valida wrapper/credencial, envia unlock, vincula resposta a request/binding/prazo e escreve somente a chave no stdout. Vetor Rust↔Dart, testes JVM de separação, serviço mobile, roteamento em TCP real e cliente initrd passam. Detalhes em `docs/luks-wrapping.md`. |
 | LUK-04 | P1 | ⬜ | Criar keyslot PhoneAuth e unidade/configuração initrd no módulo NixOS. Hoje o módulo não instala nenhum serviço no initrd. |
 | LUK-05 | P0 | ⬜ | Manter keyslot offline de recuperação obrigatório e executar drill antes de habilitar PhoneAuth no boot. Falha do telefone nunca pode tornar a máquina não inicializável. |
 | LUK-06 | P1 | ⬜ | Testar boot real: sucesso, timeout, telefone ausente, resposta inválida, troca de keyslot e fallback. Chave somente no stdout do consumidor; diagnóstico somente no stderr sem material sensível. |

@@ -27,6 +27,18 @@ void main() {
               'strongBiometrics': true,
               'biometricAvailability': 'available',
             },
+            'generateLuksKey' || 'luksKeyStatus' => {
+              'keyExists': true,
+              'hardwareBacked': true,
+              'strongBoxBacked': false,
+              'strongBiometrics': true,
+            },
+            'luksWrapKey' => {
+              'wrapper': Uint8List.fromList([9, 8, 7]),
+            },
+            'luksUnwrapKey' => {
+              'diskKey': Uint8List.fromList(List.filled(32, 6)),
+            },
             'sign' || 'signSessionIdentity' => {
               'signature': Uint8List.fromList([4, 5, 6]),
               'algorithm': 'SHA256withECDSA',
@@ -115,6 +127,31 @@ void main() {
 
   test('returns explicit BLE permission result', () async {
     expect(await const PhoneAuthBlePermissions().request(), isTrue);
+  });
+
+  test('keeps LUKS wrapping on its dedicated native methods', () async {
+    const key = PhoneAuthLuksKey();
+    expect((await key.generate()).usable, isTrue);
+    expect(
+      await key.wrap(
+        binding: Uint8List(32),
+        credentialId: 'disk-cred-1',
+        diskKey: Uint8List(32),
+        volumeName: 'cryptroot',
+        verifierName: 'Workstation',
+      ),
+      [9, 8, 7],
+    );
+    expect(
+      await key.unwrap(
+        binding: Uint8List(32),
+        credentialId: 'disk-cred-1',
+        wrapper: Uint8List.fromList([9, 8, 7]),
+        volumeName: 'cryptroot',
+        verifierName: 'Workstation',
+      ),
+      List.filled(32, 6),
+    );
   });
 
   test('controls the persistent background session service', () async {

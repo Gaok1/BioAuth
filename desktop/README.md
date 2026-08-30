@@ -73,6 +73,8 @@ that is never running at the moment it matters.
 
 `phone-auth-initrd` is Linux-only by intent — it unwraps an encrypted root
 volume before there is a service manager — and is left out of the Windows build.
+It already performs the authenticated `luks.unlock` exchange; the NixOS module
+still has to install its keyslot and initrd unit safely.
 
 ## NixOS
 

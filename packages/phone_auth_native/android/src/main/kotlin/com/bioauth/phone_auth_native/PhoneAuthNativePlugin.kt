@@ -34,6 +34,7 @@ class PhoneAuthNativePlugin :
     private lateinit var vaultChannel: MethodChannel
     private lateinit var keyStore: DeviceKeyStore
     private lateinit var lockerKeyStore: LockerKeyStore
+    private lateinit var luksKeyStore: LuksKeyStore
     private lateinit var biometricManager: BiometricManager
     private lateinit var bleController: BleController
     private lateinit var passkeyStore: PasskeyStore
@@ -51,6 +52,7 @@ class PhoneAuthNativePlugin :
         applicationContext = binding.applicationContext
         keyStore = DeviceKeyStore(binding.applicationContext)
         lockerKeyStore = LockerKeyStore(binding.applicationContext)
+        luksKeyStore = LuksKeyStore(binding.applicationContext)
         biometricManager = BiometricManager.from(binding.applicationContext)
         bleController = BleController(binding.applicationContext, binding.binaryMessenger)
         passkeyStore = PasskeyStore(binding.applicationContext)
@@ -86,6 +88,10 @@ class PhoneAuthNativePlugin :
             "generateLockerKey" -> generateLockerKey(result)
             "lockerWrapKey" -> lockerWrapKey(call.arguments, result)
             "lockerUnwrapKey" -> lockerUnwrapKey(call.arguments, result)
+            "luksKeyStatus" -> luksKeyStatus(result)
+            "generateLuksKey" -> generateLuksKey(result)
+            "luksWrapKey" -> luksWrapKey(call.arguments, result)
+            "luksUnwrapKey" -> luksUnwrapKey(call.arguments, result)
             else -> if (!bleController.handle(call, result)) result.notImplemented()
         }
     }
@@ -365,6 +371,98 @@ class PhoneAuthNativePlugin :
         return fileName to verifierName
     }
 
+    private fun luksKeyStatus(result: MethodChannel.Result) {
+        val security = runCatching { luksKeyStore.keySecurity() }
+            .getOrDefault(LuksKeyStore.Security(false, false, false))
+        result.success(
+            mapOf(
+                "keyExists" to security.keyExists,
+                "hardwareBacked" to security.hardwareBacked,
+                "strongBoxBacked" to security.strongBoxBacked,
+                "strongBiometrics" to (strongBiometricStatus() == BiometricManager.BIOMETRIC_SUCCESS),
+            ),
+        )
+    }
+
+    private fun generateLuksKey(result: MethodChannel.Result) {
+        if (strongBiometricStatus() != BiometricManager.BIOMETRIC_SUCCESS) {
+            result.error("biometric_unavailable", "Strong biometric enrollment is required", null)
+            return
+        }
+        runCatching { luksKeyStore.ensureKey() }
+            .onSuccess { luksKeyStatus(result) }
+            .onFailure { result.error("key_generation_failed", "Unable to generate the disk wrapping key", null) }
+    }
+
+    /** Wraps a new random LUKS credential after explicit biometric approval. */
+    private fun luksWrapKey(arguments: Any?, result: MethodChannel.Result) {
+        val map = arguments as? Map<*, *>
+        val binding = map?.get("binding") as? ByteArray
+        val credentialId = map?.get("credentialId") as? String
+        val diskKey = map?.get("diskKey") as? ByteArray
+        val prompt = luksPrompt(map) ?: run {
+            result.error("invalid_arguments", "A computer name and a volume name are required", null)
+            return
+        }
+        if (binding == null || binding.size != LuksKeyStore.BINDING_BYTES ||
+            credentialId.isNullOrBlank() ||
+            diskKey == null || diskKey.size != LuksKeyStore.DATA_KEY_BYTES
+        ) {
+            result.error("invalid_arguments", "A binding, a credential and a 32 byte key are required", null)
+            return
+        }
+        runCipherOperation(
+            result,
+            title = "Proteger disco",
+            subtitle = prompt.first,
+            description = "${prompt.second} quer cadastrar o desbloqueio deste volume",
+            keyUnavailableMessage = "The disk wrapping key is unavailable",
+            failureCode = "luks_failed",
+            failureMessage = "Unable to complete the disk wrapping operation",
+            cipherOf = { luksKeyStore.wrapCipher() },
+        ) { cipher ->
+            mapOf("wrapper" to luksKeyStore.wrap(cipher, binding, credentialId, diskKey))
+        }
+    }
+
+    /** Returns a LUKS credential only after explicit biometric approval. */
+    private fun luksUnwrapKey(arguments: Any?, result: MethodChannel.Result) {
+        val map = arguments as? Map<*, *>
+        val binding = map?.get("binding") as? ByteArray
+        val credentialId = map?.get("credentialId") as? String
+        val wrapper = map?.get("wrapper") as? ByteArray
+        val prompt = luksPrompt(map) ?: run {
+            result.error("invalid_arguments", "A computer name and a volume name are required", null)
+            return
+        }
+        if (binding == null || binding.size != LuksKeyStore.BINDING_BYTES ||
+            credentialId.isNullOrBlank() ||
+            wrapper == null || wrapper.isEmpty() || wrapper.size > MAX_LUKS_WRAPPER_BYTES
+        ) {
+            result.error("invalid_arguments", "A binding, a credential and a wrapper are required", null)
+            return
+        }
+        runCipherOperation(
+            result,
+            title = "Desbloquear disco",
+            subtitle = prompt.first,
+            description = "${prompt.second} quer desbloquear este volume",
+            keyUnavailableMessage = "The disk wrapping key is unavailable",
+            failureCode = "luks_failed",
+            failureMessage = "Unable to complete the disk wrapping operation",
+            cipherOf = { luksKeyStore.unwrapCipher(wrapper) },
+        ) { cipher ->
+            mapOf("diskKey" to luksKeyStore.unwrap(cipher, binding, credentialId, wrapper))
+        }
+    }
+
+    private fun luksPrompt(map: Map<*, *>?): Pair<String, String>? {
+        val volumeName = map?.get("volumeName") as? String
+        val verifierName = map?.get("verifierName") as? String
+        if (volumeName.isNullOrBlank() || verifierName.isNullOrBlank()) return null
+        return volumeName to verifierName
+    }
+
     /**
      * Runs one biometric-gated cipher operation.
      *
@@ -377,6 +475,9 @@ class PhoneAuthNativePlugin :
         title: String,
         subtitle: String,
         description: String,
+        keyUnavailableMessage: String = "The file locker key is unavailable",
+        failureCode: String = "locker_failed",
+        failureMessage: String = "Unable to complete the locker operation",
         cipherOf: () -> Cipher,
         complete: (Cipher) -> Map<String, Any>,
     ) {
@@ -394,7 +495,7 @@ class PhoneAuthNativePlugin :
             return
         }
         val cipher = runCatching(cipherOf).getOrElse {
-            result.error("key_not_found", "The file locker key is unavailable", null)
+            result.error("key_not_found", keyUnavailableMessage, null)
             return
         }
 
@@ -413,7 +514,7 @@ class PhoneAuthNativePlugin :
                         .onSuccess { finishWithSuccess(it) }
                         // Deliberately one message for every failure: which
                         // byte was wrong is not something to tell a caller.
-                        .onFailure { finishWithError("locker_failed", "Unable to complete the locker operation") }
+                        .onFailure { finishWithError(failureCode, failureMessage) }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -855,6 +956,7 @@ class PhoneAuthNativePlugin :
         /** Mirrors the protocol's wrapper bound, so an oversized blob is
          * refused before a key is even touched. */
         private const val MAX_LOCKER_WRAPPER_BYTES = 512
+        private const val MAX_LUKS_WRAPPER_BYTES = 512
     }
 }
 

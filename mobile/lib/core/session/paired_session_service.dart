@@ -10,6 +10,8 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../locker/locker_service.dart';
+import '../luks/luks_service.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
@@ -38,12 +40,16 @@ class PairedSessionService {
     VaultApproval? vaultApproval,
     SshApproval? sshApproval,
     SshSigner? sshSigner,
+    LockerKeyGuardian lockerGuardian = const NativeLockerKeyGuardian(),
+    LuksKeyGuardian luksGuardian = const NativeLuksKeyGuardian(),
     DateTime Function()? clock,
   }) : _transport = transport,
        _authorizer = authorizer,
        _consent = consent,
        _vault = VaultService(repository: vaultStore, approval: vaultApproval),
        _ssh = SshService(approval: sshApproval, signer: sshSigner),
+       _lockerGuardian = lockerGuardian,
+       _luksGuardian = luksGuardian,
        _clock = clock;
 
   final AuthTransport _transport;
@@ -51,6 +57,8 @@ class PairedSessionService {
   final AuthorizationConsent _consent;
   final VaultService _vault;
   final SshService _ssh;
+  final LockerKeyGuardian _lockerGuardian;
+  final LuksKeyGuardian _luksGuardian;
   final DateTime Function()? _clock;
   // Keyed by credential: one loop dials each credential, so one session per
   // credential is live at a time. A desktop holding both a login and a vault
@@ -61,6 +69,8 @@ class PairedSessionService {
   // nothing. Verifier alone is not a key either, since one computer can hold
   // several credentials and each has its own session.
   final Map<(String, String), SecureTransportSession> _active = {};
+  final Map<(String, String), LockerService> _lockers = {};
+  final Map<(String, String), LuksService> _luks = {};
   final WebAuthnRelayHandler _webAuthn = const WebAuthnRelayHandler();
   final Set<String> _closed = {};
   bool _stopped = false;
@@ -80,6 +90,8 @@ class PairedSessionService {
   /// just said they no longer trust.
   Future<void> closeDevice(String verifierId) async {
     _closed.add(verifierId);
+    _lockers.removeWhere((key, _) => key.$1 == verifierId);
+    _luks.removeWhere((key, _) => key.$1 == verifierId);
     for (final entry in _active.entries.toList()) {
       if (entry.key.$1 != verifierId) continue;
       _active.remove(entry.key);
@@ -197,18 +209,29 @@ class PairedSessionService {
         // opened for the vault cannot reach the SSH key by asking for
         // `ssh.sign`, and the other way round.
         final purpose = record.purpose;
-        final response = purpose == CredentialPurpose.ssh
-            ? await _ssh.handle(
-                frame,
-                sessionBinding: outcome.session.sessionBinding,
-                authorized: true,
-              )
-            : await _vault.handle(
-                frame,
-                sessionBinding: outcome.session.sessionBinding,
-                authorized: purpose == CredentialPurpose.vault,
-                replayScope: '${record.verifierId}\u0000${record.credentialId}',
-              );
+        final response = switch (purpose) {
+          CredentialPurpose.ssh => await _ssh.handle(
+            frame,
+            sessionBinding: outcome.session.sessionBinding,
+            authorized: true,
+          ),
+          CredentialPurpose.fileLocker =>
+            await (_lockers[_key(record)] ??= LockerService(
+              guardian: _lockerGuardian,
+              credentialId: record.credentialId,
+            )).handle(frame, sessionBinding: outcome.session.sessionBinding),
+          CredentialPurpose.diskUnlock =>
+            await (_luks[_key(record)] ??= LuksService(
+              guardian: _luksGuardian,
+              credentialId: record.credentialId,
+            )).handle(frame, sessionBinding: outcome.session.sessionBinding),
+          _ => await _vault.handle(
+            frame,
+            sessionBinding: outcome.session.sessionBinding,
+            authorized: purpose == CredentialPurpose.vault,
+            replayScope: '${record.verifierId}\u0000${record.credentialId}',
+          ),
+        };
         await outcome.session.send(response);
         return null;
       }

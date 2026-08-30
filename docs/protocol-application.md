@@ -1,8 +1,8 @@
-# Vault and File Locker application frames
+# Vault, File Locker and LUKS application frames
 
 Status: version 1, implemented in Rust and Dart with a shared golden vector.
 
-Authorization continues to use `AuthRequest`/`AuthResponse`. Vault and locker
+Authorization continues to use `AuthRequest`/`AuthResponse`. Vault, locker and LUKS
 traffic uses a separate application envelope inside the authenticated encrypted
 session. An application frame is **not** a biometric-signature payload and must
 never be copied into an authorization request, audit entry, exception, or debug
@@ -19,7 +19,7 @@ The frame is a canonical CBOR array with nine elements:
 | 2 | kind | `0` request, `1` response, `2` cancel, `3` error |
 | 3 | request ID | non-blank, at most 64 UTF-16 code units |
 | 4 | session binding | exactly 32 bytes from the current handshake |
-| 5 | operation | at most 64 ASCII bytes under `vault.*` or `locker.*` |
+| 5 | operation | at most 64 ASCII bytes under `vault.*`, `locker.*`, `luks.*`, or `ssh.*` |
 | 6 | issued at | UTC Unix time in milliseconds |
 | 7 | expires at | after issuance and no more than 120 seconds later |
 | 8 | payload | opaque service bytes, at most 6144 bytes |
@@ -37,7 +37,8 @@ envelope is not authorization.
 
 ### Idempotent mutation retries
 
-`vault.create`, `vault.update`, `vault.delete`, and `locker.create` are
+`vault.create`, `vault.update`, `vault.delete`, `locker.create`, and
+`luks.enroll` are
 idempotent by request ID. The phone scopes IDs to the paired verifier and
 credential, coalesces concurrent copies, and keeps the completed outcome in a
 bounded 1024-entry cache. A retry with the same operation and payload gets that
@@ -77,8 +78,8 @@ The same three encodings are pinned in
 `desktop/crates/phone-auth-protocol/src/application.rs` and
 `mobile/test/application_frame_test.dart`.
 
-Payload schemas are versioned by their operation and are defined with the vault
-or locker feature. They may contain secrets only while held inside the secure
+Payload schemas are versioned by their operation and are defined with the vault,
+locker or LUKS feature. They may contain secrets only while held inside the secure
 channel processing path. Implementations must not derive `Debug`/`toString`
 output that includes payload bytes, and audit logs record only generic operation
 outcomes.
@@ -147,6 +148,27 @@ is not both confidential and peer-authenticated.
 The shared vector is pinned in
 `desktop/crates/phone-auth-protocol/src/locker.rs` and
 `mobile/test/locker_payloads_test.dart`.
+
+## LUKS operations
+
+LUKS has its own schema, credential purpose, Android Keystore alias and AAD
+domain; it does not reuse the structurally similar File Locker wrapper.
+
+| Operation | Direction | Purpose |
+|---|---|---|
+| `luks.enroll` | desktop → phone | Wrap a new random 32-byte disk credential |
+| `luks.unlock` | initrd → phone | Release that credential after one biometric |
+
+An enroll request is `[1, verifierName, volumeName, volumeBinding, diskKey]`.
+Its response is `[1, credentialId, wrapper]`. An unlock request is
+`[1, verifierName, volumeName, volumeBinding, credentialId, wrapper]`; its
+response is `[1, diskKey]`. Bindings and disk keys are exactly 32 bytes,
+wrappers are 1–512 bytes, names are non-blank and bounded, and canonical CBOR
+is mandatory. The shared unlock vector is pinned in
+`phone-auth-protocol/src/luks.rs` and `mobile/test/luks_payloads_test.dart`.
+
+See [`luks-wrapping.md`](luks-wrapping.md) for the wrapper, Keystore and boot
+trust boundaries.
 
 ## Vault operations
 

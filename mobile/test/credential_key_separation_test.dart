@@ -69,6 +69,22 @@ class _RecordingKeystore implements SecureAuthenticator {
       throw UnimplementedError();
 }
 
+class _RecordingWrappingKeys implements WrappingKeyProvisioner {
+  final List<CredentialPurpose> generated = [];
+
+  @override
+  Future<({bool hardwareBacked, bool strongBoxBacked})?> ensure(
+    CredentialPurpose purpose,
+  ) async {
+    if (purpose != CredentialPurpose.fileLocker &&
+        purpose != CredentialPurpose.diskUnlock) {
+      return null;
+    }
+    generated.add(purpose);
+    return (hardwareBacked: true, strongBoxBacked: false);
+  }
+}
+
 PairingRecord recordFor(CredentialPurpose purpose) => PairingRecord(
   verifierId: 'desktop-1',
   verifierIdentitySpki: Uint8List(91),
@@ -101,7 +117,11 @@ AuthenticationRequest requestFor(String credentialId) {
 void main() {
   test('a pairing enrols the key named by its own purpose', () async {
     final keystore = _RecordingKeystore();
-    final credential = NativeAuthorizationCredential(authenticator: keystore);
+    final wrappingKeys = _RecordingWrappingKeys();
+    final credential = NativeAuthorizationCredential(
+      authenticator: keystore,
+      wrappingKeys: wrappingKeys,
+    );
 
     for (final purpose in CredentialPurpose.values) {
       await credential.describe(purpose);
@@ -110,6 +130,13 @@ void main() {
     expect(
       keystore.generated,
       CredentialPurpose.values.map((purpose) => purpose.name),
+    );
+    expect(
+      wrappingKeys.generated,
+      unorderedEquals([
+        CredentialPurpose.fileLocker,
+        CredentialPurpose.diskUnlock,
+      ]),
     );
   });
 
