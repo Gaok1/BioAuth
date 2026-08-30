@@ -1,7 +1,8 @@
 # LUKS initrd transport threat review
 
-Status: accepted and implemented for `LUK-02`; it does not enable boot unlock
-by itself.
+Status: accepted and implemented for `LUK-02`; amended below for `LUK-04`,
+which moves the link from wired Ethernet to the USB cable and turns boot
+unlock on as an opt-in.
 
 ## Decision
 
@@ -29,6 +30,67 @@ Not selected for version 1:
   second radio stack before disk unlock and needs its own review.
 - **USB gadget, QR and Internet relay:** no implemented phone peer, no need in
   the supported boot flow, and materially more code or hardware.
+
+## Amendment: the cable, not the LAN (`LUK-04`)
+
+Status: accepted for the first boot unlock. It replaces the address setup
+above, not the handshake, the framing or the client.
+
+The machine that needs unlocking usually has no network at boot: no DHCP
+reservation has been made for it, the wireless it normally uses is unreachable
+by design, and a laptop away from its desk has nothing at all. So the first
+shipped transport is **the phone on the USB cable, with USB tethering on**.
+
+The phone becomes the DHCP server and the gateway; the booting machine is the
+only client on that subnet. Nothing else is on the link, no router or access
+point is involved, and no infrastructure has to exist for the unlock to work.
+Above it, nothing changes: the same IPv4, the same single inbound TCP listener,
+the same signed handshake, the same `luks.unlock` exchange. The kernel needs
+`usbnet` and the RNDIS/CDC drivers, and the initrd runs DHCP on whatever
+interface they bind.
+
+What this adds over wired Ethernet:
+
+- **Discovery, in one direction only.** The address the phone hands out is not
+  the address saved at pairing, and recent Android randomises the tether
+  prefix, so the phone probes the /24 it is the gateway of for the port it
+  already knows. It probes nothing else: interfaces are matched by name against
+  the USB tether ones, so the user's home network is never swept. The booting
+  machine still discovers nothing and still answers exactly one connection.
+- **A hostile peer that is now certainly present.** The cable is a link to one
+  device instead of a segment shared with many, which is a smaller surface than
+  the accepted one, not a larger one. Everything above still treats the bytes
+  as hostile.
+
+Not changed by this amendment: no Wi-Fi, no BLE, no IPv6, no DNS, no default
+route from the phone, no relay, no unattended retry. The `.network` file
+refuses each of those explicitly rather than by omission.
+
+### The handshake key on unencrypted boot media
+
+The gate above says the long-lived handshake private key must not be copied
+into the initrd image. **This implementation does copy a key there**, through
+`boot.initrd.secrets`, which appends it at `nixos-rebuild` time and keeps it out
+of the world-readable Nix store — but puts it on a boot partition that anyone
+holding the disk can read. That is a knowing deviation, and it is why boot
+unlock is opt-in and off by default.
+
+What limits it:
+
+- The key is a **boot-only identity**, separate from the agent's. Reading it
+  buys the ability to impersonate this machine's *boot* to a paired phone. It
+  is not the agent's identity, so it does not authenticate a `sudo`, a vault
+  open or an SSH signature, and the phone can revoke it on its own.
+- Using it still requires the phone, on the cable, and a fingerprint on a
+  prompt that names the machine and the volume. It is an attack that has to be
+  approved by the person being attacked.
+- The volume key is never derived from it. It stays a random 32-byte credential
+  wrapped by a hardware key on the phone.
+
+Closing the deviation means a fresh boot identity that is authenticated at boot
+rather than stored — a QR on the console, or a TPM-sealed key released only to
+a measured initrd. Both are follow-up work, and neither is required to keep the
+passphrase fallback honest.
 
 ## Trust boundary and assumptions
 
