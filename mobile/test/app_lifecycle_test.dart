@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app.dart';
+import 'package:phone_auth/app/app_controller.dart';
 import 'package:phone_auth/app/config.dart';
 import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
@@ -191,6 +192,7 @@ void main() {
 
     late InteractiveSshApproval ssh;
     late InteractiveAuthorizer auth;
+    WidgetRef? reader;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -203,12 +205,19 @@ void main() {
           builder: (context, ref, _) {
             ssh = ref.watch(sshApprovalProvider);
             auth = ref.watch(interactiveAuthorizerProvider);
+            reader = ref;
             return const PhoneAuthApp();
           },
         ),
       ),
     );
-    await tester.pump();
+    // Settled, not pumped once: the paired list arrives from an async provider,
+    // and until it has been reflected into the devices list the controller
+    // knows of no desktop to attribute a request to. In the app nothing can
+    // arrive that early -- the session runner learns which desktops to dial
+    // from the same provider -- so pumping only once would model an order the
+    // transport cannot produce.
+    await tester.pumpAndSettle();
 
     bool? signed;
     unawaited(
@@ -230,6 +239,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(ssh.pendingRequestIds, contains('ssh-1'));
     expect(auth.pendingRequestIds, contains('request-1'));
+    // Asked of the controller, not only of the authorizer. The authorizer
+    // holds whatever `confirm` was called with, whether or not it survived the
+    // checks in `receive` -- so on its own it cannot tell a prompt that came
+    // down from one that was never up.
+    expect(
+      reader!.read(appControllerProvider).requests.map((item) => item.id),
+      contains('request-1'),
+      reason: 'the sudo is on screen before anything is asked to refuse it',
+    );
 
     // Same carve-out as the vault's: losing focus is the biometric prompt
     // going up, not the user walking away.
@@ -249,6 +267,16 @@ void main() {
   });
 }
 
+final _sudoNow = DateTime.now().toUtc();
+
+/// Dated from the clock, not from a constant.
+///
+/// It used to carry a fixed August 2026 window, which stopped being a live
+/// request the day after it was written: `AppController.receive` drops an
+/// expired one before it ever reaches a sheet. The test still passed, because
+/// it asked the authorizer what it was holding rather than the screen what it
+/// was showing -- so it proved the prompt came down without ever proving the
+/// prompt went up.
 final _sudoRequest = AuthenticationRequest(
   requestId: 'request-1',
   verifierId: 'desktop-1',
@@ -260,8 +288,8 @@ final _sudoRequest = AuthenticationRequest(
   action: 'nixos-rebuild switch',
   resource: 'Desktop-NixOS',
   user: 'alice',
-  issuedAt: DateTime.utc(2026, 8, 27, 12),
-  expiresAt: DateTime.utc(2026, 8, 27, 12, 1),
+  issuedAt: _sudoNow,
+  expiresAt: _sudoNow.add(const Duration(minutes: 1)),
   sessionBinding: Uint8List(32),
 );
 

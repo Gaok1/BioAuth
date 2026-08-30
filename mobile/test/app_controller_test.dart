@@ -157,6 +157,54 @@ void main() {
     );
   });
 
+  test('a request from a blocked desktop is refused, not dropped', () async {
+    final controller = container.read(appControllerProvider.notifier);
+    final authorizer = container.read(interactiveAuthorizerProvider);
+    controller.blockDevice('desktop-casa', at: now);
+
+    bool? answer;
+    unawaited(
+      authorizer
+          .confirm(
+            AuthenticationRequest(
+              requestId: 'from-blocked',
+              verifierId: 'desktop-casa',
+              verifierName: 'Desktop-Casa',
+              credentialId: 'desktop-casa-login-v1',
+              challenge: Uint8List(32),
+              origin: 'BLE pareado',
+              service: 'sudo',
+              action: 'nixos-rebuild switch',
+              resource: 'Desktop-Casa',
+              user: 'alice',
+              issuedAt: now,
+              expiresAt: now.add(const Duration(minutes: 1)),
+              sessionBinding: Uint8List(32),
+            ),
+            _properties,
+          )
+          .then((value) => answer = value),
+    );
+    await pumpEventQueue();
+
+    expect(
+      container
+          .read(appControllerProvider)
+          .requests
+          .where((candidate) => candidate.id == 'from-blocked'),
+      isEmpty,
+      reason: 'a blocked desktop puts nothing on screen',
+    );
+    expect(
+      answer,
+      isFalse,
+      reason:
+          'and gets told so. Dropping it left one session open per retry, '
+          'each until its deadline, which is exactly what a blocked desktop '
+          'that keeps dialling produces',
+    );
+  });
+
   test('a flooded request is refused rather than left waiting', () async {
     final authorizer = container.read(interactiveAuthorizerProvider);
     AuthenticationRequest incoming(int index) => AuthenticationRequest(

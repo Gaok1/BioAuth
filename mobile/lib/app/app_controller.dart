@@ -104,6 +104,13 @@ class AppController extends Notifier<AppState> {
         .where((candidate) => candidate.id == request.deviceId)
         .firstOrNull;
     if (device == null || device.isBlockedAt(now) || request.isExpiredAt(now)) {
+      // Turned away before any sheet, and still owed an answer. A revoked
+      // desktop and a blocked one are both live sessions on this phone while
+      // they wait, and a blocked desktop retrying is precisely what piles them
+      // up -- one held open per attempt until its deadline. Refusing costs the
+      // caller nothing it did not already know: the core answers a request
+      // outside the pairing's policy with the same denial, just sooner.
+      _refuseUnasked(request.id);
       return;
     }
 
