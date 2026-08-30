@@ -150,6 +150,49 @@ void main() {
     expect(repository.reads, 2);
   });
 
+  test('a walk that keeps walking keeps its snapshot', () async {
+    final repository = _Store(120);
+    var moment = now;
+    final service = VaultService(
+      repository: repository,
+      listing: VaultListing(
+        store: repository,
+        clock: () => moment,
+        ttl: const Duration(seconds: 30),
+      ),
+    );
+
+    // Every page is a session: the desktop dials, asks once, and the phone
+    // closes. A full vault is a hundred and twenty-eight of those, so a
+    // snapshot timed from the start of the walk is one the longest walk can
+    // never finish inside -- and re-reading mid-listing costs a fingerprint
+    // that no sheet explains, because listing raises none.
+    var cursor = '';
+    var pages = 0;
+    do {
+      final page = wire.VaultListResponse.decode(
+        ApplicationFrame.decode(
+          await service.handle(
+            listRequest(cursor),
+            sessionBinding: binding,
+            authorized: true,
+            now: now,
+          ),
+        ).payload,
+      );
+      cursor = page.nextCursor;
+      pages++;
+      moment = moment.add(const Duration(seconds: 20));
+    } while (cursor.isNotEmpty);
+
+    expect(pages, 4);
+    expect(
+      repository.reads,
+      1,
+      reason: 'the gap between pages is what expires, not the walk',
+    );
+  });
+
   test('a cursor pointing outside the vault is refused', () async {
     final repository = _Store(4);
     final service = VaultService(

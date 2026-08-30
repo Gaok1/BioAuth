@@ -14,18 +14,26 @@
 /// desktop skipped an item and had no way to know. A walk now pages through
 /// the list as it was when the walk began.
 ///
-/// Metadata only, and never for longer than [ttl] — the length of a walk, not
-/// the length of a session. Nothing here holds a secret: those stay behind
-/// `fetch`, one at a time, in front of a user who was told which one.
+/// Metadata only, and never for longer than [vaultListingTtl] past the last
+/// page anyone asked for — the length of a walk, not the length of a session.
+/// Nothing here holds a secret: those stay behind `fetch`, one at a time, in
+/// front of a user who was told which one.
 library;
 
 import '../../features/vault/vault_store.dart';
 
-/// How long a snapshot may serve the pages of the walk that started it.
+/// How long a snapshot may sit unused before the next page has to read again.
 ///
-/// Long enough for a desktop to page through a full vault back to back, short
-/// enough that it is worthless to anything that comes later. A walk that takes
-/// longer than this pays for another unlock, which is the safe direction.
+/// Measured from the last page served, not from the start of the walk. A page
+/// is a session -- the desktop dials, asks, and the phone closes -- so a full
+/// vault of four thousand items is a hundred and twenty-eight dials and a
+/// hundred and twenty-eight handshakes. Timed from the start, the walk this
+/// exists to make cheap was the one walk guaranteed to outrun it, and outrunning
+/// it costs the phone's owner an unexplained fingerprint mid-listing.
+///
+/// A walk that keeps asking keeps its snapshot; one that stops asking loses it
+/// thirty seconds later, which is the liveness this bounds. Metadata only, and
+/// still nothing that outlives the walk by more than that.
 const Duration vaultListingTtl = Duration(seconds: 30);
 
 class VaultListing {
@@ -42,33 +50,36 @@ class VaultListing {
   final Duration _ttl;
 
   List<VaultItemSummary>? _items;
-  DateTime? _takenAt;
+  DateTime? _usedAt;
 
   /// The vault's metadata, reading it again only when the walk demands it.
   ///
   /// [restart] is true for the first page of a walk, which is what an empty
   /// cursor means. A continuation reuses what the walk started from; if that
-  /// has expired it is read again, which costs an unlock and may skip or
-  /// repeat an item — the same as before this existed, and now the unusual
-  /// case rather than every case.
+  /// has gone unasked for longer than the TTL it is read again, which costs an
+  /// unlock and may skip or repeat an item — the same as before this existed,
+  /// and now the unusual case rather than every case.
   Future<List<VaultItemSummary>> items({required bool restart}) async {
-    final taken = _takenAt;
+    final used = _usedAt;
     final held = _items;
     if (!restart &&
         held != null &&
-        taken != null &&
-        _clock().difference(taken) < _ttl) {
+        used != null &&
+        _clock().difference(used) < _ttl) {
+      // A walk that is still walking keeps what it started from. The clock
+      // this bounds is the gap between pages, not the length of the listing.
+      _usedAt = _clock();
       return held;
     }
     final fresh = await _store.listAll();
     _items = fresh;
-    _takenAt = _clock();
+    _usedAt = _clock();
     return fresh;
   }
 
   /// Drops what is held. Called when the sessions that page through it end.
   void forget() {
     _items = null;
-    _takenAt = null;
+    _usedAt = null;
   }
 }
