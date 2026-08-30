@@ -13,8 +13,15 @@ class VaultService {
     store.VaultStore? repository,
     VaultApproval? approval,
     VaultListing? listing,
+    ApplicationIdempotency? retries,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now,
+       // Its own by default, for the same reason `_listing` has one and with
+       // the same consequence: a service that owns its cache gives it up when
+       // it dies, and this service dies after one frame. A retry arrives on
+       // the next connection, to a new instance, and finds nothing -- which is
+       // the whole feature, absent. The session service passes a shared one.
+       _idempotency = retries ?? ApplicationIdempotency(),
        _store = repository ?? const store.NativeVaultStore(),
        // Its own by default, which is correct and gives up the snapshot
        // between sessions -- and a paged walk is several sessions. The
@@ -32,7 +39,7 @@ class VaultService {
   final VaultListing _listing;
   final VaultApproval _approval;
   final DateTime Function() _clock;
-  final ApplicationIdempotency _idempotency = ApplicationIdempotency();
+  final ApplicationIdempotency _idempotency;
 
   /// How many summaries go in one response.
   ///

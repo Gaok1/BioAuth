@@ -287,6 +287,85 @@ void main() {
   // longer than the protocol's ceiling, so past it there is nothing left to
   // answer and the prompt has to come down with the session.
   // The desktop refuses an answer that arrives after the request's own
+  // A retry is one request, and the phone has to answer it once.
+  //
+  // A desktop that loses the answer to `locker.create` sends the same request
+  // id again -- that is what request ids are for. Wrapping a second key for it
+  // hands back a wrapper the container does not name, so the file it belongs
+  // to cannot be opened with it, and the person is asked for a second
+  // fingerprint to produce it.
+  //
+  // Two sessions, because that is what a retry is here: this service answers
+  // one application frame and the connection ends, so the second attempt
+  // arrives on a fresh dial to freshly built handlers. A retry cache owned by
+  // those handlers is therefore consulted exactly once each, when it is empty
+  // -- which looks like a working feature from the service's own tests, where
+  // one instance is handed two frames.
+  test('a re-sent locker request is answered once, not wrapped twice', () async {
+    final now = DateTime.now().toUtc();
+    final first = _FramingSession();
+    final second = _FramingSession();
+    final guardian = _CountingGuardian();
+    final runner = PairedSessionRunner(
+      transport: _SequenceTransport([first, second]),
+      authorizer: _UnusedAuthorizer(),
+      consent: InteractiveAuthorizer(onRequest: (_) {}),
+      lockerGuardian: guardian,
+      clock: () => now,
+    );
+    addTearDown(runner.stop);
+
+    Uint8List wrapRequest() => ApplicationFrame(
+      protocolVersion: 1,
+      kind: ApplicationFrameKind.request,
+      requestId: 'locker-retried',
+      sessionBinding: Uint8List(32),
+      operation: lockerCreateOperation,
+      issuedAt: now,
+      expiresAt: now.add(const Duration(minutes: 2)),
+      payload: LockerWrapRequest(
+        verifierName: 'Desktop-NixOS',
+        fileName: 'notes.txt',
+        plaintextLength: 42,
+        containerBinding: Uint8List(32),
+        dataKey: Uint8List.fromList(List<int>.filled(32, 3)),
+      ).encode(),
+    ).encode();
+
+    runner.sync([_lockerRecord]);
+    await first.listening.future;
+    first.push(wrapRequest());
+    await _untilRealTime(
+      () => first.sent.where(ApplicationFrame.recognizes).isNotEmpty,
+      within: const Duration(seconds: 10),
+    );
+
+    await second.listening.future;
+    second.push(wrapRequest());
+    await _untilRealTime(
+      () => second.sent.where(ApplicationFrame.recognizes).isNotEmpty,
+      within: const Duration(seconds: 10),
+    );
+
+    expect(
+      guardian.wraps,
+      1,
+      reason:
+          'the second frame carries the same request id and the same payload, '
+          'so it is a retry rather than a second request: answering it means '
+          'repeating the answer, not wrapping another key.',
+    );
+    final answers = [first, second]
+        .map(
+          (session) => ApplicationFrame.decode(
+            session.sent.firstWhere(ApplicationFrame.recognizes),
+          ),
+        )
+        .toList();
+    expect(answers[1].kind, answers[0].kind);
+    expect(answers[1].payload, answers[0].payload);
+  });
+
   // deadline -- `is_reply_to` checks it -- so patience past that point buys
   // nothing, and what it costs here is a biometric prompt and a decrypted
   // secret. The phone waited a flat two and a half minutes regardless, which
@@ -799,6 +878,33 @@ final _lockerRecord = PairingRecord(
 );
 
 /// A phone whose owner never reaches it. Stands in for the Keystore gesture.
+/// Answers, and counts how many times it was asked to.
+class _CountingGuardian implements LockerKeyGuardian {
+  int wraps = 0;
+
+  @override
+  Future<Uint8List> wrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List dataKey,
+    required String fileName,
+    required String verifierName,
+  }) async {
+    wraps++;
+    return Uint8List.fromList(List<int>.filled(60, wraps));
+  }
+
+  @override
+  Future<Uint8List> unwrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String fileName,
+    required String verifierName,
+    bool rekeying = false,
+  }) async => Uint8List.fromList(List<int>.filled(32, 9));
+}
+
 class _SilentGuardian implements LockerKeyGuardian {
   final _never = Completer<Uint8List>();
 
@@ -916,6 +1022,40 @@ class _StubTransport implements AuthTransport {
     TransportPeer peer,
     VerifierExpectation expectation,
   ) async => _outcome(session, peer.displayName);
+}
+
+/// Hands out a different session per dial, and the last one thereafter.
+///
+/// What the desktop actually does: one connection carries one request, so a
+/// retry is a new connection rather than a second frame down the old one.
+class _SequenceTransport implements AuthTransport {
+  _SequenceTransport(this.sessions);
+
+  final List<_IdleSession> sessions;
+  int dials = 0;
+  bool stopped = false;
+
+  @override
+  TransportSecurityProperties get securityProperties => _properties;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async => stopped = true;
+
+  @override
+  Stream<TransportPeer> discoverPeers() => const Stream.empty();
+
+  @override
+  Future<SecureSessionOutcome> connect(
+    TransportPeer peer,
+    VerifierExpectation expectation,
+  ) async {
+    final session = sessions[dials.clamp(0, sessions.length - 1)];
+    dials++;
+    return _outcome(session, peer.displayName);
+  }
 }
 
 class _PerDeviceTransport implements AuthTransport {

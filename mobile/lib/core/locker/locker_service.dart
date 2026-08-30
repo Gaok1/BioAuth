@@ -77,12 +77,14 @@ class LockerService {
   LockerService({
     required LockerKeyGuardian guardian,
     required String credentialId,
+    ApplicationIdempotency? retries,
   }) : _guardian = guardian,
-       _credentialId = credentialId;
+       _credentialId = credentialId,
+       _idempotency = retries ?? ApplicationIdempotency();
 
   final LockerKeyGuardian _guardian;
   final String _credentialId;
-  final ApplicationIdempotency _idempotency = ApplicationIdempotency();
+  final ApplicationIdempotency _idempotency;
 
   /// Processa um frame e devolve a resposta a enviar de volta.
   ///
@@ -92,6 +94,7 @@ class LockerService {
   Future<Uint8List> handle(
     Uint8List frame, {
     required Uint8List sessionBinding,
+    String? replayScope,
     DateTime? now,
   }) async {
     final moment = (now ?? DateTime.now()).toUtc();
@@ -121,7 +124,13 @@ class LockerService {
     try {
       final outcome = request.operation == lockerCreateOperation
           ? await _idempotency.run(
-              scope: _credentialId,
+              // Not the credential alone. The id is chosen by the
+              // desktop, so two of them can pick the same one -- the same
+              // reasoning that made sessions keyed by verifier *and*
+              // credential. It did not matter while every service owned its
+              // own cache, because there was nothing to collide in; it does
+              // now that the cache outlives the session.
+              scope: replayScope ?? _credentialId,
               request: request,
               operation: execute,
             )

@@ -14,6 +14,7 @@ import '../../domain/authentication_request.dart';
 import '../pairing/pairing_record.dart';
 import '../protocol/auth_response.dart';
 import '../protocol/application_frame.dart';
+import '../protocol/application_idempotency.dart';
 import '../protocol/enrolment.dart';
 import '../protocol/session_attach.dart';
 import '../protocol/webauthn_relay.dart';
@@ -109,6 +110,21 @@ class PairedSessionService {
   /// credential: the credential id goes into the wrapper's AAD, so the same key
   /// unwrapping for a different credential must not produce the same bytes.
   final LockerKeyGuardian _lockerGuardian;
+
+  /// Whose request ids these are: one desktop, one of its credentials.
+  ///
+  /// A NUL joins them because neither part can contain one, so no pair of
+  /// values can spell another pair's scope.
+  static String _replayScope(PairingRecord record) =>
+      '${record.verifierId}\u0000${record.credentialId}';
+
+  /// Answers already given, so a re-sent request id is not served twice.
+  ///
+  /// Held here because this is the object that outlives a session, and a
+  /// session is one request: the phone answers a frame, the desktop hangs up,
+  /// and a retry arrives on a fresh connection. A cache belonging to anything
+  /// narrower than this is consulted exactly once, when it is empty.
+  final ApplicationIdempotency _retries = ApplicationIdempotency();
 
   /// How long one request may spend waiting for the person to answer.
   ///
@@ -272,6 +288,7 @@ class PairedSessionService {
       final vault = VaultService(
         repository: _vaultStore,
         listing: _listing,
+        retries: _retries,
         approval: onRequestRaised == null
             ? _vaultApproval
             : _ScopedVaultApproval(_vaultApproval, onRequestRaised),
@@ -370,15 +387,21 @@ class PairedSessionService {
           // The locker asks the Keystore for the gesture itself, naming the
           // file and the computer in the prompt, so there is no separate
           // `authorized` to pass: refusing the fingerprint is the refusal.
-          CredentialPurpose.fileLocker => LockerService(
-            guardian: _lockerGuardian,
-            credentialId: record.credentialId,
-          ).handle(frame, sessionBinding: outcome.session.sessionBinding),
+          CredentialPurpose.fileLocker =>
+            LockerService(
+              guardian: _lockerGuardian,
+              credentialId: record.credentialId,
+              retries: _retries,
+            ).handle(
+              frame,
+              sessionBinding: outcome.session.sessionBinding,
+              replayScope: _replayScope(record),
+            ),
           _ => vault.handle(
             frame,
             sessionBinding: outcome.session.sessionBinding,
             authorized: purpose == CredentialPurpose.vault,
-            replayScope: '${record.verifierId}\u0000${record.credentialId}',
+            replayScope: _replayScope(record),
           ),
         };
         await outcome.session.send(
