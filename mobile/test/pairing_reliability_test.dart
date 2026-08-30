@@ -347,6 +347,56 @@ void main() {
     );
   });
 
+  test('revoking a desktop takes down the sheet it left on screen', () async {
+    final now = DateTime.utc(2026, 8, 27, 12);
+    final session = _AskingSession();
+    final consent = InteractiveAuthorizer(onRequest: (_) {});
+    final runner = PairedSessionRunner(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: consent,
+      // Long on purpose. Hanging up the channel is what is under test, and a
+      // window short enough to expire on its own would take the prompt down
+      // for the other reason and prove nothing.
+      answerTimeout: const Duration(minutes: 2),
+      clock: () => now,
+    );
+    addTearDown(runner.stop);
+
+    runner.sync([_record]);
+    await session.listening.future;
+    session.ask(
+      AuthenticationRequest(
+        requestId: 'request-1',
+        verifierId: 'desktop-1',
+        verifierName: 'Desktop-NixOS',
+        credentialId: _record.credentialId,
+        challenge: Uint8List.fromList(List<int>.generate(32, (i) => i)),
+        origin: 'replaced by session',
+        service: 'sudo',
+        action: 'nixos-rebuild switch',
+        resource: 'Desktop-NixOS',
+        user: 'alice',
+        issuedAt: now,
+        expiresAt: now.add(const Duration(minutes: 1)),
+        sessionBinding: Uint8List(32),
+      ),
+    );
+    await _untilRealTime(() => consent.pendingRequestIds.contains('request-1'));
+
+    await runner.stopDevice('desktop-1');
+
+    expect(session.closed, isTrue, reason: 'the channel goes first');
+    expect(
+      consent.pendingRequestIds,
+      isNot(contains('request-1')),
+      reason:
+          'and the sheet goes with it. Left up, it stayed tappable for as '
+          'long as the request lasted -- and a tap on it raises the Keystore '
+          'prompt for a desktop the user has just revoked',
+    );
+  });
+
   test('a request nobody answers is not held forever', () async {
     final now = DateTime.utc(2026, 8, 27, 12);
     final session = _AskingSession();

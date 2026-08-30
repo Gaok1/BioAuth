@@ -95,6 +95,16 @@ class PairedSessionRunner {
   /// was never paired sat on "offline" while its login session worked.
   final Map<String, PairedSessionStatus> _statuses = {};
 
+  /// What each credential's live session has put in front of the user.
+  ///
+  /// Kept here rather than only in [_serve]'s local scope so that [stopDevice]
+  /// can reach it. Hanging up the channel does not bring down a sheet that is
+  /// waiting on a person: `_answered` only gives up when the request's own
+  /// window runs out, and until then the sheet is still on screen and still
+  /// tappable. Keyed the way [_loops] is, because a raised request belongs to
+  /// the credential whose session raised it.
+  final Map<String, Set<String>> _raised = {};
+
   /// Starts a loop for every record, and stops loops for records that are gone.
   void sync(List<PairingRecord> records) {
     final wanted = {for (final record in records) record.credentialId: record};
@@ -141,13 +151,22 @@ class PairedSessionRunner {
   Future<void> stopDevice(String verifierId) async {
     // Every credential of that desktop, because revoking a computer is not
     // "except for the vault".
+    final orphaned = <String>{};
     for (final entry in _loops.entries.toList()) {
       if (entry.value.record.verifierId == verifierId) {
         _loops.remove(entry.key)?.stop();
         _statuses.remove(entry.key);
+        orphaned.addAll(_raised.remove(entry.key) ?? const <String>{});
       }
     }
     await _service.closeDevice(verifierId);
+    // The channel being gone is not the sheet being gone. A vault or ssh
+    // approval waits on a person, so closing the socket underneath it leaves
+    // it on screen and answerable for as long as the request's own window
+    // lasts -- and a tap on it then raises the Keystore prompt and decrypts
+    // the secret for a desktop the user has just revoked. Nothing would reach
+    // that desktop, but the fingerprint was still spent approving it.
+    _withdraw(orphaned, StateError('Dispositivo revogado'));
   }
 
   /// Records one credential's status and reports its computer's.
@@ -190,6 +209,7 @@ class PairedSessionRunner {
     );
     // What this session put on screen, so the failure path below can name it.
     final raised = <String>{};
+    _raised[record.credentialId] = raised;
     try {
       final response = await _service.serveOne(
         record,
@@ -221,6 +241,14 @@ class PairedSessionRunner {
       // and the desktop that had actually asked was told the phone failed.
       _withdraw(raised, error);
       rethrow;
+    } finally {
+      // Identity, not the key: the next session for this credential has
+      // already installed its own set by the time a slow teardown gets here,
+      // and dropping the key would leave that one unreachable from
+      // [stopDevice].
+      if (identical(_raised[record.credentialId], raised)) {
+        _raised.remove(record.credentialId);
+      }
     }
   }
 
@@ -231,7 +259,7 @@ class PairedSessionRunner {
   /// stayed pending for good -- and since a repeat of a request id waits on
   /// the answer already pending for it, the desktop's retry after reconnecting
   /// joined that dead wait instead of raising a sheet of its own.
-  void _withdraw(Set<String> raised, Object error) {
+  void _withdraw(Iterable<String> raised, Object error) {
     for (final requestId in raised) {
       _consent.abandon(requestId, error);
       _vaultApproval?.abandon(requestId);
