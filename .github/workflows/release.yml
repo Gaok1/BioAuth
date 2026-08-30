@@ -315,8 +315,34 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('desktop/ui/package-lock.json') }}
           restore-keys: electron-${{ runner.os }}-
 
+      - name: Prepare Authenticode signing
+        shell: bash
+        env:
+          CHANNEL: ${{ needs.gate.outputs.channel }}
+        run: |
+          configured=0
+          [ -n "$WINDOWS_CERT_BASE64" ] && configured=$((configured + 1))
+          [ -n "$WINDOWS_CERT_PASSWORD" ] && configured=$((configured + 1))
+          if [ "$configured" -eq 1 ]; then
+            echo "::error::Windows signing is only half configured"
+            exit 1
+          fi
+          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 2 ]; then
+            echo "::error::A stable release requires both Windows signing secrets"
+            exit 1
+          fi
+          if [ "$configured" -eq 0 ]; then
+            echo "SIGNING_CONFIGURED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/cert.pfx"
+          echo "WIN_CSC_LINK=$RUNNER_TEMP/cert.pfx" >> "$GITHUB_ENV"
+          echo "SIGNING_CONFIGURED=true" >> "$GITHUB_ENV"
+
       - name: Package tray
         working-directory: desktop/ui
+        env:
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           npm ci
           npx electron-builder --win --publish never
@@ -328,39 +354,22 @@ jobs:
       #
       # Same shape as the Android rule: an unsigned installer may ship as a
       # debug prerelease that says so in its filename, never as stable.
-      - name: Sign the installer
+      - name: Verify Authenticode on app, helpers and installer
         id: authenticode
         shell: bash
-        env:
-          CHANNEL: ${{ needs.gate.outputs.channel }}
         run: |
-          configured=0
-          [ -n "$WINDOWS_CERT_BASE64" ] && configured=$((configured + 1))
-          [ -n "$WINDOWS_CERT_PASSWORD" ] && configured=$((configured + 1))
-
-          if [ "$configured" -eq 1 ]; then
-            echo "::error::Windows signing is only half configured"
-            exit 1
-          fi
-          if [ "$CHANNEL" = stable ] && [ "$configured" -ne 2 ]; then
-            echo "::error::A stable release requires both Windows signing secrets"
-            exit 1
-          fi
-          if [ "$configured" -eq 0 ]; then
+          if [ "$SIGNING_CONFIGURED" != true ]; then
             echo "::warning::Building an unsigned installer; it can only ship as a debug prerelease"
             exit 0
           fi
-
-          printf '%s' "$WINDOWS_CERT_BASE64" | base64 -d > "$RUNNER_TEMP/cert.pfx"
           signtool=$(find "/c/Program Files (x86)/Windows Kits/10/bin"             -name signtool.exe -path '*x64*' | sort | tail -1)
           [ -n "$signtool" ] || { echo "::error::signtool not found"; exit 1; }
-
-          for installer in desktop/dist/*.exe; do
-            "$signtool" sign //fd SHA256 //td SHA256               //tr http://timestamp.digicert.com               //f "$RUNNER_TEMP/cert.pfx" //p "$WINDOWS_CERT_PASSWORD"               "$installer"
-            # A signature that verifies now and expires with the certificate
-            # is not a signature anybody can check in two years. `//tr` is
-            # what makes it outlive the cert, and this proves it took.
-            "$signtool" verify //pa //v "$installer"
+          executables=(desktop/dist/PhoneAuth-Setup-*.exe)
+          while IFS= read -r -d '' executable; do
+            executables+=("$executable")
+          done < <(find desktop/dist/win-unpacked -type f -iname '*.exe' -print0)
+          for executable in "${executables[@]}"; do
+            "$signtool" verify //pa //v "$executable"
           done
           rm -f "$RUNNER_TEMP/cert.pfx"
 

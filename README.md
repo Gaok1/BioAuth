@@ -184,14 +184,16 @@ cd ui && npm ci && npx electron-builder --win     # or --linux
 
 Local release builds are signed only when real signing material is supplied;
 otherwise they remain unsigned. The release workflow refuses to publish until
-all four Android signing secrets are configured. A debug APK can only be built
-by a non-publishing manual workflow run and is named `PhoneAuth-android-debug`.
+all four Android and both Windows signing secrets are configured. A debug APK
+can only be built by a non-publishing manual workflow run and is named
+`PhoneAuth-android-debug`.
 
 ## Documentation
 
 - [Wire format and test vectors](docs/protocol-handshake.md)
 - [Vault and File Locker application frames](docs/protocol-application.md)
 - [Explorer, Nautilus and drag-and-drop File Locker integration](docs/file-manager-integration.md)
+- [Signed Windows updates and rollback](docs/updates.md)
 - [Architecture](docs/architecture.md)
 - [Threat model](docs/threat-model.md)
 - [Product and security decisions](docs/product-decisions.md)

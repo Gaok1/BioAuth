@@ -162,6 +162,15 @@ jobs:
       - name: Explorer integration tests
         shell: powershell
         run: .\desktop\file-manager\tests\windows.ps1
+      - name: Authenticode verifier rejects unsigned files
+        shell: powershell
+        run: |
+          $result = .\desktop\ui\src\verify-authenticode.ps1 `
+            -Path .\desktop\file-manager\phone-auth-file-manager.cmd |
+            ConvertFrom-Json
+          if ($result.valid -or $result.publicKey -or $result.fileVersion) {
+            throw 'unsigned file was reported as a trusted update'
+          }
       # This is a separate job rather than a matrix entry because Linux alone
       # needs BlueZ headers. More importantly, it compiles and runs the code
       # behind cfg(windows): DACLs, clipboard exclusions, hard-link counting

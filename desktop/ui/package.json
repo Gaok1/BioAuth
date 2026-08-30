@@ -40,6 +40,10 @@
     ],
     "extraResources": [
       {
+        "from": "src/verify-authenticode.ps1",
+        "to": "verify-authenticode.ps1"
+      },
+      {
         "from": "../target/release/",
         "to": "bin",
         "filter": [
