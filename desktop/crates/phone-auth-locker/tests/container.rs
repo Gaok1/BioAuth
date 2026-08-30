@@ -580,10 +580,9 @@ fn digest_of(path: &Path) -> (u64, [u8; 32]) {
 /// Every locker operation that reports something as gone works by removing or
 /// renaming a *name*. Through a link that name is not the only way back to the
 /// contents, so the report would be false and the file would still be sitting
-/// there in plaintext. These are Unix-only because creating a symlink on
-/// Windows needs a privilege a test runner does not have; the checks
-/// themselves run on every platform, except that Windows cannot count hard
-/// links (see `docs/locker-format.md`).
+/// there in plaintext. The symlink cases are Unix-only because creating one on
+/// Windows needs a privilege a test runner does not have. Hard links are
+/// exercised separately on both supported desktop platforms.
 #[cfg(unix)]
 mod links {
     use super::*;
@@ -609,37 +608,6 @@ mod links {
         );
         assert!(!container_of(&link).exists());
         assert!(!container_of(&secret).exists());
-    }
-
-    #[test]
-    fn a_file_with_a_second_name_is_locked_only_when_nothing_is_deleted() {
-        let sandbox = Sandbox::new("hard-link");
-        let source = sandbox.file("notes.txt", b"one file, two names");
-        let second = sandbox.path("also-notes.txt");
-        std::fs::hard_link(&source, &second).expect("hard link");
-        let mut phone = FakePhone::new();
-
-        // Removing one name leaves the contents readable under the other, so
-        // the destructive plan is refused outright.
-        assert!(matches!(
-            lock_file(&source, &LockPlan::default(), &mut phone),
-            Err(LockerError::SharedOriginal)
-        ));
-        assert!(!container_of(&source).exists());
-
-        // Keeping the plaintext is the honest version of the same request, and
-        // it is allowed: nothing is claimed to have disappeared.
-        let outcome = lock_file(
-            &source,
-            &LockPlan {
-                destination: None,
-                remove_original: false,
-            },
-            &mut phone,
-        )
-        .expect("lock without removing");
-        assert!(!outcome.original_removed);
-        assert!(source.exists() && second.exists());
     }
 
     #[test]
@@ -702,6 +670,38 @@ mod links {
         assert!(std::fs::symlink_metadata(&destination).is_ok());
         assert!(source.exists());
     }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn a_file_with_a_second_name_is_locked_only_when_nothing_is_deleted() {
+    let sandbox = Sandbox::new("hard-link");
+    let source = sandbox.file("notes.txt", b"one file, two names");
+    let second = sandbox.path("also-notes.txt");
+    std::fs::hard_link(&source, &second).expect("hard link");
+    let mut phone = FakePhone::new();
+
+    // Removing one name leaves the contents readable under the other, so the
+    // destructive plan is refused outright.
+    assert!(matches!(
+        lock_file(&source, &LockPlan::default(), &mut phone),
+        Err(LockerError::SharedOriginal)
+    ));
+    assert!(!container_of(&source).exists());
+
+    // Keeping the plaintext is the honest version of the same request, and it
+    // is allowed: nothing is claimed to have disappeared.
+    let outcome = lock_file(
+        &source,
+        &LockPlan {
+            destination: None,
+            remove_original: false,
+        },
+        &mut phone,
+    )
+    .expect("lock without removing");
+    assert!(!outcome.original_removed);
+    assert!(source.exists() && second.exists());
 }
 
 #[test]

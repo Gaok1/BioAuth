@@ -698,3 +698,163 @@ mod wire_vectors {
         assert_eq!(decoded.nonce, nonce());
     }
 }
+
+#[cfg(test)]
+mod decoder_properties {
+    use super::*;
+    use phone_auth_protocol::cbor::Writer;
+    use proptest::prelude::*;
+
+    fn plausible_cbor() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(
+            prop_oneof![
+                any::<u64>().prop_map(|value| {
+                    let mut writer = Writer::new();
+                    writer.uint(value);
+                    writer.into_bytes()
+                }),
+                any::<i64>().prop_map(|value| {
+                    let mut writer = Writer::new();
+                    writer.int(value);
+                    writer.into_bytes()
+                }),
+                ".{0,64}".prop_map(|value: String| {
+                    let mut writer = Writer::new();
+                    writer.text(&value);
+                    writer.into_bytes()
+                }),
+                prop::collection::vec(any::<u8>(), 0..128).prop_map(|value| {
+                    let mut writer = Writer::new();
+                    writer.bytes(&value);
+                    writer.into_bytes()
+                }),
+                (0u64..16).prop_map(|value| {
+                    let mut writer = Writer::new();
+                    writer.array(value);
+                    writer.into_bytes()
+                }),
+            ],
+            0..14,
+        )
+        .prop_map(|pieces| pieces.concat())
+    }
+
+    fn decode_every_handshake_shape(bytes: &[u8]) {
+        let _ = decode_server_hello(bytes);
+        let _ = decode_client_hello(bytes);
+        if let Ok((unsigned, _signature)) = decode_envelope(bytes) {
+            let _ = decode_server_hello(unsigned);
+            let _ = decode_client_hello(unsigned);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..MAX_HANDSHAKE_FRAME * 2)) {
+            decode_every_handshake_shape(&bytes);
+        }
+
+        #[test]
+        fn plausible_cbor_never_panics(bytes in plausible_cbor()) {
+            decode_every_handshake_shape(&bytes);
+        }
+
+        #[test]
+        fn server_hello_has_one_canonical_encoding(
+            session_id in "[a-zA-Z0-9-]{1,64}",
+            nonce in any::<[u8; 32]>(),
+            verifier_id in "[a-zA-Z0-9-]{1,64}",
+            expires_at_ms in any::<i64>(),
+            identity_spki in prop::collection::vec(any::<u8>(), 0..256),
+            ephemeral in any::<[u8; 32]>(),
+        ) {
+            let bootstrap = ServerBootstrap {
+                session_id,
+                nonce,
+                verifier_id,
+                verifier_identity_hash: [0; 32],
+                endpoint: String::new(),
+                expires_at_ms,
+                purpose: phone_auth_protocol::CredentialPurpose::Authorization,
+            };
+            let encoded = encode_server_hello(&bootstrap, &identity_spki, &ephemeral);
+            let decoded = decode_server_hello(&encoded).expect("our own server hello");
+            let rebuilt = ServerBootstrap {
+                session_id: decoded.session_id.to_owned(),
+                nonce: decoded.nonce,
+                verifier_id: decoded.verifier_id.to_owned(),
+                verifier_identity_hash: [0; 32],
+                endpoint: String::new(),
+                expires_at_ms: decoded.expires_at_ms,
+                purpose: phone_auth_protocol::CredentialPurpose::Authorization,
+            };
+            prop_assert_eq!(
+                encode_server_hello(&rebuilt, decoded.identity_spki, &decoded.ephemeral),
+                encoded,
+            );
+        }
+
+        #[test]
+        fn client_hello_has_one_canonical_encoding(
+            session_id in "[a-zA-Z0-9-]{1,64}",
+            nonce in any::<[u8; 32]>(),
+            verifier_id in "[a-zA-Z0-9-]{1,64}",
+            expires_at_ms in any::<i64>(),
+            device_id in "[a-zA-Z0-9-]{1,64}",
+            server_ephemeral in any::<[u8; 32]>(),
+            ephemeral in any::<[u8; 32]>(),
+            identity_spki in prop::collection::vec(any::<u8>(), 0..256),
+            pair in any::<bool>(),
+        ) {
+            let intent = if pair { PairingIntent::Pair } else { PairingIntent::Resume };
+            let encoded = encode_client_hello(
+                &session_id,
+                &nonce,
+                &verifier_id,
+                expires_at_ms,
+                &device_id,
+                &server_ephemeral,
+                &ephemeral,
+                &identity_spki,
+                intent,
+            );
+            let decoded = decode_client_hello(&encoded).expect("our own client hello");
+            prop_assert_eq!(
+                encode_client_hello(
+                    decoded.session_id,
+                    &decoded.nonce,
+                    decoded.verifier_id,
+                    decoded.expires_at_ms,
+                    decoded.device_id,
+                    &decoded.server_ephemeral,
+                    &decoded.ephemeral,
+                    decoded.identity_spki,
+                    decoded.intent.expect("version two carries an intent"),
+                ),
+                encoded,
+            );
+        }
+
+        #[test]
+        fn envelope_has_one_canonical_encoding(
+            unsigned in prop::collection::vec(any::<u8>(), 0..2048),
+            signature in prop::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let encoded = envelope(&unsigned, &signature);
+            let (decoded_unsigned, decoded_signature) =
+                decode_envelope(&encoded).expect("our own envelope");
+            prop_assert_eq!(envelope(decoded_unsigned, decoded_signature), encoded);
+        }
+
+        #[test]
+        fn trailing_bytes_are_refused(
+            unsigned in prop::collection::vec(any::<u8>(), 0..512),
+            signature in prop::collection::vec(any::<u8>(), 0..128),
+            trailing in prop::collection::vec(any::<u8>(), 1..8),
+        ) {
+            let mut encoded = envelope(&unsigned, &signature);
+            encoded.extend_from_slice(&trailing);
+            prop_assert!(decode_envelope(&encoded).is_err());
+        }
+    }
+}

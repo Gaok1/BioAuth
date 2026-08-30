@@ -587,25 +587,39 @@ fn sole_regular_file(path: &Path, sole_name: bool) -> Result<std::fs::Metadata> 
     if !file_type.is_file() {
         return Err(LockerError::NotARegularFile("not a regular file"));
     }
-    if sole_name && hard_links(&metadata) > 1 {
+    if sole_name && hard_links(path, &metadata)? > 1 {
         return Err(LockerError::SharedOriginal);
     }
     Ok(metadata)
 }
 
 #[cfg(unix)]
-fn hard_links(metadata: &std::fs::Metadata) -> u64 {
+fn hard_links(_path: &Path, metadata: &std::fs::Metadata) -> Result<u64> {
     use std::os::unix::fs::MetadataExt;
-    metadata.nlink()
+    Ok(metadata.nlink())
 }
 
-/// Windows keeps its link count behind an unstable standard library API, so a
-/// second hard link is not detected there. The gap is recorded in
-/// `docs/locker-format.md` rather than closed with a new dependency; symlinks
-/// and junctions are reparse points and are caught above on every platform.
-#[cfg(not(unix))]
-fn hard_links(_metadata: &std::fs::Metadata) -> u64 {
-    1
+#[cfg(windows)]
+fn hard_links(path: &Path, _metadata: &std::fs::Metadata) -> Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let file = File::open(path)?;
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` owns a valid handle for the duration of the call and
+    // `information` points to writable storage of the exact structure the API
+    // expects.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) } == 0 {
+        return Err(LockerError::Io(std::io::Error::last_os_error()));
+    }
+    Ok(information.nNumberOfLinks.into())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn hard_links(_path: &Path, _metadata: &std::fs::Metadata) -> Result<u64> {
+    Ok(1)
 }
 
 /// Whether anything at all occupies a path.
