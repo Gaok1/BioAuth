@@ -99,46 +99,22 @@ impl<'a> PhoneVault<'a> {
         }
     }
 
-    /// Every item's metadata, walked page by page.
+    /// One page of the listing, starting a walk when `cursor` is empty.
     ///
     /// Carries no secrets: a listing is what the desktop is allowed to know
-    /// without a prompt.
-    pub fn list(&mut self) -> Result<Vec<ItemSummary>, VaultError> {
-        let mut items = Vec::new();
-        let mut cursor = String::new();
-        // The phone picks the cursors, so a repeat is how an endless walk
-        // starts. Refusing on the second sighting stops it a page early
-        // instead of after `MAX_ITEMS` have been read.
-        let mut seen: HashSet<String> = HashSet::new();
+    /// without a prompt. One page per session, because that is all a session
+    /// carries -- see [`list_all`], which is what a caller wants.
+    pub fn list_page(&mut self, cursor: &str) -> Result<ListResponse, VaultError> {
+        let request = ListRequest {
+            verifier_name: self.verifier_name.clone(),
+            cursor: cursor.to_owned(),
+        };
+        request
+            .validate()
+            .map_err(|error| VaultError::protocol(error.to_string()))?;
 
-        loop {
-            let request = ListRequest {
-                verifier_name: self.verifier_name.clone(),
-                cursor,
-            };
-            request
-                .validate()
-                .map_err(|error| VaultError::protocol(error.to_string()))?;
-
-            let answer = self.exchange(OPERATION_LIST, request.encode())?;
-            let page = ListResponse::decode(&answer)
-                .map_err(|error| VaultError::protocol(error.to_string()))?;
-
-            let carried = page.items.len();
-            items.extend(page.items);
-            if page.next_cursor.is_empty() {
-                return Ok(items);
-            }
-            if !seen.insert(page.next_cursor.clone()) {
-                return Err(VaultError::protocol("the phone repeated a page cursor"));
-            }
-            // A page that carried nothing and still asks for another walks
-            // forever without ever reaching the item ceiling below.
-            if carried == 0 || items.len() > MAX_ITEMS {
-                return Err(VaultError::protocol("the vault listing did not end"));
-            }
-            cursor = page.next_cursor;
-        }
+        let answer = self.exchange(OPERATION_LIST, request.encode())?;
+        ListResponse::decode(&answer).map_err(|error| VaultError::protocol(error.to_string()))
     }
 
     /// One item's secret, after the user approves it on the phone.
@@ -218,6 +194,57 @@ impl<'a> PhoneVault<'a> {
             });
         }
         Ok(reply.payload)
+    }
+}
+
+/// Every item's metadata, walked page by page, opening one session per page.
+///
+/// A session carries exactly one application request and the phone closes it
+/// on the way out -- that is what keeps a phone which walked out of range from
+/// looking available until the first timeout. So a walk that reuses its
+/// session gets one page and then a socket nobody is listening on, and the
+/// desktop reports the phone as unavailable partway through a listing it had
+/// already half received.
+///
+/// The phone has always expected this: it keeps the snapshot a walk started
+/// from for thirty seconds precisely so the pages of one walk agree with each
+/// other across the several sessions it takes to fetch them, and its own
+/// comment says each page of the desktop's walk is a new session. This side
+/// simply never did it.
+///
+/// It held up for so long because a vault of thirty-two items or fewer is one
+/// page and never asks for a second. The failure starts at item thirty-three.
+pub fn list_all(
+    verifier_name: &str,
+    mut open: impl FnMut() -> Result<Box<dyn SecureSession + Send>, VaultError>,
+) -> Result<Vec<ItemSummary>, VaultError> {
+    let mut items = Vec::new();
+    let mut cursor = String::new();
+    // The phone picks the cursors, so a repeat is how an endless walk starts.
+    // Refusing on the second sighting stops it a page early instead of after
+    // `MAX_ITEMS` have been read.
+    let mut seen: HashSet<String> = HashSet::new();
+
+    loop {
+        let mut session = open()?;
+        let page = PhoneVault::new(&mut session, verifier_name).list_page(&cursor);
+        let _ = session.close();
+        let page = page?;
+
+        let carried = page.items.len();
+        items.extend(page.items);
+        if page.next_cursor.is_empty() {
+            return Ok(items);
+        }
+        if !seen.insert(page.next_cursor.clone()) {
+            return Err(VaultError::protocol("the phone repeated a page cursor"));
+        }
+        // A page that carried nothing and still asks for another walks forever
+        // without ever reaching the item ceiling below.
+        if carried == 0 || items.len() > MAX_ITEMS {
+            return Err(VaultError::protocol("the vault listing did not end"));
+        }
+        cursor = page.next_cursor;
     }
 }
 
@@ -330,27 +357,27 @@ mod tests {
 
     #[test]
     fn a_listing_walks_every_page_and_stops_on_the_empty_cursor() {
-        let mut transport = session(true, |request| {
-            assert_eq!(request.operation, OPERATION_LIST);
-            let asked = ListRequest::decode(&request.payload).expect("payload decodes");
-            let (items, next_cursor) = match asked.cursor.as_str() {
-                "" => (vec![summary("a"), summary("b")], "page-2"),
-                "page-2" => (vec![summary("c")], ""),
-                other => panic!("unexpected cursor {other}"),
-            };
-            reply(
-                request,
-                ListResponse {
-                    items,
-                    next_cursor: next_cursor.into(),
-                }
-                .encode(),
-            )
-        });
+        let transport = || {
+            session(true, |request| {
+                assert_eq!(request.operation, OPERATION_LIST);
+                let asked = ListRequest::decode(&request.payload).expect("payload decodes");
+                let (items, next_cursor) = match asked.cursor.as_str() {
+                    "" => (vec![summary("a"), summary("b")], "page-2"),
+                    "page-2" => (vec![summary("c")], ""),
+                    other => panic!("unexpected cursor {other}"),
+                };
+                reply(
+                    request,
+                    ListResponse {
+                        items,
+                        next_cursor: next_cursor.into(),
+                    }
+                    .encode(),
+                )
+            })
+        };
 
-        let items = PhoneVault::new(&mut transport, "Workstation")
-            .list()
-            .expect("the listing completes");
+        let items = list_all("Workstation", || Ok(transport())).expect("the listing completes");
 
         let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
         assert_eq!(ids, ["a", "b", "c"]);
@@ -358,20 +385,21 @@ mod tests {
 
     #[test]
     fn a_phone_that_repeats_a_cursor_does_not_page_forever() {
-        let mut transport = session(true, |request| {
-            reply(
-                request,
-                ListResponse {
-                    items: vec![summary("a")],
-                    next_cursor: "same".into(),
-                }
-                .encode(),
-            )
-        });
+        let transport = || {
+            session(true, |request| {
+                reply(
+                    request,
+                    ListResponse {
+                        items: vec![summary("a")],
+                        next_cursor: "same".into(),
+                    }
+                    .encode(),
+                )
+            })
+        };
 
-        let error = PhoneVault::new(&mut transport, "Workstation")
-            .list()
-            .expect_err("an endless listing is refused");
+        let error =
+            list_all("Workstation", || Ok(transport())).expect_err("an endless listing is refused");
         assert!(matches!(error, VaultError::Protocol(_)));
     }
 
@@ -381,33 +409,33 @@ mod tests {
     /// thirty-three and the user's answer was that the vault would not open.
     #[test]
     fn a_vault_as_large_as_the_phone_allows_is_listed_whole() {
-        let mut transport = session(true, |request| {
-            let asked = ListRequest::decode(&request.payload).expect("payload decodes");
-            let offset: usize = if asked.cursor.is_empty() {
-                0
-            } else {
-                asked.cursor.parse().expect("the cursor is the offset")
-            };
-            let next = offset + MAX_PAGE_ITEMS;
-            reply(
-                request,
-                ListResponse {
-                    items: (offset..next)
-                        .map(|index| summary(&index.to_string()))
-                        .collect(),
-                    next_cursor: if next < MAX_ITEMS {
-                        next.to_string()
-                    } else {
-                        String::new()
-                    },
-                }
-                .encode(),
-            )
-        });
+        let transport = || {
+            session(true, |request| {
+                let asked = ListRequest::decode(&request.payload).expect("payload decodes");
+                let offset: usize = if asked.cursor.is_empty() {
+                    0
+                } else {
+                    asked.cursor.parse().expect("the cursor is the offset")
+                };
+                let next = offset + MAX_PAGE_ITEMS;
+                reply(
+                    request,
+                    ListResponse {
+                        items: (offset..next)
+                            .map(|index| summary(&index.to_string()))
+                            .collect(),
+                        next_cursor: if next < MAX_ITEMS {
+                            next.to_string()
+                        } else {
+                            String::new()
+                        },
+                    }
+                    .encode(),
+                )
+            })
+        };
 
-        let items = PhoneVault::new(&mut transport, "Workstation")
-            .list()
-            .expect("the listing completes");
+        let items = list_all("Workstation", || Ok(transport())).expect("the listing completes");
 
         assert_eq!(items.len(), MAX_ITEMS);
         assert_eq!(items[MAX_ITEMS - 1].id, (MAX_ITEMS - 1).to_string());
@@ -415,22 +443,26 @@ mod tests {
 
     #[test]
     fn a_listing_that_never_ends_stops_at_the_item_ceiling() {
-        let mut page = 0usize;
-        let mut transport = session(true, move |request| {
-            page += 1;
-            reply(
-                request,
-                ListResponse {
-                    items: vec![summary("a")],
-                    next_cursor: format!("page-{page}"),
-                }
-                .encode(),
-            )
-        });
+        // The counter lives outside the session, because each page of the walk
+        // arrives on a session of its own.
+        let page = std::cell::Cell::new(0usize);
+        let transport = || {
+            let asked = page.get() + 1;
+            page.set(asked);
+            session(true, move |request| {
+                reply(
+                    request,
+                    ListResponse {
+                        items: vec![summary("a")],
+                        next_cursor: format!("page-{asked}"),
+                    }
+                    .encode(),
+                )
+            })
+        };
 
-        let error = PhoneVault::new(&mut transport, "Workstation")
-            .list()
-            .expect_err("an endless listing is refused");
+        let error =
+            list_all("Workstation", || Ok(transport())).expect_err("an endless listing is refused");
         assert_eq!(
             error,
             VaultError::Protocol("the vault listing did not end".into())
@@ -553,8 +585,49 @@ mod tests {
         });
 
         let error = PhoneVault::new(&mut transport, "Workstation")
-            .list()
+            .list_page("")
             .expect_err("an oversized page is refused");
         assert!(matches!(error, VaultError::Protocol(_)));
+    }
+
+    /// The regression this file was rewritten for.
+    ///
+    /// A session carries one request. Walking the pages of a listing on a
+    /// single session got page one and then talked into a socket the phone had
+    /// already closed, so every vault above thirty-two items answered the
+    /// desktop's panel with "the vault is not available on the phone" -- after
+    /// the phone's owner had unlocked it.
+    ///
+    /// Asserted as a count of sessions rather than by simulating a closed
+    /// socket, because a double that answered a second request on the same
+    /// session is exactly the too-tolerant peer that hid this in the first
+    /// place.
+    #[test]
+    fn each_page_of_a_walk_arrives_on_a_session_of_its_own() {
+        let opened = std::cell::Cell::new(0usize);
+        let items = list_all("Workstation", || {
+            opened.set(opened.get() + 1);
+            Ok(session(true, |request| {
+                let asked = ListRequest::decode(&request.payload).expect("payload decodes");
+                let (items, next_cursor) = match asked.cursor.as_str() {
+                    "" => (vec![summary("a")], "page-2"),
+                    "page-2" => (vec![summary("b")], "page-3"),
+                    "page-3" => (vec![summary("c")], ""),
+                    other => panic!("unexpected cursor {other}"),
+                };
+                reply(
+                    request,
+                    ListResponse {
+                        items,
+                        next_cursor: next_cursor.into(),
+                    }
+                    .encode(),
+                )
+            }))
+        })
+        .expect("the listing completes");
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(opened.get(), 3, "one session per page, not one per walk");
     }
 }

@@ -40,7 +40,7 @@ use crate::transport::{Transport, TransportAvailability, TransportRegistry};
 use phone_auth_protocol::ssh;
 
 use crate::ssh_client::PhoneSsh;
-use crate::vault::{PhoneVault, VaultError};
+use crate::vault::{self, PhoneVault, VaultError};
 
 /// How long a pairing bootstrap stays scannable.
 const PAIRING_WINDOW_MS: i64 = 120_000;
@@ -969,6 +969,32 @@ impl Service {
         })
     }
 
+    /// Every item's metadata, spending `first` on the opening page and dialling
+    /// again for each one after it.
+    ///
+    /// The phone closes a session once it has answered on it -- one session,
+    /// one request -- and it holds the snapshot a walk started from for thirty
+    /// seconds so that the pages of one walk still agree with each other. The
+    /// caller hands over the session it already opened rather than throwing it
+    /// away, so a vault that fits in one page still costs exactly one dial.
+    fn walk_vault(
+        &self,
+        first: Box<dyn phone_auth_verifier::SecureSession + Send>,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<Vec<phone_auth_protocol::vault::ItemSummary>, VaultError> {
+        let mut first = Some(first);
+        let transports = &self.transports;
+        vault::list_all(&self.config.verifier_name, || match first.take() {
+            Some(session) => Ok(session),
+            // Losing the phone partway through a walk is the same answer as
+            // never reaching it: worth retrying, not worth explaining.
+            None => transports
+                .connect(device_id, credential_id)
+                .map_err(|_| VaultError::Unavailable),
+        })
+    }
+
     /// Reads the vault's metadata from the phone.
     ///
     /// Costs no biometric prompt, because it releases no secret. The rows it
@@ -980,15 +1006,14 @@ impl Service {
     ) -> Result<VaultListResult, ServiceError> {
         let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
-        let mut session = self
+        let session = self
             .transports
             .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
 
-        let listed = PhoneVault::new(&mut session, self.config.verifier_name.clone()).list();
-        let _ = session.close();
+        let listed = self.walk_vault(session, &device_id, &credential_id);
 
         match listed {
             Ok(items) => {
@@ -1108,15 +1133,14 @@ impl Service {
 
         let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
-        let mut session = self
+        let session = self
             .transports
             .connect(&device_id, &credential_id)
             .map_err(|error| ServiceError::new("no-transport", error))?;
         let device_name = self.device_name(&device_id);
         let development = session.security().is_development;
 
-        let mut vault = PhoneVault::new(&mut session, self.config.verifier_name.clone());
-        let listed = vault.list();
+        let listed = self.walk_vault(session, &device_id, &credential_id);
         let matched = match listed {
             Ok(items) => items
                 .into_iter()
@@ -1126,7 +1150,6 @@ impl Service {
                 })
                 .collect::<Vec<_>>(),
             Err(error) => {
-                let _ = session.close();
                 let error = vault_error(error);
                 self.record_vault("", "fill", &device_name, development, Err(&error));
                 return Err(error);
@@ -1140,13 +1163,11 @@ impl Service {
         let item = match matched.as_slice() {
             [only] => only.clone(),
             [] => {
-                let _ = session.close();
                 let error = ServiceError::new("not-found", "no vault item for this site");
                 self.record_vault("", "fill", &device_name, development, Err(&error));
                 return Err(error);
             }
             several => {
-                let _ = session.close();
                 let error = ServiceError::new(
                     "ambiguous",
                     format!(
@@ -1159,6 +1180,12 @@ impl Service {
             }
         };
 
+        // A session of its own, because the listing spent the ones it opened:
+        // the phone closes a session once it has answered on it.
+        let mut session = self
+            .transports
+            .connect(&device_id, &credential_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
         let fetched =
             PhoneVault::new(&mut session, self.config.verifier_name.clone()).fetch(&item.id);
         let _ = session.close();
