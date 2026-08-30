@@ -503,9 +503,19 @@ async function copyItem(item, button) {
     button.textContent = 'copiar';
   } finally {
     button.disabled = false;
-    // The revision may have moved on, and the row on screen would then copy a
-    // value the user never saw. Re-listing costs nothing the user notices.
-    if (!vaultLoading) setTimeout(() => { if (!document.hidden) loadVault(); }, 1200);
+    // No automatic re-listing here. It used to run a second after every copy,
+    // to keep each row's revision fresh, on the grounds that a listing cost
+    // nothing anybody would notice. That stopped being true: the metadata
+    // lives inside the encrypted blob and the phone's key is auth-per-use, so
+    // a fresh listing raises a Keystore prompt -- and a listing raises no
+    // approval sheet to explain one. The owner approved a copy and then, a
+    // second later, got a second fingerprint prompt for nothing they had done.
+    //
+    // What the re-list was protecting against is already handled: `vault.copy`
+    // carries the revision of the row on screen and the agent refuses a copy
+    // whose revision has moved on. So a stale row costs one clear failure and
+    // a press of Atualizar, rather than an unexplained prompt after every
+    // single copy.
   }
 }
 

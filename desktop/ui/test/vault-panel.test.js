@@ -88,6 +88,9 @@ function boot({ call }) {
   };
 
   const calls = [];
+  // Held rather than run, so a panel that schedules work for later can be
+  // asked what it scheduled.
+  const scheduled = [];
   const context = vm.createContext({
     document,
     window: {
@@ -105,7 +108,10 @@ function boot({ call }) {
     URL,
     Date,
     Math,
-    setTimeout: () => 0,
+    setTimeout: (fn) => {
+      scheduled.push(fn);
+      return 0;
+    },
     clearTimeout: () => {},
     // Polling would fire the status call forever; the tests drive the panel
     // directly instead.
@@ -114,7 +120,14 @@ function boot({ call }) {
   });
 
   vm.runInContext(rendererSource, context);
-  return { element, calls, context };
+
+  /** Runs whatever the panel put on a timer, then lets promises settle. */
+  async function drainTimers() {
+    for (const fn of scheduled.splice(0)) await fn();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  return { element, calls, context, drainTimers };
 }
 
 const item = {
@@ -170,6 +183,37 @@ test('a copy names the revision of the row on screen', async () => {
     'itemId',
   ]);
   assert.match(harness.element('vault-note').textContent, /limpa em \d+s/);
+});
+
+test('a copy does not send the phone back for a whole new listing', async () => {
+  // A listing is not free on the phone. The metadata lives inside the
+  // encrypted blob and the key is auth-per-use, so re-listing raises a
+  // Keystore prompt -- and listing raises no sheet to explain it. This used to
+  // run a second after every copy, so approving one copy bought the owner a
+  // second fingerprint prompt for something they had not asked for.
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.list') {
+        return { items: [item], deviceName: 'Pixel', development: false };
+      }
+      return {
+        length: 18,
+        clearsAtMs: Date.now() + 45000,
+        historyExcluded: true,
+        cloudExcluded: true,
+        memoryLocked: true,
+      };
+    },
+  });
+
+  const [copy] = await openVault(harness);
+  const listed = () => harness.calls.filter((c) => c.method === 'vault.list').length;
+  const before = listed();
+
+  await copy.emit('click');
+  await harness.drainTimers();
+
+  assert.equal(listed(), before, 'a copy must not cost an unexplained prompt');
 });
 
 test('a clipboard the OS would not protect is reported, not hidden', async () => {
