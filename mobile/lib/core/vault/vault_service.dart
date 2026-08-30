@@ -168,7 +168,18 @@ class VaultService {
     // An id nothing matches still gets a sheet. Skipping straight to a refusal
     // would answer faster for a missing item than for a present one, and that
     // difference is exactly what lets a paired desktop enumerate the vault.
-    final item = await _store.summary(itemId);
+    //
+    // Read through the walk's snapshot rather than straight from the store.
+    // The metadata needed here -- name, username, address -- is exactly what a
+    // listing already decrypted, and the desktop's own flow is list, pick,
+    // fetch: going to the store again raised a second Keystore prompt with
+    // nothing on screen explaining it, seconds after the first, to build the
+    // sheet that explains the third. That is the case [VaultListing] names as
+    // the thing the approval sheet exists to prevent. With no live snapshot
+    // this costs exactly what asking the store cost, because that is what it
+    // does.
+    final all = await _listing.items(restart: false);
+    final item = all.where((candidate) => candidate.id == itemId).firstOrNull;
     return VaultApprovalRequest(
       id: id,
       verifierName: verifierName,
@@ -221,6 +232,10 @@ class VaultService {
 
   Future<Uint8List> _create(wire.VaultCreateRequest request) async {
     final written = await _store.create(_input(request));
+    // The sheet's wording comes from that snapshot now, so a write this
+    // service made has to invalidate it: otherwise the next request for this
+    // item would name it whatever it was called before.
+    _listing.forget();
     return wire.VaultWriteResponse(
       itemId: written.id,
       revision: written.revision,
@@ -238,6 +253,10 @@ class VaultService {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     );
     final written = await _store.update(current, _input(request));
+    // The sheet's wording comes from that snapshot now, so a write this
+    // service made has to invalidate it: otherwise the next request for this
+    // item would name it whatever it was called before.
+    _listing.forget();
     return wire.VaultWriteResponse(
       itemId: written.id,
       revision: written.revision,
@@ -256,6 +275,7 @@ class VaultService {
         updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       ),
     );
+    _listing.forget();
     return wire.VaultDeleteResponse(itemId: request.itemId).encode();
   }
 

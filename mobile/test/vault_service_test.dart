@@ -164,6 +164,48 @@ void main() {
     },
   );
 
+  test('the desktop flow costs one prompt per thing it asks for', () async {
+    // List, pick, fetch is what the tray's vault panel does. Building the
+    // sheet used to go to the store for the item's name, which is a second
+    // Keystore prompt with nothing on screen explaining it -- raised seconds
+    // after the listing had already decrypted that exact metadata, in order
+    // to build the sheet that explains the third. `VaultListing` names that
+    // as the thing the approval sheet exists to prevent.
+    final repository = _ListCountingStore();
+    final service = VaultService(
+      repository: repository,
+      approval: _RecordingApproval(approve: true),
+    );
+
+    await service.handle(
+      request(
+        wire.vaultListOperation,
+        wire.VaultListRequest(verifierName: 'Desktop').encode(),
+      ),
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    expect(repository.unlocks, 1, reason: 'the listing reads the vault once');
+
+    await service.handle(
+      request(
+        wire.vaultFetchOperation,
+        wire.VaultFetchRequest(verifierName: 'Desktop', itemId: 'one').encode(),
+      ),
+      sessionBinding: binding,
+      authorized: true,
+      now: now,
+    );
+    expect(
+      repository.unlocks,
+      2,
+      reason:
+          'the sheet is worded from the snapshot the listing just took, so '
+          'the only further unlock is the fetch the user approved',
+    );
+  });
+
   test('a refused approval never reaches the store', () async {
     final repository = _CountingStore();
     final service = VaultService(
@@ -442,6 +484,23 @@ class _CountingStore extends _VaultStore {
   Future<List<store.VaultItemSummary>?> delete(store.VaultItemSummary item) {
     writes++;
     return super.delete(item);
+  }
+}
+
+/// Counts trips into the store, which on the real one is a Keystore prompt.
+class _ListCountingStore extends _VaultStore {
+  int unlocks = 0;
+
+  @override
+  Future<store.VaultPage> listPage([String? cursor]) {
+    unlocks++;
+    return super.listPage(cursor);
+  }
+
+  @override
+  Future<store.VaultSecret> fetch(String id) {
+    unlocks++;
+    return super.fetch(id);
   }
 }
 

@@ -152,25 +152,6 @@ abstract class VaultStore {
     return result;
   }
 
-  /// One item's metadata, or null when nothing carries that id.
-  ///
-  /// Costs one unlock and releases no secret, which is the point: the approval
-  /// sheet has to name the item *before* the user is asked to release it, and
-  /// going through [fetch] to learn the name would hand over the secret in
-  /// order to draw the screen that asks whether to hand over the secret.
-  ///
-  /// One unlock, not none. The metadata lives inside the encrypted blob, so
-  /// reading a name needs the key, and the key is auth-per-use -- which means
-  /// a request from a desktop raises a prompt before the sheet that explains
-  /// it. That is the cost of keeping metadata sealed; what it must not also be
-  /// is a prompt *per page*, which is why [listAll] is one call.
-  Future<VaultItemSummary?> summary(String id) async {
-    for (final item in await listAll()) {
-      if (item.id == id) return item;
-    }
-    return null;
-  }
-
   Future<VaultSecret> fetch(String id);
   Future<VaultWrite> create(VaultItemInput item);
   Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item);
