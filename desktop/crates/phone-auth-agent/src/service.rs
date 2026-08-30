@@ -45,8 +45,12 @@ use crate::vault::{self, PhoneVault, VaultError};
 /// How long a pairing bootstrap stays scannable.
 const PAIRING_WINDOW_MS: i64 = 120_000;
 
-/// How long to wait for a phone to answer before giving up on the session.
-const RECEIVE_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long to wait for a phone to answer a WebAuthn ceremony.
+///
+/// A flat number here, unlike everywhere else, because the relay envelope
+/// carries no `expires_at_ms` for the wait to be measured against. The
+/// authorization exchange below uses the request's own deadline.
+const WEBAUTHN_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceError {
@@ -652,7 +656,7 @@ impl Service {
             session
                 .send(&frame)
                 .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
-            let deadline = Instant::now() + RECEIVE_TIMEOUT;
+            let deadline = Instant::now() + WEBAUTHN_TIMEOUT;
             loop {
                 if crate::ipc::take_webauthn_cancellation(request_id) {
                     let cancel = webauthn_frame(&serde_json::json!({
@@ -699,12 +703,19 @@ impl Service {
         session: &mut Box<dyn phone_auth_verifier::SecureSession + Send>,
         pending: phone_auth_verifier::PendingAuthorization,
     ) -> Result<phone_auth_verifier::Grant, ServiceError> {
+        // Read before the frame is sent, because `accept` takes `pending` and
+        // this is the only number that says how long the answer is worth
+        // waiting for. `request_validity_ms` is the operator's to set, up to
+        // the protocol's two-minute ceiling, so a flat wait here was a wait
+        // that could be shorter than the window this machine had granted.
+        let expires_at_ms = pending.request().expires_at_ms;
         session
             .send(&pending.frame())
             .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
 
+        let remaining = u64::try_from(expires_at_ms.saturating_sub(now_ms())).unwrap_or(0);
         let response = session
-            .receive(RECEIVE_TIMEOUT)
+            .receive(Duration::from_millis(remaining).saturating_add(crate::ANSWER_TRAVEL_MARGIN))
             .map_err(|error| ServiceError::new("transport-failed", error.to_string()))?;
 
         self.verifier

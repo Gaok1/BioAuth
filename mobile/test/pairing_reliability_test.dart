@@ -12,7 +12,10 @@ import 'package:phone_auth/core/auth/interactive_authorizer.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/protocol/cbor.dart';
+import 'package:phone_auth/core/locker/locker_service.dart';
+import 'package:phone_auth/core/protocol/application_frame.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/core/protocol/locker_payloads.dart';
 import 'package:phone_auth/core/protocol/protocol_codec.dart';
 import 'package:phone_auth/core/session/paired_session_runner.dart';
 import 'package:phone_auth/core/session/paired_session_service.dart';
@@ -280,6 +283,70 @@ void main() {
   // list has, to a phone that will never answer. A request cannot be valid for
   // longer than the protocol's ceiling, so past it there is nothing left to
   // answer and the prompt has to come down with the session.
+  // The desktop refuses an answer that arrives after the request's own
+  // deadline -- `is_reply_to` checks it -- so patience past that point buys
+  // nothing, and what it costs here is a biometric prompt and a decrypted
+  // secret. The phone waited a flat two and a half minutes regardless, which
+  // is thirty seconds longer than a request can even be valid for.
+  test('a request is not held past the deadline it came with', () async {
+    // Near real time, because the handler compares the frame's expiry against
+    // the wall clock of the moment it runs.
+    final now = DateTime.now().toUtc();
+    final session = _FramingSession();
+    final runner = PairedSessionRunner(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: InteractiveAuthorizer(onRequest: (_) {}),
+      lockerGuardian: _SilentGuardian(),
+      // Deliberately far longer than the request. If the flat ceiling were
+      // still what ends the wait, this test would sit here until it timed out.
+      answerTimeout: const Duration(minutes: 5),
+      clock: () => now,
+    );
+    addTearDown(runner.stop);
+
+    runner.sync([_lockerRecord]);
+    await session.listening.future;
+    session.push(
+      ApplicationFrame(
+        protocolVersion: 1,
+        kind: ApplicationFrameKind.request,
+        requestId: 'locker-1',
+        sessionBinding: Uint8List(32),
+        operation: lockerUnlockOperation,
+        issuedAt: now,
+        expiresAt: now.add(const Duration(seconds: 2)),
+        payload: LockerUnwrapRequest(
+          verifierName: 'Desktop-NixOS',
+          fileName: 'notes.txt.balock',
+          plaintextLength: 42,
+          containerBinding: Uint8List(32),
+          credentialId: _lockerRecord.credentialId,
+          wrapper: Uint8List.fromList(List<int>.filled(60, 7)),
+        ).encode(),
+      ).encode(),
+    );
+
+    // Real time, not a pumped event queue: what is under test is a timer.
+    // Two seconds is long enough that the handler, which checks the expiry
+    // against the wall clock of the moment it runs, still accepts the request
+    // after the dial and the attach -- and short enough to wait out here.
+    await _untilRealTime(
+      () => session.closed,
+      within: const Duration(seconds: 10),
+    );
+    expect(
+      session.sent.where(ApplicationFrame.recognizes),
+      isEmpty,
+      reason:
+          'the wait ended before the guardian answered, so there was nothing '
+          'to reply with -- only the SessionAttach of each dial went out. An '
+          'application frame here would be the handler refusing the request '
+          'as already expired, which is a different thing passing for the '
+          'same reason.',
+    );
+  });
+
   test('a request nobody answers is not held forever', () async {
     final now = DateTime.utc(2026, 8, 27, 12);
     final session = _AskingSession();
@@ -375,6 +442,22 @@ void main() {
   );
 }
 
+/// The same, for something a timer decides rather than the event queue.
+///
+/// `pumpEventQueue` drains what is already scheduled; it does not make the
+/// clock move, so a deadline measured in hundreds of milliseconds never
+/// arrives inside one.
+Future<void> _untilRealTime(
+  bool Function() ready, {
+  Duration within = const Duration(seconds: 5),
+}) async {
+  final giveUp = DateTime.now().add(within);
+  while (!ready() && DateTime.now().isBefore(giveUp)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  expect(ready(), isTrue, reason: 'the precondition never happened');
+}
+
 /// Waits for [ready], failing the test rather than hanging if it never comes.
 Future<void> _until(bool Function() ready) async {
   for (var i = 0; i < 100 && !ready(); i++) {
@@ -434,6 +517,11 @@ class _AskingSession extends _IdleSession {
       _incoming.add(const PhoneAuthProtocolCodec().encodeRequest(request));
 }
 
+/// A desktop that can put any frame on the channel, not only an [AuthRequest].
+class _FramingSession extends _IdleSession {
+  void push(Uint8List frame) => _incoming.add(frame);
+}
+
 /// A desktop that hung up: the frame stream is already done.
 class _EndedSession extends _IdleSession {
   _EndedSession() {
@@ -470,6 +558,41 @@ class _FailingStore implements PairingStore {
 
   @override
   Future<String> deviceId() async => 'phone-test';
+}
+
+/// A locker credential of the same desktop, so a `locker.*` frame is routed.
+final _lockerRecord = PairingRecord(
+  verifierId: _record.verifierId,
+  verifierIdentitySpki: _record.verifierIdentitySpki,
+  endpoint: _record.endpoint,
+  credentialId: 'credential-locker',
+  keyKind: _record.keyKind,
+  purpose: CredentialPurpose.fileLocker,
+  pairedAt: _record.pairedAt,
+);
+
+/// A phone whose owner never reaches it. Stands in for the Keystore gesture.
+class _SilentGuardian implements LockerKeyGuardian {
+  final _never = Completer<Uint8List>();
+
+  @override
+  Future<Uint8List> wrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List dataKey,
+    required String fileName,
+    required String verifierName,
+  }) => _never.future;
+
+  @override
+  Future<Uint8List> unwrap({
+    required Uint8List binding,
+    required String credentialId,
+    required Uint8List wrapper,
+    required String fileName,
+    required String verifierName,
+    bool rekeying = false,
+  }) => _never.future;
 }
 
 /// Mirrors `_failuresBeforeUnreachable` in the runner, which is private.

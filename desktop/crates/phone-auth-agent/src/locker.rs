@@ -26,7 +26,10 @@ use phone_auth_verifier::verifier::now_ms;
 use phone_auth_verifier::{random, SecureSession};
 
 /// How long to wait for the user to answer a locker prompt.
-const RECEIVE_TIMEOUT: Duration = Duration::from_secs(90);
+///
+/// As long as the request stays valid, plus [`crate::ANSWER_TRAVEL_MARGIN`].
+const RECEIVE_TIMEOUT: Duration =
+    Duration::from_millis(VALIDITY_MS as u64).saturating_add(crate::ANSWER_TRAVEL_MARGIN);
 
 /// How long a locker request stays valid, matching the envelope's ceiling.
 const VALIDITY_MS: i64 = 120_000;
@@ -329,6 +332,15 @@ mod tests {
                 plaintext_len: 42,
             })
             .expect("unwrap");
+    }
+
+    /// The same invariant the vault client pins, for the same reason: a wait
+    /// shorter than the request's own validity hangs up before this side's own
+    /// deadline, and the phone's answer lands in a closed socket after the
+    /// user has already unlocked the key.
+    #[test]
+    fn the_wait_outlasts_the_request_it_is_waiting_on() {
+        assert!(RECEIVE_TIMEOUT > Duration::from_millis(VALIDITY_MS as u64));
     }
 
     /// The regression this file was rewritten for.

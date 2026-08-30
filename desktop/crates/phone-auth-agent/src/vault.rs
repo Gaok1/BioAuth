@@ -26,7 +26,10 @@ use phone_auth_verifier::{random, SecureSession};
 use zeroize::Zeroize;
 
 /// How long to wait for the user to answer a vault prompt.
-const RECEIVE_TIMEOUT: Duration = Duration::from_secs(90);
+///
+/// As long as the request stays valid, plus [`crate::ANSWER_TRAVEL_MARGIN`].
+const RECEIVE_TIMEOUT: Duration =
+    Duration::from_millis(VALIDITY_MS as u64).saturating_add(crate::ANSWER_TRAVEL_MARGIN);
 
 /// How long a vault request stays valid, matching the envelope's ceiling.
 const VALIDITY_MS: i64 = 120_000;
@@ -588,6 +591,19 @@ mod tests {
             .list_page("")
             .expect_err("an oversized page is refused");
         assert!(matches!(error, VaultError::Protocol(_)));
+    }
+
+    /// The other half of the same mistake.
+    ///
+    /// A request says how long it is good for, and the answer is refused once
+    /// that has passed. Waiting for less than that is this side hanging up
+    /// before its own deadline: the person answers inside the window they were
+    /// given, the phone unlocks the secret, and it goes into a socket that has
+    /// already been closed. Pinned here because the two numbers sat thirty
+    /// seconds apart for as long as they were written independently.
+    #[test]
+    fn the_wait_outlasts_the_request_it_is_waiting_on() {
+        assert!(RECEIVE_TIMEOUT > Duration::from_millis(VALIDITY_MS as u64));
     }
 
     /// The regression this file was rewritten for.

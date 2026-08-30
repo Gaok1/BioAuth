@@ -23,7 +23,8 @@ use crate::vault::VaultError;
 /// and answer it, short enough that a captured frame is useless later.
 const VALIDITY_MS: i64 = 90_000;
 
-const RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+const RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(VALIDITY_MS as u64)
+    .saturating_add(crate::ANSWER_TRAVEL_MARGIN);
 
 /// The SSH half of a paired phone.
 pub struct PhoneSsh<'a> {

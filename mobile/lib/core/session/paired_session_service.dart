@@ -33,11 +33,15 @@ import 'phone_auth_core.dart';
 /// while the desktop still considers the previous session live.
 const Duration pairedSessionIdleTimeout = Duration(minutes: 4);
 
-/// The longest a session may spend waiting for the person to answer.
+/// The longest a session may spend waiting for the person to answer a request
+/// that names no deadline of its own.
 ///
 /// The protocol caps a request's validity at two minutes and the phone allows
 /// another thirty seconds of clock skew when one arrives, so past this the
 /// desktop has stopped waiting no matter what happens on the phone next.
+///
+/// A request that *does* name a deadline is bounded by that instead, and it is
+/// always the shorter of the two. See [PairedSessionService._answered].
 const Duration pairedSessionAnswerTimeout = Duration(minutes: 2, seconds: 30);
 
 /// Thrown when nobody answered inside the window the desktop gave.
@@ -170,10 +174,36 @@ class PairedSessionService {
   /// credential's loop on a session the desktop had already given up on, so the
   /// computer sat there looking connected to a phone that would never answer.
   /// Whatever the answer eventually was, it went into a closed socket.
-  Future<T> _answered<T>(Future<T> work) => work.timeout(
-    _answerTimeout,
-    onTimeout: () => throw const PairedSessionAnswerExpired(),
-  );
+  ///
+  /// [until] is the request's own deadline, when it carries one. The desktop
+  /// refuses an answer that arrives after it, so every second of patience past
+  /// that point is spent on a reply nobody can accept -- and the way this
+  /// phone spends it is a biometric prompt and a decrypted secret. The sheet
+  /// comes down at the deadline instead, which is the truth: the thing it was
+  /// offering to approve is gone.
+  Future<T> _answered<T>(Future<T> work, {DateTime? until}) {
+    var window = _answerTimeout;
+    if (until != null) {
+      final left = until.difference((_clock ?? DateTime.now)());
+      if (left < window) window = left.isNegative ? Duration.zero : left;
+    }
+    return work.timeout(
+      window,
+      onTimeout: () => throw const PairedSessionAnswerExpired(),
+    );
+  }
+
+  /// When the desktop stops accepting an answer to [frame], if it says.
+  ///
+  /// A frame this cannot read is left to the handler, which answers a
+  /// malformed request with an error of its own rather than throwing here.
+  static DateTime? _deadlineOf(Uint8List frame) {
+    try {
+      return ApplicationFrame.decode(frame).expiresAt;
+    } on Object {
+      return null;
+    }
+  }
 
   /// Connects, waits for one request, answers it, and closes.
   ///
@@ -316,7 +346,9 @@ class PairedSessionService {
             authorized: purpose == CredentialPurpose.vault,
           ),
         };
-        await outcome.session.send(await _answered(serving));
+        await outcome.session.send(
+          await _answered(serving, until: _deadlineOf(frame)),
+        );
         return null;
       }
       return await _answered(core.serveFrame(outcome.session, frame));
