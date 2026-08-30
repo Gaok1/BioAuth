@@ -2,8 +2,57 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  // The screen owns the controller and disposes it on the way out, and two of
+  // these notify after an `await`. Notifying a disposed `ChangeNotifier`
+  // throws, and the build people are handed to test is `flutter build apk
+  // --debug`, where that assert is live -- so this is a crash, not a warning.
+  group('work that outlives the screen that started it', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test(
+      'starring an item and leaving does not notify a dead controller',
+      () async {
+        final controller = VaultController(
+          store: _MemoryVaultStore(),
+          copy: (_) async {},
+        );
+        await controller.unlock();
+        final id = controller.items.single.id;
+
+        // One gesture: tap the star, leave. `toggleFavourite` is deliberately
+        // not routed through `_run`, so nothing marks the controller busy and
+        // nothing waits for the preference write before the screen goes.
+        final starring = controller.toggleFavourite(id);
+        controller.dispose();
+
+        await expectLater(starring, completes);
+      },
+    );
+
+    test(
+      'an operation still in flight does not notify a dead controller',
+      () async {
+        final store = _BlockingVaultStore();
+        final controller = VaultController(store: store, copy: (_) async {});
+
+        // The vault raises a biometric prompt for every operation, so "in
+        // flight" is as long as a person takes -- and the back gesture that
+        // dismisses the prompt is one press away from the one that pops the
+        // screen.
+        final unlocking = controller.unlock();
+        controller.dispose();
+        store.answer();
+
+        await expectLater(unlocking, completes);
+      },
+    );
+  });
+
   test('search, reveal, copy, CRUD and lock keep plaintext bounded', () async {
     final store = _MemoryVaultStore();
     String? copied;
@@ -279,4 +328,27 @@ class _AnsweringStore extends _MemoryVaultStore {
     await super.delete(item);
     return super.listAll();
   }
+}
+
+/// A vault that does not answer until it is told to, standing in for the wait
+/// on the Keystore prompt.
+class _BlockingVaultStore extends VaultStore {
+  final _held = Completer<VaultPage>();
+
+  void answer() => _held.complete(const VaultPage(items: []));
+
+  @override
+  Future<VaultPage> listPage([String? cursor]) => _held.future;
+
+  // Nothing below is reached: unlocking is the only thing these tests start.
+  @override
+  Future<VaultSecret> fetch(String id) => throw UnimplementedError();
+  @override
+  Future<VaultWrite> create(VaultItemInput item) => throw UnimplementedError();
+  @override
+  Future<VaultWrite> update(VaultItemSummary current, VaultItemInput item) =>
+      throw UnimplementedError();
+  @override
+  Future<List<VaultItemSummary>?> delete(VaultItemSummary item) =>
+      throw UnimplementedError();
 }

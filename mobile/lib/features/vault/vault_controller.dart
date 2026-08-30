@@ -122,6 +122,11 @@ class VaultController extends ChangeNotifier {
   /// spinner on a star.
   Future<void> toggleFavourite(String id) async {
     await _favourites.toggle(id);
+    // The preference write is disk I/O and nothing waits for it: not being
+    // routed through [_run] means no busy flag either, so starring an item and
+    // leaving the screen is one ordinary gesture. Same rule as
+    // [_loadFavourites], which is where it is spelled out.
+    if (_disposed) return;
     notifyListeners();
   }
 
@@ -445,7 +450,13 @@ class VaultController extends ChangeNotifier {
         _forget();
         locked = true;
       }
-      notifyListeners();
+      // Everything above still runs after disposal -- forgetting the plaintext
+      // an operation was carrying is exactly what should happen when the
+      // screen goes. Only the notify is skipped, and only because it throws:
+      // every vault operation waits on a biometric prompt, which is as long as
+      // a person takes, and the back gesture that dismisses that prompt is one
+      // press away from the one that pops the screen.
+      if (!_disposed) notifyListeners();
     }
   }
 }
