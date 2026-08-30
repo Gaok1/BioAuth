@@ -315,6 +315,51 @@ void main() {
     expect(approval.seen, hasLength(1));
     expect(approval.seen.single.itemName, 'Item desconhecido');
   });
+  test('a tap that lands after the request expired unlocks nothing', () async {
+    // The window is checked before the sheet goes up, and the sheet waits on a
+    // person. This frame is good for a minute; this user answers after two.
+    final repository = _CountingStore();
+    var moment = now;
+    final service = VaultService(
+      repository: repository,
+      approval: _SlowApproval(
+        () => moment = now.add(const Duration(minutes: 2)),
+      ),
+      clock: () => moment,
+    );
+
+    final answered = await service.handle(
+      request(
+        wire.vaultFetchOperation,
+        wire.VaultFetchRequest(verifierName: 'Desktop', itemId: 'one').encode(),
+      ),
+      sessionBinding: binding,
+      authorized: true,
+    );
+
+    expect(ApplicationFrame.decode(answered).kind, ApplicationFrameKind.error);
+    expect(
+      repository.fetches,
+      0,
+      reason:
+          'the desktop stopped accepting an answer at expiresAt, so unlocking '
+          'here spends a fingerprint to decrypt a secret into a session that '
+          'is already gone',
+    );
+  });
+}
+
+/// Someone who taps yes, long after being asked.
+class _SlowApproval implements VaultApproval {
+  _SlowApproval(this.onAsked);
+
+  final void Function() onAsked;
+
+  @override
+  Future<bool> confirm(VaultApprovalRequest request) async {
+    onAsked();
+    return true;
+  }
 }
 
 class _VaultStore extends store.VaultStore {

@@ -70,12 +70,17 @@ abstract interface class SshSigner {
 }
 
 class SshService {
-  SshService({SshApproval? approval, SshSigner? signer})
-    : _approval = approval ?? const DenySshApproval(),
-      _signer = signer;
+  SshService({
+    SshApproval? approval,
+    SshSigner? signer,
+    DateTime Function()? clock,
+  }) : _approval = approval ?? const DenySshApproval(),
+       _signer = signer,
+       _clock = clock ?? DateTime.now;
 
   final SshApproval _approval;
   final SshSigner? _signer;
+  final DateTime Function() _clock;
 
   Future<Uint8List> handle(
     Uint8List frame, {
@@ -84,10 +89,12 @@ class SshService {
     DateTime? now,
   }) async {
     final request = ApplicationFrame.decode(frame);
-    final moment = (now ?? DateTime.now()).toUtc();
+    // Pinned by [now] when a caller supplies one, moving otherwise: this is
+    // read once before the approval sheet and once after it.
+    DateTime moment() => (now ?? _clock()).toUtc();
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
-        request.isExpiredAt(moment)) {
+        request.isExpiredAt(moment())) {
       throw const FormatException('Frame ssh fora desta sessão');
     }
     // The session's credential has to be the SSH one. A session opened for
@@ -123,6 +130,14 @@ class SshService {
         ),
       );
       if (!approved) return _error(request, ApplicationErrorCode.rejected);
+
+      // The sheet waits on a person, and the window was measured before it
+      // went up. A signature opens a session that outlives the tap, so one
+      // made against a request the desktop already stopped accepting is worse
+      // than useless -- and it would cost a fingerprint to produce.
+      if (request.isExpiredAt(moment())) {
+        return _error(request, ApplicationErrorCode.rejected);
+      }
 
       final signature = await signer.sign(
         decoded.data,

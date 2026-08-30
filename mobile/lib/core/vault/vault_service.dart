@@ -12,7 +12,9 @@ class VaultService {
     store.VaultStore? repository,
     VaultApproval? approval,
     VaultListing? listing,
-  }) : _store = repository ?? const store.NativeVaultStore(),
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now,
+       _store = repository ?? const store.NativeVaultStore(),
        // Its own by default, which is correct and gives up the snapshot
        // between sessions -- and a paged walk is several sessions. The
        // session service passes a shared one for exactly that reason.
@@ -28,6 +30,7 @@ class VaultService {
   final store.VaultStore _store;
   final VaultListing _listing;
   final VaultApproval _approval;
+  final DateTime Function() _clock;
 
   /// How many summaries go in one response.
   ///
@@ -42,10 +45,13 @@ class VaultService {
     DateTime? now,
   }) async {
     final request = ApplicationFrame.decode(frame);
-    final moment = (now ?? DateTime.now()).toUtc();
+    // A caller supplying [now] pins the whole exchange to that instant, which
+    // is what the callers that pass it mean by it. Otherwise time moves, and
+    // it has to: this is read once before the sheet and once after.
+    DateTime moment() => (now ?? _clock()).toUtc();
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
-        request.isExpiredAt(moment)) {
+        request.isExpiredAt(moment())) {
       throw const FormatException('Frame de cofre fora desta sessão');
     }
     if (!authorized) return _error(request, ApplicationErrorCode.rejected);
@@ -92,6 +98,16 @@ class VaultService {
       // was never there, or the revision had moved on is not something the
       // desktop is told — see `protocol-application.md`.
       if (!approved) return _error(request, ApplicationErrorCode.rejected);
+
+      // The window above was measured before the sheet went up, and the sheet
+      // waits on a person. A tap landing after the request died is not worth a
+      // fingerprint: the desktop stopped accepting an answer at `expiresAt`,
+      // so `_run` would raise the Keystore prompt and decrypt a secret into a
+      // session that is already gone. Checked before that, not after, because
+      // refusing afterwards would spend the gesture this exists to save.
+      if (request.isExpiredAt(moment())) {
+        return _error(request, ApplicationErrorCode.rejected);
+      }
 
       return _reply(request, await _run(decoded));
     } on PlatformException {

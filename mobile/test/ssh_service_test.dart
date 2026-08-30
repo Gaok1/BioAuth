@@ -254,6 +254,45 @@ void main() {
       ApplicationErrorCode.invalidRequest,
     );
   });
+
+  test('a tap that lands after the request expired signs nothing', () async {
+    // A signature opens a session that outlives the tap, so one made against a
+    // request the desktop already stopped accepting is worse than useless --
+    // and producing it costs the owner a fingerprint.
+    var moment = now;
+    final signer = _Signer();
+    final service = SshService(
+      approval: _SlowApproval(
+        () => moment = now.add(const Duration(minutes: 2)),
+      ),
+      signer: signer,
+      clock: () => moment,
+    );
+
+    final reply = ApplicationFrame.decode(
+      await service.handle(
+        frame(data: userauthBlob('alice', 'publickey')),
+        sessionBinding: binding,
+        authorized: true,
+      ),
+    );
+
+    expect(reply.kind, ApplicationFrameKind.error);
+    expect(signer.calls, 0, reason: 'no fingerprint for a dead request');
+  });
+}
+
+/// Someone who taps yes, long after being asked.
+class _SlowApproval implements SshApproval {
+  _SlowApproval(this.onAsked);
+
+  final void Function() onAsked;
+
+  @override
+  Future<bool> confirm(SshApprovalRequest request) async {
+    onAsked();
+    return true;
+  }
 }
 
 class _Recording implements SshApproval {
