@@ -40,11 +40,11 @@ class CredentialProviderInstrumentationTest {
         assertTrue(Build.VERSION.SDK_INT >= 35)
         assertTrue(context.packageManager.hasSystemFeature(PackageManager.FEATURE_CREDENTIALS))
         originalProviders = readProviders()
-        val enabled = originalProviders.orEmpty().split(';')
+        val enabled = originalProviders.orEmpty().split(PROVIDER_SEPARATOR)
             .filter { it.isNotBlank() && it != "null" }
             .plus(component.flattenToString())
             .distinct()
-            .joinToString(";")
+            .joinToString(PROVIDER_SEPARATOR)
         writeProviders(enabled)
     }
 
@@ -251,8 +251,8 @@ class CredentialProviderInstrumentationTest {
     private fun writeProviders(value: String?) {
         // Same route as the read, for the same reason. Neither the component
         // list nor the key contains whitespace, and nothing here is run by a
-        // shell -- the command is split on spaces and exec'd -- so the `;`
-        // separating components needs no quoting and would not survive it.
+        // shell -- the command is split on spaces and exec'd -- so the
+        // separator needs no quoting and would not survive it.
         if (value == null) {
             shell("settings delete secure $CREDENTIAL_SERVICE")
         } else {
@@ -307,6 +307,18 @@ class CredentialProviderInstrumentationTest {
 
     companion object {
         private const val CREDENTIAL_SERVICE = "credential_service"
+
+        /**
+         * What separates one enabled provider from the next in that setting.
+         *
+         * `CredentialManagerService` splits the value on `:`. Written with a
+         * `;` the whole setting is a single token that resolves to no
+         * component at all, so nothing was enabled -- not this provider, and
+         * not the Google one that was already there. The setting still read
+         * back exactly as written, which is why the failure looked like the
+         * system ignoring a component it had plainly been given.
+         */
+        private const val PROVIDER_SEPARATOR = ":"
 
         /**
          * How long the system server gets to pick up a written provider list.
