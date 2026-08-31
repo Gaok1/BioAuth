@@ -49,6 +49,21 @@ internal class WebAuthnRequestParserTest {
         assertFailsWith<IllegalArgumentException> {
             WebAuthnRequestParser.creation(base.format("example.org?internal", -7))
         }
+
+        // A list that names algorithms this authenticator cannot sign with is
+        // a refusal, above. A list that names none is not: absent or empty
+        // means the relying party stated no preference, and `create()`
+        // substitutes the client defaults, ES256 among them.
+        for (unstated in listOf("", ""","pubKeyCredParams":[]""")) {
+            WebAuthnRequestParser.creation(
+                """{
+                  "rp":{"id":"example.org","name":"Example"},
+                  "user":{"id":"AQ","name":"alice"},
+                  "challenge":"$challenge"
+                  $unstated
+                }""",
+            )
+        }
     }
 
     @Test

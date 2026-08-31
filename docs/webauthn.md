@@ -38,13 +38,29 @@ The Android parser validates options before showing UI or touching a key:
   the ceremony outright meant that a site asking for `direct` — which most real
   ones do — failed registration before a key was ever touched, with the browser
   reporting only that the authenticator would not do it;
-- creation supports only the `credProps` extension and reports `rk: true`;
-  assertion extensions are currently rejected.
+- `credProps` is the one extension answered, and creation reports `rk: true`
+  for it. Every other extension is ignored on both creation and assertion,
+  which is what a WebAuthn client does with an extension it cannot process:
+  the relying party is required to cope with an output that never came back.
+  Refusing them instead failed whole ceremonies over something optional, and
+  on the assertion side it failed them silently — `onBeginGetCredentialRequest`
+  parses each option before looking up a credential, so one unrecognised
+  extension left PhoneAuth absent from the passkey picker with nothing on
+  screen to explain it. The two that appear in real requests are U2F migration
+  hints this authenticator cannot match against anyway: `appidExclude` on
+  creation, `appid` on assertion. `page-bridge.js` strips and answers both on
+  the desktop path; nothing sits in front of Credential Manager, which is why
+  the same sites failed only on the phone's own browser;
+- an absent or empty `pubKeyCredParams` states no preference rather than
+  refusing everything, and `create()` substitutes the client defaults, ES256
+  among them. A list naming only algorithms this authenticator cannot sign
+  with is still a refusal.
 
-Unsupported attachment, enum value, or extension fails before the
-ceremony rather than being accepted with different semantics. This is the
-deliberately narrow Android feature set; new options need byte-level tests before
-they are admitted. The option vocabulary follows the
+An unsupported attachment or enum value fails before the ceremony rather than
+being accepted with different semantics; an extension that cannot be processed
+is ignored, per the specification. This is the deliberately narrow Android
+feature set; new options need byte-level tests before they are admitted. The
+option vocabulary follows the
 [WebAuthn Level 3 specification](https://www.w3.org/TR/webauthn-3/).
 
 ## RP/origin validation

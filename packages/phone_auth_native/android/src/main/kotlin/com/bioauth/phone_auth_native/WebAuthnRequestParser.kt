@@ -31,12 +31,23 @@ internal object WebAuthnRequestParser {
         val userHandle = decode(user.requiredString("id"), "user.id")
         require(userHandle.size in 1..64) { "user.id must contain 1..64 bytes" }
         val challenge = challenge(root.requiredString("challenge"))
+        // Absent or empty is not a refusal. The spec has `create()` substitute
+        // the client's defaults -- ES256 and RS256 -- when a relying party
+        // states no preference, so an empty list is a party that will take
+        // either, which includes the one algorithm this authenticator signs
+        // with. Reading it as "nothing is permitted" failed a ceremony that
+        // every client is required to honour, and failed it with a message
+        // blaming the site for a list it never sent.
         val algorithms = root.optJSONArray("pubKeyCredParams") ?: JSONArray()
-        require((0 until algorithms.length()).any { index ->
-            algorithms.optJSONObject(index)?.let {
-                it.optString("type") == "public-key" && it.optInt("alg", Int.MIN_VALUE) == Ctap2Encoder.ES256
-            } == true
-        }) { "ES256 is not permitted by the relying party" }
+        require(
+            algorithms.length() == 0 ||
+                (0 until algorithms.length()).any { index ->
+                    algorithms.optJSONObject(index)?.let {
+                        it.optString("type") == "public-key" &&
+                            it.optInt("alg", Int.MIN_VALUE) == Ctap2Encoder.ES256
+                    } == true
+                },
+        ) { "ES256 is not permitted by the relying party" }
         val selection = root.optionalObject("authenticatorSelection")
         // Both, because from the browser's side this authenticator is both.
         //
