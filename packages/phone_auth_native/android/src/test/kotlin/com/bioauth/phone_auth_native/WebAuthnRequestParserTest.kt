@@ -104,6 +104,17 @@ internal class WebAuthnRequestParserTest {
             """{"clientDataHash":"${b64(hash)}"}""",
         )
         assertContentEquals(hash, client.suppliedHash)
+        // The desktop relay is not a platform authenticator and must not say
+        // it is: the browser is on the computer and the key is on a phone at
+        // the other end of a link. It is the same fact the parser leans on
+        // when it accepts a `cross-platform` request.
+        assertEquals(ATTACHMENT_CROSS_PLATFORM, client.attachment)
+        assertEquals(
+            ATTACHMENT_CROSS_PLATFORM,
+            relayClientData("https://example.org", "{}").attachment,
+        )
+        // Credential Manager runs on the same phone, so there it is the truth.
+        assertEquals(ATTACHMENT_PLATFORM, WebAuthnClientData("https://x.example", null).attachment)
         assertEquals(null, relayClientData("https://example.org", "{}").suppliedHash)
         assertFailsWith<IllegalArgumentException> {
             relayClientData("https://example.org", """{"clientDataHash":"${b64(ByteArray(31))}"}""")

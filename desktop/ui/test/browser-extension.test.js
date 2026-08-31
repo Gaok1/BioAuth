@@ -88,6 +88,10 @@ test('page bridge serializes BufferSource and rebuilds a WebAuthn response', asy
   assert.equal(credential.id, 'credential');
   assert.deepEqual([...new Uint8Array(credential.rawId)], [6, 7]);
   assert.deepEqual(Array.from(credential.response.getTransports()), ['internal']);
+  // The authenticator is a phone on the other end of a link, not something
+  // attached to this computer, and a response that omits the field must not be
+  // reported as though it were.
+  assert.equal(credential.authenticatorAttachment, 'cross-platform');
   assert.equal(credential.response.getPublicKeyAlgorithm(), -7);
   assert.equal(JSON.stringify(credential.getClientExtensionResults()), '{"credProps":{"rk":true}}');
 });

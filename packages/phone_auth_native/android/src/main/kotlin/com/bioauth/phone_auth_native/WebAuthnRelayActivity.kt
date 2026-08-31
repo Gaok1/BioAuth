@@ -227,12 +227,23 @@ class WebAuthnRelayActivity : FragmentActivity() {
     }
 }
 
+/**
+ * The client data for a ceremony driven from a paired computer.
+ *
+ * `cross-platform`, because that is what this is: the browser is on the
+ * desktop and the authenticator is a phone on the other end of a link. The
+ * parser already argues exactly this when it accepts a `cross-platform`
+ * request -- "a security key, or a phone reached over a link, which is exactly
+ * what the desktop relay is". The response has to agree with the request.
+ */
 internal fun relayClientData(origin: String, optionsJson: String): WebAuthnClientData {
     val root = JSONObject(optionsJson)
-    if (!root.has("clientDataHash")) return WebAuthnClientData(origin, null)
+    if (!root.has("clientDataHash")) {
+        return WebAuthnClientData(origin, null, attachment = ATTACHMENT_CROSS_PLATFORM)
+    }
     val hash = WebAuthnRequestParser.decode(root.optString("clientDataHash"), "clientDataHash")
     require(hash.size == 32) { "clientDataHash must contain 32 bytes" }
-    return WebAuthnClientData(origin, null, hash)
+    return WebAuthnClientData(origin, null, hash, ATTACHMENT_CROSS_PLATFORM)
 }
 
 internal fun accountLabels(matches: List<PasskeyRecord>): Array<String> =

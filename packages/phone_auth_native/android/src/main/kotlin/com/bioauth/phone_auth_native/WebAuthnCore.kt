@@ -9,7 +9,22 @@ internal data class WebAuthnClientData(
     val origin: String,
     val packageName: String?,
     val suppliedHash: ByteArray? = null,
+    /**
+     * What the relying party is told this authenticator is attached to.
+     *
+     * Defaults to `platform`, which is the truth on the Credential Manager
+     * path: the browser or app asking is on the same phone that holds the key.
+     * It is not the truth on the desktop relay, where the authenticator is a
+     * separate device reached over a link -- which is precisely the argument
+     * `WebAuthnRequestParser` already makes for accepting a `cross-platform`
+     * request. Answering every one of those with `platform` told the site the
+     * credential had come from the computer it was running on.
+     */
+    val attachment: String = ATTACHMENT_PLATFORM,
 )
+
+internal const val ATTACHMENT_PLATFORM = "platform"
+internal const val ATTACHMENT_CROSS_PLATFORM = "cross-platform"
 
 internal data class PreparedWebAuthnAssertion(
     val credential: PasskeyRecord,
@@ -19,6 +34,7 @@ internal data class PreparedWebAuthnAssertion(
     val dataToSign: ByteArray,
     val previousSignCount: UInt,
     val nextSignCount: UInt,
+    val attachment: String = ATTACHMENT_PLATFORM,
 )
 
 internal class WebAuthnCore(
@@ -83,6 +99,7 @@ internal class WebAuthnCore(
                 put("publicKey", b64(publicKey.encoded))
                 put("publicKeyAlgorithm", Ctap2Encoder.ES256)
             },
+            client.attachment,
             JSONObject().apply {
                 if (options.reportCredentialProperties) {
                     put("credProps", JSONObject().put("rk", true))
@@ -115,6 +132,7 @@ internal class WebAuthnCore(
             toSign,
             credential.signCount,
             next,
+            client.attachment,
         )
     }
 
@@ -136,6 +154,7 @@ internal class WebAuthnCore(
                 put("signature", b64(signatureBytes))
                 put("userHandle", b64(prepared.credential.userHandle))
             },
+            prepared.attachment,
         )
     }
 
@@ -159,13 +178,14 @@ internal class WebAuthnCore(
     private fun credentialJson(
         credentialId: ByteArray,
         response: JSONObject,
+        attachment: String,
         clientExtensionResults: JSONObject = JSONObject(),
     ): String =
         JSONObject().apply {
             put("id", b64(credentialId))
             put("rawId", b64(credentialId))
             put("type", "public-key")
-            put("authenticatorAttachment", "platform")
+            put("authenticatorAttachment", attachment)
             put("response", response)
             put("clientExtensionResults", clientExtensionResults)
         }.toString()

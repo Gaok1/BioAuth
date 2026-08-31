@@ -75,7 +75,11 @@
       rawId: { value: fromBase64url(json.rawId), enumerable: true, configurable: true },
       type: { value: "public-key", enumerable: true, configurable: true },
       authenticatorAttachment: {
-        value: json.authenticatorAttachment ?? "platform",
+        // Every credential this bridge builds came off a phone at the other
+        // end of a link, so the fallback for one that arrives without the
+        // field is `cross-platform`, not `platform`. Saying `platform` told
+        // the site the key lived on the computer it was running on.
+        value: json.authenticatorAttachment ?? "cross-platform",
         enumerable: true,
         configurable: true,
       },
