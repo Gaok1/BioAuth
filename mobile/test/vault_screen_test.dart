@@ -29,11 +29,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(SensitiveContent), findsOneWidget);
+    // Sensitivity follows the lock, not the screen's existence. It marks the
+    // whole window, and the vault is built on every tab from launch by the
+    // `IndexedStack` in the shell -- so registering it unconditionally blacked
+    // out the entire app under any screen recording or mirror, from the first
+    // frame, forever. A locked vault has nothing on screen to hide.
+    expect(find.byType(SensitiveContent), findsNothing);
     expect(find.text('O cofre está bloqueado'), findsOneWidget);
     await tester.tap(find.text('Desbloquear'));
     await tester.pumpAndSettle();
     expect(find.text('Example'), findsOneWidget);
+    expect(find.byType(SensitiveContent), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'missing');
     await tester.pump();
@@ -113,6 +119,10 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(find.text('O cofre está bloqueado'), findsOneWidget);
+    // And the window is recordable again on the way out, not only on the way
+    // in: a registration that is never given back is the same permanent
+    // blackout by a slower route.
+    expect(find.byType(SensitiveContent), findsNothing);
   });
 }
 

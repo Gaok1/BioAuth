@@ -67,38 +67,64 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  /// Marks the window unrecordable, and does it without wrapping anything.
+  ///
+  /// `SensitiveContent` marks the whole *window*, not the subtree it wraps, so
+  /// what it encloses is irrelevant to the effect and a zero-sized sibling buys
+  /// the same protection. Wrapping the screen with it cost two things that a
+  /// sibling does not. It renders `SizedBox.shrink()` until the platform
+  /// answers, and re-registers whenever the widget changes, so anything inside
+  /// blinks out for a round trip on each change. And it kept the vault's
+  /// sensitivity tied to the vault being *built*, which under the
+  /// `IndexedStack` in [HomeShell] it always is: every tab, from launch,
+  /// whether or not the vault had ever been opened. Under an active media
+  /// projection -- a screen recording, a cast, `scrcpy` or any other mirror --
+  /// that blacked out the entire app permanently, Dispositivos and Ajustes
+  /// along with it, with nothing on screen to say why.
+  ///
+  /// Tied to the lock instead, which is when secrets are actually on screen. A
+  /// locked vault hides nothing worth hiding.
+  Widget _sensitivity() => controller.locked
+      ? const SizedBox.shrink()
+      : const SensitiveContent(
+          sensitivity: ContentSensitivity.sensitive,
+          child: SizedBox.shrink(),
+        );
+
   @override
-  Widget build(BuildContext context) => SensitiveContent(
-    sensitivity: ContentSensitivity.sensitive,
-    child: _shielded
-        ? const ColoredBox(color: Colors.black, child: SizedBox.expand())
-        : Scaffold(
-            appBar: AppBar(
-              title: const Text('Cofre'),
-              actions: [
-                if (!controller.locked) ...[
-                  IconButton(
-                    tooltip: 'Backup do cofre',
-                    onPressed: _backup,
-                    icon: const Icon(Icons.backup_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Bloquear cofre',
-                    onPressed: controller.lock,
-                    icon: const Icon(Icons.lock_outline),
-                  ),
+  Widget build(BuildContext context) => Stack(
+    children: [
+      _shielded
+          ? const ColoredBox(color: Colors.black, child: SizedBox.expand())
+          : Scaffold(
+              appBar: AppBar(
+                title: const Text('Cofre'),
+                actions: [
+                  if (!controller.locked) ...[
+                    IconButton(
+                      tooltip: 'Backup do cofre',
+                      onPressed: _backup,
+                      icon: const Icon(Icons.backup_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Bloquear cofre',
+                      onPressed: controller.lock,
+                      icon: const Icon(Icons.lock_outline),
+                    ),
+                  ],
                 ],
-              ],
+              ),
+              floatingActionButton: controller.locked
+                  ? null
+                  : FloatingActionButton(
+                      tooltip: 'Novo item',
+                      onPressed: () => _edit(),
+                      child: const Icon(Icons.add),
+                    ),
+              body: controller.locked ? _locked() : _unlocked(),
             ),
-            floatingActionButton: controller.locked
-                ? null
-                : FloatingActionButton(
-                    tooltip: 'Novo item',
-                    onPressed: () => _edit(),
-                    child: const Icon(Icons.add),
-                  ),
-            body: controller.locked ? _locked() : _unlocked(),
-          ),
+      _sensitivity(),
+    ],
   );
 
   /// Scrolls, because everything on it grows with the system font.
