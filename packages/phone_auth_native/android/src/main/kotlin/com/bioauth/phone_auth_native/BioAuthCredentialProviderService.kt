@@ -81,24 +81,7 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
                     .flatMap { option -> passwordEntries(caller, option) }
                 val entries: List<CredentialEntry> = passwords + request.beginGetCredentialOptions
                     .filterIsInstance<BeginGetPublicKeyCredentialOption>()
-                    .flatMap { option ->
-                        val options = core.requestOptions(option.requestJson)
-                        validator.validate(options.rpId, caller)
-                        core.credentialsFor(options).map { record ->
-                            PublicKeyCredentialEntry.Builder(
-                                this,
-                                record.userName,
-                                credentialEntryPendingIntent(
-                                    this,
-                                    WebAuthnCredentialActivity.ACTION_GET,
-                                    record.credentialId,
-                                ),
-                                option,
-                            ).setDisplayName(record.userDisplayName)
-                                .setLastUsedTime(Instant.ofEpochMilli(record.createdAtMillis))
-                                .build()
-                        }
-                    }
+                    .flatMap { option -> passkeyEntries(caller, option) }
                 if (!cancellationSignal.isCanceled) callback.onResult(BeginGetCredentialResponse(entries))
             }.onFailure {
                 if (!cancellationSignal.isCanceled) {
@@ -107,6 +90,50 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
             }
         }
     }
+
+    /**
+     * The passkeys offered for one option, or none.
+     *
+     * Isolated per option, and that is the point. A single request carries
+     * every option the caller will accept, and validating a relying party is
+     * not a local decision: for an ordinary app it fetches `assetlinks.json`
+     * over the network on a three-second timeout, every time a field gains
+     * focus. A phone that is offline, a site that publishes no statement, one
+     * malformed option among several -- each of those throws, and with one
+     * `runCatching` around the whole response each of them turned the request
+     * into `onError`.
+     *
+     * What that cost was not only the passkeys. The vault's password entry is
+     * found first, from a local file, and it went into the same list: a
+     * password already in hand was discarded because an unrelated passkey
+     * lookup could not reach a server. From the outside the vault had stopped
+     * offering to fill anything, on sites it had never had a passkey for.
+     *
+     * An option that cannot be validated now contributes nothing and says
+     * nothing, which is the safe direction: offering no passkey rather than
+     * one whose relying party was never confirmed.
+     */
+    private fun passkeyEntries(
+        caller: CallingAppInfo,
+        option: BeginGetPublicKeyCredentialOption,
+    ): List<CredentialEntry> = runCatching {
+        val options = core.requestOptions(option.requestJson)
+        validator.validate(options.rpId, caller)
+        core.credentialsFor(options).map { record ->
+            PublicKeyCredentialEntry.Builder(
+                this,
+                record.userName,
+                credentialEntryPendingIntent(
+                    this,
+                    WebAuthnCredentialActivity.ACTION_GET,
+                    record.credentialId,
+                ),
+                option,
+            ).setDisplayName(record.userDisplayName)
+                .setLastUsedTime(Instant.ofEpochMilli(record.createdAtMillis))
+                .build()
+        }
+    }.getOrDefault(emptyList())
 
     /**
      * One entry, offered whenever a vault exists at all.
