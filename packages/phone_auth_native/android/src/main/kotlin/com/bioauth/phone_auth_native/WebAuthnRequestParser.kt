@@ -68,13 +68,27 @@ internal object WebAuthnRequestParser {
         // vocabulary stays closed -- a value outside the four the spec defines is
         // still a malformed request -- and what comes back is still `fmt: "none"`.
         root.optionalEnum("attestation", ATTESTATION_VALUES)
-        val extensions = root.optionalObject("extensions")
-        val reportCredentialProperties = extensions?.let {
-            require(it.keys().asSequence().all { name -> name == "credProps" }) {
-                "Unsupported WebAuthn extension"
-            }
-            it.optionalBoolean("credProps") ?: false
-        } ?: false
+        // An extension this authenticator does not implement is ignored, not
+        // refused -- the same rule `attestation` and `authenticatorAttachment`
+        // above are held to, and for the same reason. WebAuthn defines client
+        // extensions as inputs a client processes when it can and ignores when
+        // it cannot; a relying party is required to cope with an output that
+        // never came back. Refusing them ended whole ceremonies over something
+        // optional, before any key was touched, so the site reported an
+        // authenticator that would not do it.
+        //
+        // The two that reach real requests are U2F migration hints this
+        // authenticator has no part in: `appidExclude` here, which GitHub
+        // sends on registration, and `appid` on the assertion side. The
+        // desktop extension already strips both, acting as the WebAuthn client
+        // it stands in for. Nothing does that in front of Credential Manager,
+        // which is why the same sites failed on the phone's own browser and
+        // nowhere else.
+        //
+        // `credProps` is the one this provider answers, so it is still read
+        // strictly: present and not a boolean is a malformed request.
+        val reportCredentialProperties =
+            root.optionalObject("extensions")?.optionalBoolean("credProps") ?: false
 
         return WebAuthnCreationOptions(
             rpId = rpId,
@@ -97,9 +111,17 @@ internal object WebAuthnRequestParser {
         require(json.length in 2..65536) { "Invalid WebAuthn assertion request" }
         val root = JSONObject(json)
         root.optionalEnum("userVerification", USER_VERIFICATION_VALUES)
-        root.optionalObject("extensions")?.let {
-            require(!it.keys().hasNext()) { "Unsupported WebAuthn extension" }
-        }
+        // Still required to be an object, then ignored -- see `creation`.
+        //
+        // This is the path where refusing them was worst, because it failed
+        // silently. `onBeginGetCredentialRequest` parses every option before
+        // it looks up a single credential, so one unrecognised extension threw
+        // the whole request out and the provider returned an error instead of
+        // entries. What that looks like on the phone is not an error: it is
+        // PhoneAuth simply not being among the passkeys the picker offers,
+        // with nothing on screen to say why. Registration on the same site
+        // worked, because registration sends different extensions.
+        root.optionalObject("extensions")
         return WebAuthnRequestOptions(
             rpId = validRpId(root.requiredString("rpId")),
             challenge = challenge(root.requiredString("challenge")),

@@ -145,10 +145,54 @@ internal class WebAuthnRequestParserTest {
             )
         }
 
+        // An extension this provider does not implement is ignored, and the
+        // one it does is still read. Refusing the rest is what kept PhoneAuth
+        // out of the passkey picker on sites that send U2F migration hints:
+        // `appidExclude` on registration, `appid` on sign-in. The desktop
+        // extension strips both as the WebAuthn client it stands in for, so
+        // this only ever failed on the phone's own browser, where Credential
+        // Manager hands the site's JSON straight through.
+        val ignored = WebAuthnRequestParser.creation(
+            """{
+              "rp":{"id":"example.org","name":"Example"},
+              "user":{"id":"AQ","name":"alice"},
+              "challenge":"$challenge",
+              "pubKeyCredParams":[{"type":"public-key","alg":-7}],
+              "extensions":{
+                "appidExclude":"https://example.org/u2f",
+                "credProps":true,
+                "largeBlob":{"support":"required"},
+                "prf":{}
+              }
+            }""",
+        )
+        assertTrue(ignored.reportCredentialProperties)
+
+        // The assertion side of the same rule, and the one that was silent: a
+        // request carrying `appid` was thrown out before any credential was
+        // looked up, so the provider returned no entries at all.
+        val asserted = WebAuthnRequestParser.request(
+            """{
+              "rpId":"example.org",
+              "challenge":"$challenge",
+              "userVerification":"required",
+              "extensions":{"appid":"https://example.org/u2f","uvm":true}
+            }""",
+        )
+        assertEquals("example.org", asserted.rpId)
+
+        // Malformed stays malformed: `extensions` is an object, and the one
+        // extension this provider answers is a boolean.
+        for (malformed in listOf(
+            """{"rpId":"example.org","challenge":"$challenge","extensions":"appid"}""",
+        )) {
+            assertFailsWith<IllegalArgumentException> { WebAuthnRequestParser.request(malformed) }
+        }
+
         for (unsupported in listOf(
             "\"authenticatorSelection\":{\"authenticatorAttachment\":\"roaming\"}",
             "\"attestation\":\"whatever\"",
-            "\"extensions\":{\"largeBlob\":{\"support\":\"required\"}}",
+            "\"extensions\":{\"credProps\":\"yes\"}",
         )) {
             assertFailsWith<IllegalArgumentException> {
                 WebAuthnRequestParser.creation(
