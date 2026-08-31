@@ -13,6 +13,8 @@ import androidx.credentials.GetCredentialResponse
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
 import androidx.credentials.exceptions.CreateCredentialUnknownException
+import androidx.credentials.exceptions.domerrors.InvalidStateError
+import androidx.credentials.exceptions.publickeycredential.CreatePublicKeyCredentialDomException
 import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.provider.CallingAppInfo
 import androidx.credentials.provider.PendingIntentHandler
@@ -59,6 +61,12 @@ class WebAuthnCredentialActivity : FragmentActivity() {
             runCatching {
                 val options = core.creationOptions(request.requestJson)
                 val client = validatedClient(options.rpId, caller, request.clientDataHash)
+                // Before the prompt, not after. A site that excludes a
+                // credential it already has is saying "this device is already
+                // registered", and the answer to that costs no fingerprint.
+                if (core.isExcluded(options)) {
+                    throw ExcludedCredentialException("A credential excluded by the relying party already exists")
+                }
                 options to client
             }.onSuccess { (options, client) ->
                 runOnUiThread {
@@ -68,10 +76,10 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                         description = NO_BACKUP_WARNING,
                         crypto = null,
                         onSuccess = { finishCreate(core.create(options, client)) },
-                        onFailure = { failCreate("Biometric verification failed") },
+                        onFailure = { failCreateWith(it) },
                     )
                 }
-            }.onFailure { failCreate("Relying party validation failed") }
+            }.onFailure { failCreateWith(it) }
         }
     }
 
@@ -104,7 +112,12 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                                 finishGet(core.finishAssertion(prepared.copy(signature = signature)))
                             }
                         },
-                        onFailure = { failGet("Biometric verification failed") },
+                        onFailure = {
+                            failGet(
+                                if (it == null) "Biometric verification failed"
+                                else "The passkey could not be used",
+                            )
+                        },
                     )
                 }
             }.onFailure { failGet("Relying party validation failed") }
@@ -117,7 +130,12 @@ class WebAuthnCredentialActivity : FragmentActivity() {
         description: String?,
         crypto: BiometricPrompt.CryptoObject?,
         onSuccess: (BiometricPrompt.AuthenticationResult) -> Unit,
-        onFailure: () -> Unit,
+        // Null means the prompt itself failed; anything else is what the work
+        // after a successful prompt threw. They used to arrive the same way,
+        // so a keystore that would not sign, a store that would not write and
+        // a relying party exclusion were all reported as "biometric
+        // verification failed" -- blaming the finger that had just worked.
+        onFailure: (Throwable?) -> Unit,
     ) {
         var completed = false
         prompt = BiometricPrompt(
@@ -127,14 +145,14 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     if (!completed) {
                         completed = true
-                        runCatching { onSuccess(result) }.onFailure { onFailure() }
+                        runCatching { onSuccess(result) }.onFailure { onFailure(it) }
                     }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     if (!completed) {
                         completed = true
-                        onFailure()
+                        onFailure(null)
                     }
                 }
             },
@@ -176,6 +194,38 @@ class WebAuthnCredentialActivity : FragmentActivity() {
         )
         setResult(Activity.RESULT_OK, result)
         finish()
+    }
+
+    /**
+     * A creation that did not happen, named as precisely as WebAuthn allows.
+     *
+     * An excluded credential has its own name in the specification --
+     * `InvalidStateError` -- and it is the one a relying party reads to say
+     * "this device is already registered" rather than showing the same failure
+     * it shows for everything else. Returned as a `DomException` so Credential
+     * Manager hands the browser that name instead of an unknown error.
+     *
+     * A null error is the prompt itself failing. Anything else is the work
+     * after a prompt that succeeded, which is not the finger's fault and no
+     * longer says it was.
+     */
+    private fun failCreateWith(error: Throwable?) {
+        if (error is ExcludedCredentialException) {
+            runOnUiThread {
+                val result = Intent()
+                PendingIntentHandler.setCreateCredentialException(
+                    result,
+                    CreatePublicKeyCredentialDomException(InvalidStateError()),
+                )
+                setResult(Activity.RESULT_OK, result)
+                finish()
+            }
+            return
+        }
+        failCreate(
+            if (error == null) "Biometric verification failed"
+            else "The passkey could not be created",
+        )
     }
 
     private fun failCreate(message: String) {

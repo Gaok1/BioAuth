@@ -23,6 +23,16 @@ internal data class WebAuthnClientData(
     val attachment: String = ATTACHMENT_PLATFORM,
 )
 
+/**
+ * The relying party already has a credential it told us to exclude.
+ *
+ * A distinct type because WebAuthn gives this outcome a distinct name:
+ * `InvalidStateError`, which is what lets a site say "you already registered
+ * this device" instead of showing the same failure it shows for everything
+ * else. Flattened into the generic error, that sentence is unreachable.
+ */
+internal class ExcludedCredentialException(message: String) : IllegalStateException(message)
+
 internal const val ATTACHMENT_PLATFORM = "platform"
 internal const val ATTACHMENT_CROSS_PLATFORM = "cross-platform"
 
@@ -52,13 +62,33 @@ internal class WebAuthnCore(
                 request.allowedCredentialIds.any { it.contentEquals(credential.credentialId) }
         }.filter { runCatching { keyStore.publicKey(it.keyAlias) }.isSuccess }
 
+    /**
+     * Whether the relying party already holds a credential it asked to exclude.
+     *
+     * Separate from [create] so the answer can be had before the biometric
+     * prompt. Asking afterwards meant a person put their finger on the sensor
+     * and was then told the ceremony was refused for a reason that was already
+     * knowable -- and, because a throw out of the prompt's success callback is
+     * indistinguishable from the prompt failing, told it in the words
+     * "biometric verification failed".
+     */
+    fun isExcluded(options: WebAuthnCreationOptions): Boolean =
+        options.excludedCredentialIds.any { excluded ->
+            store.allForRp(options.rpId).any { it.credentialId.contentEquals(excluded) }
+        }
+
     fun create(
         options: WebAuthnCreationOptions,
         client: WebAuthnClientData,
     ): String {
-        require(options.excludedCredentialIds.none { excluded ->
-            store.allForRp(options.rpId).any { it.credentialId.contentEquals(excluded) }
-        }) { "A credential excluded by the relying party already exists" }
+        // Checked again here, and deliberately: the caller checks first so it
+        // can refuse without a prompt, but this is the invariant, and a second
+        // caller that forgets must not be the way it breaks.
+        if (isExcluded(options)) {
+            throw ExcludedCredentialException(
+                "A credential excluded by the relying party already exists",
+            )
+        }
 
         val credentialId = ByteArray(32).also(random::nextBytes)
         val alias = WebAuthnKeyStore.ALIAS_PREFIX + Ctap2Encoder.sha256(credentialId).hex()
