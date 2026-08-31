@@ -28,7 +28,18 @@ class WebAuthnCredentialActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState != null) return
+        // A recreated activity has already asked, or was never asked: starting
+        // over would raise a second prompt for a request that is gone. But
+        // returning here left an activity that never called `finish()` and has
+        // no content view of its own on screen -- a blank rectangle over the
+        // browser that answers nothing, until Credential Manager gives up on
+        // it. Rotating the phone, or toggling dark mode, while the passkey
+        // prompt was up was enough to reach it. Cancel out instead, which is
+        // what the unknown-action branch below already does.
+        if (savedInstanceState != null) {
+            finishCanceled()
+            return
+        }
         when (intent.action) {
             ACTION_CREATE -> beginCreate()
             ACTION_GET -> beginGet()

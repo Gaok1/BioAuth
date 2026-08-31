@@ -38,8 +38,18 @@ class VaultCredentialActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A recreated activity has already asked, or was never asked. Starting
-        // over would raise a second prompt for a request that is gone.
-        if (savedInstanceState != null) return
+        // over would raise a second prompt for a request that is gone -- but
+        // returning without finishing left this activity on screen, and it has
+        // no content view at all: the vault prompt became a blank rectangle
+        // that answers nothing and never goes away, while the app that asked
+        // waits for a result that is never set. A configuration change with
+        // the prompt up -- a rotation, dark mode, a font-size change -- is the
+        // whole reproduction. `fail()` is the same answer every other dead end
+        // here gives, and it releases the caller.
+        if (savedInstanceState != null) {
+            fail()
+            return
+        }
 
         val request = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
         val caller = request?.callingAppInfo
