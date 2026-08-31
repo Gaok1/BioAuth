@@ -96,6 +96,22 @@ class UsbCableTransport implements AuthTransport {
   /// How many addresses are probed at once.
   final int probeConcurrency;
 
+  /// The cable address that last completed a handshake, if any.
+  ///
+  /// The sweep runs on every paired connect, and this transport wraps *every*
+  /// connection on Android rather than only the boot one -- so with tethering
+  /// on, a desktop reachable at its saved address still paid a full sweep
+  /// before that address was ever tried. With a cable attached and nothing
+  /// listening that is 253 probes, eight batches of them, before the request
+  /// even reaches the phone's screen.
+  ///
+  /// A tether hands out the same address to the same computer far more often
+  /// than not, so remembering the one that worked turns the ordinary reconnect
+  /// into a single probe. It is only ever a hint: it is dropped the moment it
+  /// stops answering, it is ignored when re-tethering moves the subnet out
+  /// from under it, and the handshake still decides who is on the other end.
+  String? _lastAnswered;
+
   @override
   TransportSecurityProperties get securityProperties =>
       _link.securityProperties;
@@ -120,16 +136,19 @@ class UsbCableTransport implements AuthTransport {
     if (expectation is PairedVerifier) {
       for (final candidate in await cableEndpoints(peer.transportId)) {
         try {
-          return await _link.connect(
+          final outcome = await _link.connect(
             TransportPeer(
               transportId: candidate,
               displayName: peer.displayName,
             ),
             expectation,
           );
+          _lastAnswered = candidate;
+          return outcome;
         } on Object {
           // Accepting TCP is not being the computer. Keep going, and keep the
           // saved address as the answer.
+          if (candidate == _lastAnswered) _lastAnswered = null;
         }
       }
     }
@@ -159,6 +178,18 @@ class UsbCableTransport implements AuthTransport {
 
     final hosts = [for (final link in links) ...subnetHosts(link)];
     if (hosts.isEmpty) return const [];
+
+    // The one that worked last time, on its own and first. Checked against the
+    // hosts of the links that exist *now*, so a re-tether that moved the
+    // subnet drops it rather than probing an address that is no longer on any
+    // cable. One probe answered here is the whole search.
+    final remembered = _lastAnswered;
+    if (remembered != null) {
+      final host = remembered.substring(0, remembered.lastIndexOf(':'));
+      if (hosts.contains(host) && await _probe(host, port, probeTimeout)) {
+        return ['$host:$port'];
+      }
+    }
 
     final found = <String>[];
     for (var index = 0; index < hosts.length; index += probeConcurrency) {

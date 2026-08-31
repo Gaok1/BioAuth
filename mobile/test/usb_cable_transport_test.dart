@@ -122,6 +122,65 @@ void main() {
     },
   );
 
+  /// The sweep runs on every paired connect, and this transport wraps every
+  /// connection on Android -- not only the boot one. With tethering on, a
+  /// desktop that answers at the far end of the subnet cost a full sweep every
+  /// time, before the request even reached the screen.
+  test('the address that worked is tried on its own next time', () async {
+    final probed = <String>[];
+    // Deliberately far from the phone, so a sweep is long and obvious.
+    const computer = '192.168.42.200:8765';
+    final link = _RecordingLink(succeedsFor: {computer});
+    final transport = build(
+      link,
+      links: const [CableLink(address: '192.168.42.129', prefixLength: 24)],
+      answering: {computer},
+      probed: probed,
+    );
+
+    await transport.connect(saved, PairedVerifier(identity));
+    expect(link.dialled, [computer]);
+    expect(probed.length, greaterThan(1), reason: 'the first time is a sweep');
+
+    probed.clear();
+    await transport.connect(saved, PairedVerifier(identity));
+
+    expect(probed, [computer], reason: 'one probe, not a sweep');
+    expect(link.dialled, [computer, computer]);
+  });
+
+  /// Only ever a hint. Android randomises the tether prefix, so an address
+  /// remembered from the last cable can belong to no link at all now.
+  test('a remembered address outside the current cable is dropped', () async {
+    const first = '192.168.42.200:8765';
+    final probed = <String>[];
+    final link = _RecordingLink(succeedsFor: {first, '10.0.0.2:8765'});
+    // One transport, and the cable underneath it changes -- which is the whole
+    // point: a new instance would have nothing remembered and would pass this
+    // without testing anything.
+    final cables = <CableLink>[
+      const CableLink(address: '192.168.42.129', prefixLength: 24),
+    ];
+    final transport = build(
+      link,
+      links: cables,
+      answering: {first, '10.0.0.2:8765'},
+      probed: probed,
+    );
+    await transport.connect(saved, PairedVerifier(identity));
+    expect(link.dialled, [first]);
+
+    // Re-tethered onto a different subnet. The remembered address is not a
+    // host of the link that exists now, so it is dropped rather than probed.
+    cables
+      ..clear()
+      ..add(const CableLink(address: '10.0.0.1', prefixLength: 30));
+    probed.clear();
+    await transport.connect(saved, PairedVerifier(identity));
+
+    expect(probed, ['10.0.0.2:8765']);
+  });
+
   test('pairing stays on the endpoint the code committed to', () async {
     final probed = <String>[];
     final link = _RecordingLink(succeedsFor: {saved.transportId});
