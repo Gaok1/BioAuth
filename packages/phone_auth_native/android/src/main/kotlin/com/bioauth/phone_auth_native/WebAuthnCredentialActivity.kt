@@ -137,6 +137,16 @@ class WebAuthnCredentialActivity : FragmentActivity() {
         // verification failed" -- blaming the finger that had just worked.
         onFailure: (Throwable?) -> Unit,
     ) {
+        // Logged and ignored rather than thrown: `authenticate` returns
+        // without a prompt and without a callback once the fragment manager
+        // has saved state, and both ways out of this activity are callbacks.
+        // It would sit there answering nothing until Credential Manager gave
+        // up on it. Reported as work that failed, not as a fingerprint that
+        // did -- there was never a prompt to put one on.
+        if (supportFragmentManager.isStateSaved) {
+            onFailure(IllegalStateException("The screen cannot show a prompt right now"))
+            return
+        }
         var completed = false
         prompt = BiometricPrompt(
             this,

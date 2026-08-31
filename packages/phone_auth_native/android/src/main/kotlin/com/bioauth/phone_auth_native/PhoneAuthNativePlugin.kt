@@ -189,11 +189,7 @@ class PhoneAuthNativePlugin :
             result.error("biometric_unavailable", "Strong biometrics are unavailable", null)
             return
         }
-        val fragmentActivity = activity as? FragmentActivity
-        if (fragmentActivity == null) {
-            result.error("activity_unavailable", "A foreground FragmentActivity is required", null)
-            return
-        }
+        val fragmentActivity = promptHost(result) ?: return
         val request = runCatching { SignArguments.parse(arguments) }.getOrElse {
             result.error("invalid_arguments", it.message, null)
             return
@@ -241,11 +237,7 @@ class PhoneAuthNativePlugin :
             result.error("biometric_unavailable", "Strong biometrics are unavailable", null)
             return
         }
-        val fragmentActivity = activity as? FragmentActivity
-        if (fragmentActivity == null) {
-            result.error("activity_unavailable", "A foreground FragmentActivity is required", null)
-            return
-        }
+        val fragmentActivity = promptHost(result) ?: return
         val map = arguments as? Map<*, *>
         val kind = map?.get("kind") as? String
         val identifier = map?.get("identifier") as? String
@@ -507,11 +499,7 @@ class PhoneAuthNativePlugin :
             result.error("biometric_unavailable", "Strong biometrics are unavailable", null)
             return
         }
-        val fragmentActivity = activity as? FragmentActivity
-        if (fragmentActivity == null) {
-            result.error("activity_unavailable", "A foreground FragmentActivity is required", null)
-            return
-        }
+        val fragmentActivity = promptHost(result) ?: return
         val cipher = runCatching(cipherOf).getOrElse {
             result.error("key_not_found", keyUnavailableMessage, null)
             return
@@ -929,6 +917,48 @@ class PhoneAuthNativePlugin :
 
     private fun publicKeyResponse(bytes: ByteArray): Map<String, Any> =
         mapOf("publicKey" to bytes, "algorithm" to DeviceKeyStore.PUBLIC_KEY_ALGORITHM)
+
+    /**
+     * The activity a prompt can actually be raised on, or null having already
+     * answered [result].
+     *
+     * `BiometricPrompt.authenticate` does not throw when it cannot start. It
+     * writes "Unable to start authentication. Called after
+     * onSaveInstanceState()." to the log and returns, having added no fragment
+     * and scheduled no callback -- so neither `onAuthenticationSucceeded` nor
+     * `onAuthenticationError` ever runs. Every caller here sets
+     * `pendingResult` immediately before that call and relies on one of the
+     * two to give it back.
+     *
+     * The result was a silent, permanent wedge. The Dart future for that
+     * operation never completed, and because `pendingResult` stayed set, every
+     * later biometric operation in the process -- authorizing a request,
+     * wrapping or unwrapping a locker or LUKS key, deleting a passkey --
+     * answered `operation_in_progress` instead of raising a prompt. Nothing
+     * released it short of the activity being destroyed. Reaching it took only
+     * backgrounding the app, or rotating it, in the instant after the tap that
+     * asks for the fingerprint.
+     *
+     * Checked here, in the same main-thread turn as the `authenticate` that
+     * follows, so state cannot be saved in between. A refusal the caller can
+     * see and retry, instead of a prompt that never appears.
+     */
+    private fun promptHost(result: MethodChannel.Result): FragmentActivity? {
+        val host = activity as? FragmentActivity
+        if (host == null) {
+            result.error("activity_unavailable", "A foreground FragmentActivity is required", null)
+            return null
+        }
+        if (host.supportFragmentManager.isStateSaved) {
+            result.error(
+                "activity_unavailable",
+                "The screen cannot show a prompt right now",
+                null,
+            )
+            return null
+        }
+        return host
+    }
 
     private fun finishWithSuccess(value: Any) {
         val result = pendingResult ?: return

@@ -131,6 +131,18 @@ class WebAuthnRelayActivity : FragmentActivity() {
         claimBeforeOperation: Boolean = false,
         finishOperation: (BiometricPrompt.AuthenticationResult) -> String,
     ) {
+        // `authenticate` does not throw when it cannot start: it logs "Called
+        // after onSaveInstanceState()" and returns, having raised no prompt
+        // and scheduled no callback. Every path out of this activity runs from
+        // one of those two callbacks, so nothing would finish it and nothing
+        // would answer the desktop, which waits out its whole deadline. The
+        // window is not small -- relying-party validation runs first and can
+        // spend three seconds fetching `assetlinks.json` -- so putting the
+        // phone down after starting the ceremony is enough to reach it.
+        if (supportFragmentManager.isStateSaved) {
+            fail("The screen cannot show a prompt right now")
+            return
+        }
         var completed = false
         prompt = BiometricPrompt(
             this,
