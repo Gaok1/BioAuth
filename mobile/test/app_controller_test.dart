@@ -95,6 +95,57 @@ void main() {
     expect(device.isBlockedAt(now), isTrue);
   });
 
+  test('phases of long-finished requests are forgotten, live ones never', () {
+    // `requests` empties as decisions are made and `auditEntries` is capped,
+    // but the phase map was neither, and it is rebuilt whole on every phase
+    // change -- so an unattended desktop that keeps asking and giving up grew
+    // it without limit and made every later ceremony copy the lot. Spaced a
+    // minute apart so each one is its own window: the flood guard refuses
+    // before a phase is ever recorded, which is not the path being measured.
+    final controller = container.read(appControllerProvider.notifier);
+    AuthenticationRequest asking(int index, DateTime at) =>
+        AuthenticationRequest(
+          requestId: 'asking-$index',
+          verifierId: 'desktop-casa',
+          verifierName: 'Desktop-Casa',
+          credentialId: 'desktop-casa-login-v1',
+          challenge: Uint8List.fromList(List<int>.filled(32, index % 256)),
+          origin: 'BLE pareado',
+          service: 'SSH',
+          action: 'Login',
+          resource: 'server-$index',
+          user: 'alice',
+          issuedAt: at,
+          expiresAt: at.add(const Duration(minutes: 1)),
+          sessionBinding: Uint8List(32),
+        );
+
+    DateTime at(int index) => now.add(Duration(minutes: index + 1));
+
+    // One that stays on screen, raised before the flood that follows it.
+    controller.receive(asking(0, at(0)), at: at(0));
+
+    for (var i = 1; i <= maxRequestPhases * 2; i++) {
+      controller.receive(asking(i, at(i)), at: at(i));
+      controller.withdraw('asking-$i', at: at(i));
+    }
+
+    final state = container.read(appControllerProvider);
+    expect(state.requestPhases.length, maxRequestPhases);
+    // Kept because it is still listed, not because it is recent: it is the
+    // oldest entry in the map and everything around it has been dropped.
+    expect(state.requests.map((request) => request.id), contains('asking-0'));
+    expect(
+      state.requestPhases['asking-0'],
+      ConnectionPhase.authenticationPending,
+    );
+    expect(state.requestPhases.containsKey('asking-1'), isFalse);
+    expect(
+      state.requestPhases['asking-${maxRequestPhases * 2}'],
+      ConnectionPhase.expired,
+    );
+  });
+
   test('a repeat folded into a sheet is answered, not left hanging', () async {
     // Running `sudo` twice inside the guard's window is the ordinary way to
     // make one: the fingerprint covers the verifier, credential, service,

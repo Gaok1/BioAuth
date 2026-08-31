@@ -26,6 +26,19 @@ final phoneAuthenticatorProvider = Provider<PhoneAuthenticator>(
 /// nobody was going to read.
 const int maxAuditEntries = 200;
 
+/// How many request phases are remembered, for the same reason and against the
+/// same traffic as [maxAuditEntries].
+///
+/// A decision empties the request out of `requests` and files one bounded row
+/// in `auditEntries`, but its phase stayed in the map for as long as the app
+/// ran, and so did the phase of every request that was blocked, revoked or
+/// withdrawn. The unattended case the audit bound was written for -- a desktop
+/// that keeps asking and giving up -- files one of these too, and nothing
+/// collected them. The map is also rebuilt whole on every phase change, so the
+/// cost was not only the memory: each step of each ceremony copied every entry
+/// the phone had ever seen.
+const int maxRequestPhases = 200;
+
 final appControllerProvider = NotifierProvider<AppController, AppState>(
   AppController.new,
 );
@@ -160,12 +173,15 @@ class AppController extends Notifier<AppState> {
       return;
     }
 
+    final requests = [...state.requests, request];
     state = state.copyWith(
-      requests: List.unmodifiable([...state.requests, request]),
-      requestPhases: Map.unmodifiable({
-        ...state.requestPhases,
-        request.id: ConnectionPhase.authenticationPending,
-      }),
+      requests: List.unmodifiable(requests),
+      requestPhases: Map.unmodifiable(
+        _prunedPhases({
+          ...state.requestPhases,
+          request.id: ConnectionPhase.authenticationPending,
+        }, requests),
+      ),
     );
   }
 
@@ -319,8 +335,37 @@ class AppController extends Notifier<AppState> {
 
   void _setRequestPhase(String id, ConnectionPhase phase) {
     state = state.copyWith(
-      requestPhases: Map.unmodifiable({...state.requestPhases, id: phase}),
+      requestPhases: Map.unmodifiable(
+        _prunedPhases({...state.requestPhases, id: phase}, state.requests),
+      ),
     );
+  }
+
+  /// [phases], with the oldest finished entries forgotten.
+  ///
+  /// A finished request's phase has a real reader: the screen still open on it
+  /// shows the outcome after the card has left the list, and telling those two
+  /// apart is what separates "denied" from "Solicitação indisponível". So the
+  /// entry cannot be dropped when the request is answered -- only once it is
+  /// far enough back that nobody is still looking at it.
+  ///
+  /// Anything still listed is kept whatever the bound says: a live request
+  /// losing its phase would strand the sheet that is up.
+  Map<String, ConnectionPhase> _prunedPhases(
+    Map<String, ConnectionPhase> phases,
+    Iterable<AuthenticationRequest> live,
+  ) {
+    if (phases.length <= maxRequestPhases) return phases;
+    final listed = {for (final request in live) request.id};
+    final excess = phases.length - maxRequestPhases;
+    var dropped = 0;
+    // Insertion order is first-seen order, so the entries this walks past
+    // first are the oldest -- which is the right end to lose.
+    return {
+      for (final entry in phases.entries)
+        if (listed.contains(entry.key) || dropped++ >= excess)
+          entry.key: entry.value,
+    };
   }
 
   void _finish(
@@ -329,11 +374,15 @@ class AppController extends Notifier<AppState> {
     AuditOutcome outcome,
     DateTime at,
   ) {
-    final phases = {...state.requestPhases, request.id: phase};
+    final requests = state.requests
+        .where((candidate) => candidate.id != request.id)
+        .toList(growable: false);
+    final phases = _prunedPhases({
+      ...state.requestPhases,
+      request.id: phase,
+    }, requests);
     state = state.copyWith(
-      requests: List.unmodifiable(
-        state.requests.where((candidate) => candidate.id != request.id),
-      ),
+      requests: List.unmodifiable(requests),
       requestPhases: Map.unmodifiable(phases),
       auditEntries: List.unmodifiable(
         [
