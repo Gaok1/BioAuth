@@ -60,6 +60,41 @@ void main() {
     expect(controller.error, contains('não apague'));
   });
 
+  /// The store will not create the key before Android 11, and the plugin's
+  /// minSdk is 24 -- so this is a phone the app installs on and then cannot
+  /// open a vault on, ever. Retrying is not a way out and the button that
+  /// invites it has to go; discarding is not one either, because the key was
+  /// never created and there is nothing stored to throw away.
+  test(
+    'a phone too old for the vault is told so, and offered no retry',
+    () async {
+      final controller = await failing('unsupported_android');
+
+      expect(controller.unrecoverable, isTrue);
+      expect(controller.canDiscard, isFalse);
+      expect(controller.error, contains('Android 11'));
+    },
+  );
+
+  /// The store separates these from a cancellation, and both are ordinary
+  /// things to try again: a lockout, a timeout, an expired authentication.
+  /// They used to arrive as the generic failure, which says to give up.
+  test(
+    'a biometric that did not complete is a retry, not a dead end',
+    () async {
+      for (final code in const [
+        'authentication_failed',
+        'authentication_required',
+      ]) {
+        final controller = await failing(code);
+
+        expect(controller.unrecoverable, isFalse, reason: code);
+        expect(controller.canDiscard, isFalse, reason: code);
+        expect(controller.error, contains('biometria'), reason: code);
+      }
+    },
+  );
+
   test(
     'a concurrent operation is reported as one, not as a vault failure',
     () async {

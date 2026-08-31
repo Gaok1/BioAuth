@@ -396,6 +396,14 @@ class VaultController extends ChangeNotifier {
         'key_invalidated',
         'store_corrupt',
         'store_version_unsupported',
+        // The vault needs a Keystore key bound to a strong biometric, which
+        // the store refuses to create before Android 11. The plugin's minSdk
+        // is 24, so this is a device the app installs on perfectly happily and
+        // then cannot open a vault on -- and it is not a failure that a retry
+        // reaches. Left out of this set it took the generic message and kept
+        // the "Desbloquear" button live, so the answer to tapping it was to
+        // tap it again.
+        'unsupported_android',
       }.contains(failure.code);
 
       // A store written by a newer build is unreadable *here* and perfectly
@@ -408,8 +416,24 @@ class VaultController extends ChangeNotifier {
 
       error = switch (failure.code) {
         'authentication_cancelled' => 'Autenticação cancelada.',
+        // Not the same as cancelling, and the store already tells them apart:
+        // this is the prompt ending on its own -- a lockout after too many
+        // attempts, a timeout, a sensor that failed to read. Retrying is the
+        // right thing to do and the generic message did not say so.
+        'authentication_failed' =>
+          'Não foi possível confirmar sua biometria. Tente de novo em '
+              'instantes.',
+        // `UserNotAuthenticatedException`: the key is auth-per-use and the
+        // authentication behind it has expired. Also a retry.
+        'authentication_required' =>
+          'Confirme sua biometria para abrir o cofre.',
         'biometric_unavailable' =>
           'Cadastre uma biometria forte para usar o cofre.',
+        // Permanent on this phone, and not a reason to destroy anything --
+        // there is nothing stored yet, because the key was never created.
+        'unsupported_android' =>
+          'O cofre precisa do Android 11 ou mais novo. Este aparelho não '
+              'consegue guardar a chave com a proteção que o cofre exige.',
         'revision_conflict' =>
           'Este item mudou. Atualize o cofre e tente novamente.',
         'operation_in_progress' =>
