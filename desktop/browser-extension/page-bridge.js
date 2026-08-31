@@ -151,6 +151,18 @@
       publicKey.rpId ??= location.hostname;
     }
     return new Promise((resolve, reject) => {
+      // A signal that is already aborted never fires `abort` again, so the
+      // listener installed below would never run: the request went to the
+      // phone anyway and raised a biometric prompt for a ceremony the page had
+      // already given up on, and the promise then settled on whatever the
+      // person did about it. Both algorithms check this first and reject with
+      // the signal's own reason. Sites reach it by reusing one controller
+      // across an autofill attempt and the button that replaces it, which is
+      // the ordinary shape of a passkey sign-in page.
+      if (options.signal?.aborted) {
+        reject(options.signal.reason ?? new DOMException("Aborted", "AbortError"));
+        return;
+      }
       if (!framePermits(operation)) {
         reject(new DOMException(
           "This frame is not allowed to use PhoneAuth passkeys",

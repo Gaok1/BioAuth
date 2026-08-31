@@ -186,6 +186,26 @@ test('page bridge handles abort, timeout, iframe policy, and native fallback', a
   await assert.rejects(aborted, { name: 'AbortError' });
   assert.equal(typeof cancelled, 'string');
 
+  // Already aborted before the call: the listener the bridge installs would
+  // never fire, so without an up-front check the phone was asked to approve a
+  // ceremony the page had abandoned. Nothing may reach it, and the rejection
+  // carries the signal's own reason.
+  const settled = page();
+  let reached = false;
+  settled.document.addEventListener('bioauth-webauthn-request', () => { reached = true; });
+  const already = new AbortController();
+  const reason = new DOMException('gone', 'AbortError');
+  already.abort(reason);
+  await assert.rejects(
+    settled.credentials.get({ publicKey: { challenge: Uint8Array.of(1) }, signal: already.signal }),
+    (error) => error === reason,
+  );
+  await assert.rejects(
+    settled.credentials.create({ publicKey: { challenge: Uint8Array.of(1) }, signal: already.signal }),
+    (error) => error === reason,
+  );
+  assert.equal(reached, false);
+
   const timingOut = page({ setTimeout: (callback) => queueMicrotask(callback) });
   await assert.rejects(
     timingOut.credentials.get({ publicKey: { challenge: Uint8Array.of(1), timeout: 1 } }),
