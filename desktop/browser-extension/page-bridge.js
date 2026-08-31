@@ -243,18 +243,49 @@
     Object.defineProperty(platformAuthenticator, "isUserVerifyingPlatformAuthenticatorAvailable", {
       value: async () => true,
     });
+    // The same question about conditional mediation, asked the older way, and
+    // the way nearly every site still asks it -- `getClientCapabilities` is
+    // recent enough that answering only there leaves the common path reading
+    // the browser's `true`. Both have to say the same thing, and the thing
+    // they have to say is no: see the note below for why a capability of the
+    // browser's own authenticator is the wrong answer once `get` no longer
+    // reaches it. Defined only where the engine has it, so feature detection
+    // still sees the engine it is running on.
+    if (platformAuthenticator.isConditionalMediationAvailable) {
+      Object.defineProperty(platformAuthenticator, "isConditionalMediationAvailable", {
+        value: async () => false,
+      });
+    }
     // Newer engines ask the same thing through one dictionary instead. Merged
-    // over the browser's answer rather than replacing it: the capabilities this
-    // bridge does not speak for stay the browser's to report -- conditional
-    // mediation above all, which `get` deliberately hands back to the browser's
-    // own authenticator. Only defined when the engine has it, so that feature
-    // detection still sees the engine it is actually running on.
+    // over the browser's answer rather than replacing it, so a capability this
+    // bridge does not speak for stays the browser's to report. Only defined
+    // when the engine has it, so that feature detection still sees the engine
+    // it is actually running on.
+    //
+    // `conditionalGet` is answered `false`, and that is the one that decides
+    // whether a site ever reaches this bridge at all. Letting the browser's
+    // `true` through was reporting a capability of an authenticator the page
+    // can no longer get to: `get` is overridden here, and a conditional call
+    // is handed back to the browser's own authenticator, which holds none of
+    // the passkeys this product creates. A site that asks the question and
+    // believes the answer -- Google's sign-in among them -- then drives its
+    // whole passkey flow through autofill, the request never leaves the
+    // browser, the phone is never asked, and nothing appears anywhere to say
+    // why. Registration on the same site works, because `create` has no
+    // conditional mode, which makes the failure read as anything but this.
+    //
+    // Answering `false` sends those sites down the modal path, which this
+    // bridge does serve. The cost is a passkey held by the browser's own
+    // authenticator on that site: it was already unreachable through the modal
+    // `get` this bridge took over, and autofill was its last route. That is
+    // the trade, and it is one line to reverse.
     if (nativeCapabilities) {
       Object.defineProperty(platformAuthenticator, "getClientCapabilities", {
         value: async () => Object.fromEntries(Object.entries({
           ...(await nativeCapabilities().catch(() => ({}))),
           userVerifyingPlatformAuthenticator: true,
           passkeyPlatformAuthenticator: true,
+          conditionalGet: false,
           "extension:appid": true,
           "extension:appidExclude": true,
           "extension:credProps": true,

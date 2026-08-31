@@ -376,7 +376,8 @@ real, e ele é um só por sessão.
   um dos lados não faz o par passar sozinho.
 - Limitações confirmadas em código: plugin iOS é scaffold, native host depende
   de instalação por script sem smoke test de navegador, conditional mediation
-  usa o autenticador nativo,
+  usa o autenticador nativo e é reportada como indisponível em
+  `getClientCapabilities()` para que os sites escolham o caminho modal,
   passkeys são device-bound sem backup/sync e o locker não trava páginas.
 - Pendências preservadas: LUKS/initrd, Windows Credential
   Provider, SSH, smoke test dos artefatos, testes destrutivos do locker e

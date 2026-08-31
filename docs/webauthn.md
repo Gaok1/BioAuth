@@ -151,7 +151,13 @@ account. A desktop request without `allowCredentials` shows an account chooser
 on the phone when more than one passkey matches, then initializes the selected
 key's biometric signature. `mediation: "conditional"` is deliberately left to
 the browser's native authenticator instead of being intercepted by the desktop
-extension; PhoneAuth does not claim conditional mediation in this release.
+extension; PhoneAuth does not claim conditional mediation in this release, and
+`getClientCapabilities()` reports `conditionalGet: false` to say so — even
+where the browser itself reports true, because the authenticator that true
+describes is the one `get` was taken away from. Sites that ask before choosing
+a path then take the modal one, which is the path the extension serves. The
+cost is a passkey held by the browser's own authenticator on the same site:
+autofill was its last route, the modal one having already been intercepted.
 
 ## Desktop installation
 

@@ -13,7 +13,13 @@ class CustomEvent extends Event {
   }
 }
 
-function page({ topLevel = true, permits = true, setTimeout = global.setTimeout, capabilities } = {}) {
+function page({
+  topLevel = true,
+  permits = true,
+  setTimeout = global.setTimeout,
+  capabilities,
+  conditional,
+} = {}) {
   const document = new EventTarget();
   document.permissionsPolicy = { allowsFeature: () => permits };
   const native = {
@@ -23,12 +29,16 @@ function page({ topLevel = true, permits = true, setTimeout = global.setTimeout,
   const credentials = { ...native };
   const window = {};
   // The engine's own answers, which the bridge has to leave standing wherever
-  // it does not speak for the capability itself. `getClientCapabilities` is
-  // only defined when the caller asks for it: engines older than Chrome 133 do
-  // not have it, and the bridge must not invent it for them.
+  // it does not speak for the capability itself. `getClientCapabilities` and
+  // `isConditionalMediationAvailable` are only defined when the caller asks
+  // for them: engines older than Chrome 133 lack the first and engines older
+  // than Chrome 108 lack the second, and the bridge must not invent either.
   class PublicKeyCredential {}
   PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = async () => false;
   if (capabilities) PublicKeyCredential.getClientCapabilities = async () => ({ ...capabilities });
+  if (conditional !== undefined) {
+    PublicKeyCredential.isConditionalMediationAvailable = async () => conditional;
+  }
   window.top = topLevel ? window : {};
   const context = vm.createContext({
     ArrayBuffer,
@@ -243,11 +253,32 @@ test('page bridge answers that a platform authenticator is available', async () 
   // Absent in the engine, absent afterwards: feature detection has to keep
   // seeing the engine it is really running on.
   assert.equal(plain.PublicKeyCredential.getClientCapabilities, undefined);
+  assert.equal(plain.PublicKeyCredential.isConditionalMediationAvailable, undefined);
 
-  // Newer engines ask for every capability at once. Ours are asserted; the rest
-  // stay the browser's to answer -- conditional mediation above all, because
-  // `get` hands that case straight back to the browser's own authenticator, so
-  // claiming it here would promise something this bridge never handles.
+  // The older, and still far more widely asked, form of the conditional
+  // question. A browser that says yes is answering for its own authenticator,
+  // and `get` hands conditional calls back to precisely that authenticator --
+  // which holds none of this product's passkeys. A site that believes the yes
+  // puts its whole passkey flow in autofill, where nothing reaches the phone
+  // and nothing raises an error. Answering here and not in
+  // `getClientCapabilities` would leave the common path unfixed, so both say
+  // no together.
+  const autofilling = page({ conditional: true });
+  assert.equal(await autofilling.PublicKeyCredential.isConditionalMediationAvailable(), false);
+
+  // Newer engines ask for every capability at once. Ours are asserted; anything
+  // this bridge does not speak for stays the browser's to answer -- here,
+  // `hybridTransport` passes through untouched.
+  //
+  // `conditionalGet` is asserted *false*, over a browser that says true. The
+  // browser is answering for its own authenticator, and `get` hands conditional
+  // calls back to exactly that authenticator -- which holds none of the
+  // passkeys this product creates. Letting the true through told sites the
+  // autofill path worked, so a site that leads with it (Google's sign-in) put
+  // its whole passkey flow there: nothing reached the phone and nothing
+  // reported an error, while registration on the same site kept working
+  // because `create` has no conditional mode. False sends those sites to the
+  // modal path this bridge actually serves.
   const modern = page({
     capabilities: {
       userVerifyingPlatformAuthenticator: false,
@@ -259,7 +290,7 @@ test('page bridge answers that a platform authenticator is available', async () 
   assert.deepEqual({ ...(await modern.PublicKeyCredential.getClientCapabilities()) }, {
     userVerifyingPlatformAuthenticator: true,
     passkeyPlatformAuthenticator: true,
-    conditionalGet: true,
+    conditionalGet: false,
     hybridTransport: false,
     'extension:appid': true,
     'extension:appidExclude': true,
