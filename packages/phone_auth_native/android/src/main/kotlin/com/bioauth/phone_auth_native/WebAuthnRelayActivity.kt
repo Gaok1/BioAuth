@@ -57,6 +57,13 @@ class WebAuthnRelayActivity : FragmentActivity() {
         val options = core.creationOptions(optionsJson)
         RpIdValidator.requireOriginMatchesRpId(origin, options.rpId, publicSuffixes)
         val client = relayClientData(origin, optionsJson)
+        // Before the prompt. `core.create` checks too, but it runs from the
+        // prompt's success callback -- so asking there meant the phone lit up,
+        // the person authenticated, and the desktop then reported a refusal
+        // that was knowable before any of it.
+        if (core.isExcluded(options)) {
+            throw ExcludedCredentialException("A credential excluded by the relying party already exists")
+        }
         runOnUiThread {
             if (cancelled) return@runOnUiThread
             authenticate(
