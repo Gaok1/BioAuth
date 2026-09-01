@@ -9,6 +9,13 @@ const String _fetchResponseVector =
     '8401666974656d2d3103781c636f727265637420686f7273652062617474657279'
     '20737461706c65';
 
+/// Mesmo vetor, agora para o pedido de gravação. O `create` é o payload onde
+/// discordar é pior: um campo lido no offset errado guarda a senha com o nome
+/// de outra entrada. Fixado em `phone-auth-protocol::vault`.
+const String _createRequestVector =
+    '87016b576f726b73746174696f6e016e5265636f7665727920636f64657360'
+    '6069313131312d32323232';
+
 String _hex(Uint8List bytes) =>
     bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
@@ -69,6 +76,7 @@ void main() {
       name: 'Recovery codes',
       secret: '1111-2222',
     );
+    expect(_hex(create.encode()), _createRequestVector);
     final decodedCreate = VaultCreateRequest.decode(create.encode());
     expect(decodedCreate.kind, VaultItemKind.note);
     expect(decodedCreate.username, '');

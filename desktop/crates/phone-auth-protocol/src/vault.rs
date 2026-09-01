@@ -690,6 +690,17 @@ mod tests {
 
     /// Pins the bytes the Dart side has to reproduce. A change here is a
     /// protocol change and must move `mobile/` in the same commit.
+    const CREATE_REQUEST_HEX: &str = concat!(
+        "87",                             // array(7)
+        "01",                             // schema 1
+        "6b", "576f726b73746174696f6e",   // "Workstation"
+        "01",                             // kind: note
+        "6e", "5265636f7665727920636f646573", // "Recovery codes"
+        "60",                             // username: ""
+        "60",                             // uri: ""
+        "69", "313131312d32323232",       // "1111-2222"
+    );
+
     #[test]
     fn a_fetch_response_pins_its_bytes() {
         assert_eq!(
@@ -699,6 +710,30 @@ mod tests {
                 "20737461706c65"
             )
         );
+    }
+
+    /// The request that carries a password, pinned the way the fetch reply is.
+    ///
+    /// `vault.create` was the one vault payload with no cross-language vector:
+    /// the Dart side only decoded what it had just encoded, which proves the
+    /// two halves of one implementation agree and nothing about whether the
+    /// other language does. It is also the payload where disagreement is worst
+    /// -- a field read at the wrong offset here is a password stored under the
+    /// wrong name, or a name stored as the password.
+    ///
+    /// The same fixture is asserted from the phone in
+    /// `mobile/test/vault_payloads_test.dart`.
+    #[test]
+    fn a_create_request_pins_its_bytes() {
+        let request = CreateRequest {
+            verifier_name: "Workstation".into(),
+            kind: ItemKind::Note,
+            name: "Recovery codes".into(),
+            username: String::new(),
+            uri: String::new(),
+            secret: "1111-2222".into(),
+        };
+        assert_eq!(to_hex(&request.encode()), CREATE_REQUEST_HEX);
     }
 
     #[test]
