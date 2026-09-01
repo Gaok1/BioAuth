@@ -9,6 +9,21 @@ const _channel = MethodChannel('bioauth/vault_store');
 /// a slow vault, it is a vault that stops opening.
 const int maxVaultItems = 4096;
 
+/// How long each field of an item may be, in UTF-16 code units.
+///
+/// Not local preferences. The native store checks the same four numbers, the
+/// protocol crate on the desktop checks them again before it will encode a
+/// request, and Dart's `String.length` counts the same units both of those do.
+/// They live here because this file is the one the app already treats as the
+/// authority on what a vault holds, and because they were written out as bare
+/// literals in two Dart files: the import preview exists precisely to turn a
+/// row the store would refuse into a line number, and it can only do that
+/// while its idea of "too long" is the store's.
+const int maxVaultNameLength = 255;
+const int maxVaultUsernameLength = 255;
+const int maxVaultUriLength = 1024;
+const int maxVaultSecretLength = 4096;
+
 enum VaultItemKind {
   login,
   note,
@@ -403,17 +418,22 @@ class NativeVaultStore extends VaultStore {
   }
 
   static void _validate(VaultItemInput item) {
-    if (item.name.isEmpty || item.name.length > 255) {
-      throw ArgumentError.value(item.name, 'name', 'use de 1 a 255 caracteres');
+    if (item.name.isEmpty || item.name.length > maxVaultNameLength) {
+      throw ArgumentError.value(
+        item.name,
+        'name',
+        'use de 1 a $maxVaultNameLength caracteres',
+      );
     }
-    if (item.username.length > 255 || item.uri.length > 1024) {
+    if (item.username.length > maxVaultUsernameLength ||
+        item.uri.length > maxVaultUriLength) {
       throw ArgumentError('Usuário ou endereço grande demais');
     }
-    if (item.secret.isEmpty || item.secret.length > 4096) {
+    if (item.secret.isEmpty || item.secret.length > maxVaultSecretLength) {
       throw ArgumentError.value(
         item.secret.length,
         'secret.length',
-        'use de 1 a 4096 caracteres',
+        'use de 1 a $maxVaultSecretLength caracteres',
       );
     }
   }

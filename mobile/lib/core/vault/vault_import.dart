@@ -28,10 +28,14 @@ import '../../features/vault/vault_store.dart';
 
 /// The store refuses anything longer, so refusing here gives the user a row
 /// number instead of a failure part-way through a write.
-const int _maxName = 255;
-const int _maxUsername = 255;
-const int _maxUri = 1024;
-const int _maxSecret = 4096;
+// The store's numbers, not a second opinion about them. A preview that
+// accepted a row the store refuses would hand the user a green dialog and
+// then fail part-way into the vault, which is the one thing this file exists
+// to prevent.
+const int _maxName = maxVaultNameLength;
+const int _maxUsername = maxVaultUsernameLength;
+const int _maxUri = maxVaultUriLength;
+const int _maxSecret = maxVaultSecretLength;
 
 /// Above this a file is not an export, and parsing it would spend the phone's
 /// memory finding that out.
