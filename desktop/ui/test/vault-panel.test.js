@@ -291,6 +291,76 @@ test('a copy names the revision of the row on screen', async () => {
   assert.match(harness.element('vault-note').textContent, /limpa em \d+s/);
 });
 
+test('a copy still in flight survives the list being re-rendered', async () => {
+  // The wait is however long someone takes to approve on their phone, and a
+  // keystroke in the search box rebuilds every row from `vaultItems`. The
+  // button that was disabled and reading "no telefone…" was a detached node
+  // after that, and the row on screen was a fresh one: enabled, and inviting
+  // a second press for a copy already under way.
+  // Every copy is held, not just the first. A second one getting through is
+  // the regression this test is for, and a fake that could only answer one
+  // would hang on it instead of failing.
+  const held = [];
+  const release = () => {
+    for (const resolve of held.splice(0)) {
+      resolve({
+        length: 18,
+        clearsAtMs: Date.now() + 45000,
+        historyExcluded: true,
+        cloudExcluded: true,
+        memoryLocked: true,
+      });
+    }
+  };
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.list') {
+        return { items: [item], deviceName: 'Pixel', development: false };
+      }
+      if (method === 'vault.copy') {
+        return new Promise((resolve) => held.push(resolve));
+      }
+      return {};
+    },
+  });
+
+  const [copy] = await openVault(harness);
+  const copying = copy.emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // Anything that re-renders. A search is the cheapest one a person does.
+  harness.element('vault-search').emit('input');
+  const [redrawn] = harness
+    .element('vault-items')
+    .children.flatMap((entry) => entry.children)
+    .flatMap((row) => row.children)
+    .filter((node) => node.dataset && node.dataset.copy);
+
+  assert.equal(redrawn.disabled, true, 'the redrawn row invited a second press');
+  assert.equal(redrawn.textContent, 'no telefone…');
+
+  // And pressing it anyway asks the phone nothing further. Not awaited: a
+  // press that does get through starts a copy that only `release` below can
+  // settle, and awaiting it here would deadlock the test rather than fail it.
+  redrawn.emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    harness.calls.filter((entry) => entry.method === 'vault.copy').length,
+    1,
+    'a second press raised a second approval sheet for one copy'
+  );
+
+  release();
+  await copying;
+  const [settled] = harness
+    .element('vault-items')
+    .children.flatMap((entry) => entry.children)
+    .flatMap((row) => row.children)
+    .filter((node) => node.dataset && node.dataset.copy);
+  assert.equal(settled.disabled, false);
+  assert.equal(settled.textContent, 'copiado');
+});
+
 test('a copy does not send the phone back for a whole new listing', async () => {
   // A listing is not free on the phone. The metadata lives inside the
   // encrypted blob and the key is auth-per-use, so re-listing raises a

@@ -390,6 +390,19 @@ startPolling();
 let vaultItems = null;
 let vaultLoading = false;
 
+/// The row waiting on the phone, and the last row that was copied.
+///
+/// Held here rather than on the button, because the button does not outlive
+/// the wait. A copy takes as long as someone takes to approve on their phone,
+/// and anything that re-renders the list in that window -- a keystroke in the
+/// search box is enough -- rebuilds every row from `vaultItems`. The button
+/// that was disabled and reading "no telefone…" was then a detached node: the
+/// row on screen was a fresh one, enabled, inviting a second press for a copy
+/// already in flight, which is a second approval sheet on the phone for one
+/// press of one button.
+let vaultCopying = null;
+let vaultCopied = null;
+
 function vaultNote(text, kind) {
   const note = el('vault-note');
   note.textContent = text;
@@ -467,7 +480,14 @@ function renderVault() {
 
     const copy = node('button', 'tag', 'copiar');
     copy.dataset.copy = item.id;
-    copy.addEventListener('click', () => copyItem(item, copy));
+    // Re-applied on every render, so the state survives one.
+    if (vaultCopying === item.id) {
+      copy.disabled = true;
+      copy.textContent = 'no telefone…';
+    } else if (vaultCopied === item.id) {
+      copy.textContent = 'copiado';
+    }
+    copy.addEventListener('click', () => copyItem(item));
     row.appendChild(copy);
     entry.appendChild(row);
 
@@ -508,9 +528,13 @@ function clipboardNote(result, opening) {
   );
 }
 
-async function copyItem(item, button) {
-  button.disabled = true;
-  button.textContent = 'no telefone…';
+async function copyItem(item) {
+  // One at a time. The agent serialises these anyway, so a second press only
+  // ever bought a second sheet on the phone for a copy already under way.
+  if (vaultCopying) return;
+  vaultCopying = item.id;
+  vaultCopied = null;
+  renderVault();
   vaultNote(`Aprove no telefone: ${item.name}.`);
   try {
     // The revision of the row that is on screen. If the phone answers with a
@@ -520,16 +544,16 @@ async function copyItem(item, button) {
       itemId: item.id,
       expectedRevision: item.revision,
     });
+    vaultCopied = item.id;
     vaultNote(clipboardNote(result, 'Copiado.'));
-    button.textContent = 'copiado';
   } catch (error) {
     // A refusal on the phone, a stale revision and a missing item all arrive
     // as the same code. Saying which one it was is not something this window
     // is able to do, so it does not guess.
     vaultNote(error.message, 'bad');
-    button.textContent = 'copiar';
   } finally {
-    button.disabled = false;
+    vaultCopying = null;
+    renderVault();
     // No automatic re-listing here. It used to run a second after every copy,
     // to keep each row's revision fresh, on the grounds that a listing cost
     // nothing anybody would notice. That stopped being true: the metadata
