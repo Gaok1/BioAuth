@@ -28,8 +28,8 @@ use crate::api::{
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
     LuksEnrollParams, LuksEnrollResult, PairingBootstrap, PermissionSummary, SshSignParams,
     SshSignResult, StatusPayload, VaultCopyParams, VaultCopyResult, VaultCreateParams,
-    VaultCreateResult, VaultFillParams,
-    VaultFillResult, VaultItem, VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
+    VaultCreateResult, VaultFillParams, VaultFillResult, VaultItem, VaultListParams,
+    VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::clipboard;
@@ -40,8 +40,8 @@ use crate::secret_memory::SecretBuffer;
 use crate::transport::{Transport, TransportAvailability, TransportRegistry};
 use phone_auth_protocol::ssh;
 
-use crate::ssh_client::PhoneSsh;
 use crate::password::{self, Policy};
+use crate::ssh_client::PhoneSsh;
 use crate::vault::{self, NewItem, PhoneVault, VaultError};
 use phone_auth_protocol::vault::ItemKind;
 
@@ -1335,7 +1335,7 @@ impl Service {
                 .into_iter()
                 .filter(|item| {
                     matches!(item.kind, phone_auth_protocol::vault::ItemKind::Login)
-                        && origin_host(&item.uri).as_deref() == Some(host.as_str())
+                        && item_host(&item.uri).as_deref() == Some(host.as_str())
                 })
                 .collect::<Vec<_>>(),
             Err(error) => {
@@ -1441,8 +1441,8 @@ impl Service {
         let development = session.security().is_development;
         let length = secret.chars().count();
 
-        let written = PhoneVault::new(&mut session, self.config.verifier_name.clone()).create(
-            NewItem {
+        let written =
+            PhoneVault::new(&mut session, self.config.verifier_name.clone()).create(NewItem {
                 kind: ItemKind::Login,
                 name: params.name.clone(),
                 username: params.username.clone(),
@@ -1451,8 +1451,7 @@ impl Service {
                 // request that wipes on drop, and `Zeroizing` clears the one
                 // it was cloned from when this function returns.
                 secret: secret.to_string(),
-            },
-        );
+            });
         let _ = session.close();
 
         let written = match written {
@@ -1464,7 +1463,13 @@ impl Service {
             }
         };
 
-        self.record_vault(&written.item_id, "create", &device_name, development, Ok(()));
+        self.record_vault(
+            &written.item_id,
+            "create",
+            &device_name,
+            development,
+            Ok(()),
+        );
         Ok(VaultCreateResult {
             item_id: written.item_id,
             revision: written.revision,
@@ -1881,7 +1886,35 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
 /// userinfo — the classic way to make a host read as one thing and resolve as
 /// another — is discarded rather than parsed.
 fn origin_host(value: &str) -> Option<String> {
-    let rest = value.strip_prefix("https://")?;
+    authority_host(value.strip_prefix("https://")?)
+}
+
+/// The host in the address field of a stored item.
+///
+/// Looser than [`origin_host`], and only on the side the user types. Somebody
+/// filling in "endereço" writes `github.com`; `https://` is not part of what
+/// they think they are saying. The fill compared that field against a parsed
+/// origin, so an item saved the natural way matched nothing and autofill
+/// answered "no vault item for this site" -- which was not true, and was the
+/// only thing the person had to go on.
+///
+/// This widens nothing about which site a password can reach. The page's own
+/// origin is still parsed strictly, https only, and the two are compared by
+/// exact host equality: a scheme that never belonged to a browser tab cannot
+/// produce a host that matches one.
+fn item_host(value: &str) -> Option<String> {
+    let value = value.trim();
+    authority_host(match value.split_once("://") {
+        Some((_, rest)) => rest,
+        None => value,
+    })
+}
+
+/// The host in `authority[/path]`, lowercased, with userinfo and port removed.
+///
+/// Userinfo is the classic way to make a host read as one thing and resolve as
+/// another, so it is taken from the right of the last `@` rather than the left.
+fn authority_host(rest: &str) -> Option<String> {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     let host = authority
         .rsplit('@')
@@ -2369,6 +2402,52 @@ mod subscriber_tests {
             origin_host("https://bank.example@evil.example/"),
             Some("evil.example".to_owned())
         );
+    }
+
+    /// The address a person typed into the item, which is not an origin and
+    /// was never going to be one.
+    ///
+    /// `github.com` is what someone writes in a field labelled "endereço", and
+    /// requiring `https://` there meant every item saved that way matched no
+    /// site at all -- reported as "no vault item for this site", which reads as
+    /// the vault being empty rather than as the address being spelled a way the
+    /// agent would not read.
+    #[test]
+    fn an_item_address_may_be_written_the_way_a_person_writes_it() {
+        for written in [
+            "github.com",
+            "https://github.com",
+            "http://github.com/login",
+            "  github.com/login?next=/  ",
+            "github.com:8443",
+            "GitHub.com",
+        ] {
+            assert_eq!(
+                item_host(written),
+                Some("github.com".to_owned()),
+                "{written}"
+            );
+        }
+    }
+
+    /// Looser on the address does not mean looser on the match.
+    #[test]
+    fn a_lenient_address_still_matches_only_its_own_host() {
+        // Userinfo disguises nothing here either.
+        assert_eq!(
+            item_host("bank.example@evil.example/"),
+            Some("evil.example".to_owned())
+        );
+        // A sibling subdomain is still a different place to type a password.
+        assert_ne!(
+            item_host("blog.bank.example"),
+            item_host("login.bank.example")
+        );
+        // And a field holding something that is not an address at all matches
+        // nothing rather than matching loosely.
+        assert_eq!(item_host("minha senha do banco"), None);
+        assert_eq!(item_host(""), None);
+        assert_eq!(item_host("https://"), None);
     }
 
     /// Only https. A password typed over plain HTTP is a password on the wire,
