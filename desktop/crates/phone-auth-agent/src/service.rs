@@ -38,10 +38,11 @@ use crate::locker::PhoneCustodian;
 use crate::paths::Paths;
 use crate::secret_memory::SecretBuffer;
 use crate::transport::{Transport, TransportAvailability, TransportRegistry};
+use phone_auth_protocol::permissions::SyncRequest;
 use phone_auth_protocol::ssh;
 
 use crate::password::{self, Policy};
-use crate::permissions::{from_wire, PhonePermissions};
+use crate::permissions::{from_wire, to_wire, PhonePermissions};
 use crate::ssh_client::PhoneSsh;
 use crate::vault::{self, NewItem, PhoneVault, VaultError};
 use phone_auth_protocol::vault::ItemKind;
@@ -310,7 +311,7 @@ impl Service {
                 )
             })?;
 
-        credential.permissions = permissions
+        let next: Vec<Permission> = permissions
             .into_iter()
             .map(|permission| Permission {
                 service: permission.service,
@@ -319,6 +320,24 @@ impl Service {
                 user: permission.user,
             })
             .collect();
+
+        // Refused here so it is not refused later, by something nobody is
+        // looking at. The wire bounds a set -- sixty-four grants, no empty
+        // field, a payload that fits -- and this is the only place a person
+        // can write one that exceeds them. A set stored past those bounds is
+        // one the phone can never be told about: every settlement from then on
+        // dials the phone, wakes it, and fails on an edit made long before,
+        // while the desktop goes on enforcing grants the phone does not know
+        // it has.
+        SyncRequest {
+            verifier_name: self.config.verifier_name.clone(),
+            revision: 0,
+            permissions: next.iter().map(to_wire).collect(),
+        }
+        .validate()
+        .map_err(|error| ServiceError::new("invalid-permissions", error.to_string()))?;
+
+        credential.permissions = next;
         // Every local edit climbs, so the next sync can tell this set from the
         // phone's without either side having seen the other. Saturating rather
         // than wrapping: a counter that rolls over to zero is a set that loses
@@ -2410,6 +2429,60 @@ mod pairing_state_tests {
             .expect("credential")
             .permissions
             .is_empty());
+    }
+
+    /// A set the desktop can store but the sync can never carry is a pairing
+    /// that quietly stops settling.
+    ///
+    /// The wire bounds a set and this write path did not, so a grant with an
+    /// empty field -- or the sixty-fifth grant -- was accepted locally and then
+    /// refused by every settlement afterwards. Nothing tells the user: the
+    /// desktop goes on enforcing what it stored, the phone is never told, and
+    /// the failure surfaces on a later sync rather than on the edit that caused
+    /// it. So the bound belongs on the edit.
+    #[test]
+    fn an_edit_the_sync_could_never_carry_is_refused_where_it_is_made() {
+        let mut service = service("permission-bounds");
+        paired(&mut service);
+
+        service
+            .set_permissions("phone-1", "cred-1", vec![grant("sudo")])
+            .expect("a set within the bounds");
+
+        let empty_field = PermissionSummary {
+            service: "sudo".into(),
+            action: String::new(),
+            resource: policy::WILDCARD.into(),
+            user: policy::WILDCARD.into(),
+        };
+        let error = service
+            .set_permissions("phone-1", "cred-1", vec![empty_field])
+            .expect_err("an empty field is not a wildcard, and the wire refuses it");
+        assert_eq!(error.code, "invalid-permissions");
+
+        let too_many: Vec<PermissionSummary> = (0..65).map(|n| grant(&format!("s{n}"))).collect();
+        let error = service
+            .set_permissions("phone-1", "cred-1", too_many)
+            .expect_err("more grants than the wire carries");
+        assert_eq!(error.code, "invalid-permissions");
+
+        // Refused means unchanged: neither the set nor the revision moved, so
+        // a rejected edit cannot win a later tie against the phone either.
+        assert_eq!(
+            revision(&service),
+            1,
+            "a refused edit moved the revision it was refused for"
+        );
+        let stored = service
+            .verifier
+            .store()
+            .device("phone-1")
+            .expect("device")
+            .credential("cred-1")
+            .expect("credential")
+            .permissions
+            .clone();
+        assert_eq!(stored, vec![Permission::service("sudo")]);
     }
 
     /// Polling must not consume: one lost IPC reply used to make the code on
