@@ -6,7 +6,7 @@
 //! return non-zero. There is no "unknown" exit code that could be read as a
 //! pass.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
 use serde_json::{json, Value};
@@ -602,6 +602,18 @@ fn locker_attribute_warning(cli: &Cli, action: &str) -> Option<&'static str> {
     )
 }
 
+/// The name a batch writes one container's recovery code under.
+///
+/// Shared by the two places that have to agree about it: the lock path that
+/// builds the file, and the plan that refuses a batch where two of them would
+/// be the same file.
+fn recovery_stem(target: &str) -> String {
+    std::path::Path::new(target)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "container".to_owned())
+}
+
 /// Checks a batch and describes it, before anything connects or prompts.
 ///
 /// Everything here is a usage error, and usage errors have to come first: a
@@ -628,6 +640,36 @@ fn locker_batch_plan(cli: &Cli) -> Result<(), u8> {
             targets.len()
         );
         return Err(EXIT_USAGE);
+    }
+
+    // In a batch `--recovery-out` is a directory and each container's code is
+    // written to `<file name>.recovery` in it. Two targets with the same file
+    // name -- ordinary the moment a batch spans directories, which the summary
+    // below already anticipates by naming a common parent -- write the same
+    // path, and the second one overwrites the first. A recovery code is the
+    // only way into the container it belongs to without the phone, so the
+    // first container silently becomes one that cannot be opened that way, and
+    // the run reports "2 of 2 succeeded".
+    //
+    // Refused rather than worked around: renaming a file, or locking them into
+    // separate directories, is the user's decision and not one to guess at
+    // while holding their only copy of a recovery code. The name is derived
+    // exactly as the lock path derives it, lossy conversion included, so this
+    // sees the collisions that would actually happen and no others.
+    if action == "lock" {
+        let mut seen: BTreeMap<String, &str> = BTreeMap::new();
+        for target in targets {
+            let name = recovery_stem(target);
+            if let Some(first) = seen.insert(name.clone(), target) {
+                eprintln!(
+                    "phone-auth: {first} and {target} would both write                      {name}.recovery into --recovery-out, and the second would                      overwrite the first."
+                );
+                eprintln!(
+                    "phone-auth: a recovery code is the only way into its own                      container without the phone. Lock them separately, or into                      different directories."
+                );
+                return Err(EXIT_USAGE);
+            }
+        }
     }
 
     // Sizes are read before anything happens, so the summary describes the
@@ -764,10 +806,7 @@ fn locker_one(client: &mut AgentClient, cli: &Cli, action: &str, target: &str) -
             // belongs to and one file cannot hold twenty of them without the
             // user having to work out which line opens which container.
             let recovery_out = if cli.batch {
-                let stem = std::path::Path::new(target)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "container".to_owned());
+                let stem = recovery_stem(target);
                 let per_file = std::path::Path::new(recovery_out)
                     .join(format!("{stem}.recovery"))
                     .to_string_lossy()
@@ -2027,6 +2066,67 @@ Digests:
         ];
 
         assert_eq!(locker_batch_plan(&batch_cli(files, true)), Err(EXIT_USAGE));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The recovery code is the only way into its own container without the
+    /// phone, and in a batch every one of them is written into one directory
+    /// under the container's file name. Two files called the same thing in
+    /// different folders -- which is what a batch spanning directories is --
+    /// wrote the same path twice, and the run said "2 of 2 succeeded".
+    #[test]
+    fn a_batch_whose_recovery_codes_would_collide_is_refused() {
+        let dir =
+            std::env::temp_dir().join(format!("phoneauth-batch-clash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let files = ["one", "two"]
+            .iter()
+            .map(|folder| {
+                let path = dir.join(folder);
+                std::fs::create_dir_all(&path).expect("sandbox");
+                let file = path.join("notes.txt");
+                std::fs::write(&file, b"x").expect("write");
+                file.to_string_lossy().into_owned()
+            })
+            .collect::<Vec<_>>();
+
+        // The same two files under names that do not collide are fine, so the
+        // refusal is about the collision and not about the shape of the batch.
+        assert_eq!(
+            locker_batch_plan(&batch_cli(files.clone(), true)),
+            Err(EXIT_USAGE)
+        );
+
+        let renamed = dir.join("two").join("other.txt");
+        std::fs::rename(dir.join("two").join("notes.txt"), &renamed).expect("rename");
+        let spread = vec![files[0].clone(), renamed.to_string_lossy().into_owned()];
+        assert_eq!(locker_batch_plan(&batch_cli(spread, true)), Ok(()));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Only `lock` writes recovery codes, so a batch of unlocks with repeated
+    /// names has nothing to collide and must not be turned away.
+    #[test]
+    fn an_unlock_batch_is_not_checked_for_recovery_collisions() {
+        let dir =
+            std::env::temp_dir().join(format!("phoneauth-batch-unlock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let files = ["one", "two"]
+            .iter()
+            .map(|folder| {
+                let path = dir.join(folder);
+                std::fs::create_dir_all(&path).expect("sandbox");
+                let file = path.join("notes.txt.balock");
+                std::fs::write(&file, b"x").expect("write");
+                file.to_string_lossy().into_owned()
+            })
+            .collect::<Vec<_>>();
+
+        let mut cli = batch_cli(files, true);
+        cli.args[0] = "unlock".to_owned();
+        assert_eq!(locker_batch_plan(&cli), Ok(()));
 
         std::fs::remove_dir_all(&dir).ok();
     }
