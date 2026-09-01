@@ -429,6 +429,12 @@ class VaultController extends ChangeNotifier {
           'Confirme sua biometria para abrir o cofre.',
         'biometric_unavailable' =>
           'Cadastre uma biometria forte para usar o cofre.',
+        // The prompt could not be raised at all -- the app was on its way out
+        // of the foreground when the tap landed. Nothing is wrong with the
+        // vault and the next tap works, which the generic message did not say.
+        'activity_unavailable' =>
+          'O cofre não conseguiu abrir a confirmação. Volte para o aplicativo '
+              'e tente de novo.',
         // Permanent on this phone, and not a reason to destroy anything --
         // there is nothing stored yet, because the key was never created.
         'unsupported_android' =>

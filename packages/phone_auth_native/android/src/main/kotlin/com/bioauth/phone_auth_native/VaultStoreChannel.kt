@@ -180,8 +180,29 @@ internal class VaultStoreChannel(
         cleanup: (() -> Unit)? = null,
         operation: (Cipher) -> Unit,
     ) {
-        val fragmentActivity = activity as? FragmentActivity
-            ?: throw VaultStoreFailure("activity_unavailable", "A FragmentActivity is required for biometric authentication")
+        val host = activity as? FragmentActivity
+        // `BiometricPrompt.authenticate` does not throw when it cannot start:
+        // once the fragment manager has saved state it logs "Called after
+        // onSaveInstanceState()" and returns, raising no prompt and scheduling
+        // no callback. Both ways out of this channel are callbacks, so
+        // `pendingResult` and `operationInProgress` would stay claimed for the
+        // life of the process: the Dart side awaited a reply that never came,
+        // and every later vault operation answered `operation_in_progress`.
+        // Backgrounding the app in the instant after tapping "Desbloquear" was
+        // enough to lose the vault until the app was restarted.
+        if (host == null || host.supportFragmentManager.isStateSaved) {
+            // The caller's plaintext is its own to wipe and this is its only
+            // chance: nothing below runs to do it. Throwing past the cleanup
+            // left a decrypted buffer in the heap on the detached-activity
+            // path too, which was there before the check above joined it.
+            cleanup?.invoke()
+            throw VaultStoreFailure(
+                "activity_unavailable",
+                if (host == null) "A FragmentActivity is required for biometric authentication"
+                else "The screen cannot show a prompt right now",
+            )
+        }
+        val fragmentActivity = host
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 prompt = null
