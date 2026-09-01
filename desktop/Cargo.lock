@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-agent"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "bluer",
  "futures",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-cli"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "phone-auth-agent",
  "phone-auth-locker",
@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-initrd"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "phone-auth-protocol",
  "phone-auth-session",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-locker"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
@@ -783,14 +783,14 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-protocol"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "phone-auth-session"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "phone-auth-verifier"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "getrandom 0.2.17",
  "p256",
