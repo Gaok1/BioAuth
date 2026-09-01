@@ -1,0 +1,25 @@
+# The two Android trust snapshots are pinned by SHA-256 in
+# `packages/phone_auth_native/android/trust-snapshots.json`, and
+# `scripts/update_android_trust_snapshots.py` — which CI runs on every push —
+# hashes the file on disk and compares.
+#
+# Git for Windows defaults to `core.autocrlf=true`, so a plain clone rewrites
+# every LF in these files to CRLF on the way out. The blob in the repository
+# stays LF, the file on disk does not, and the digest of 943 changed line
+# endings is a different digest: the check fails on a clean checkout, for a
+# reason that has nothing to do with the trust data. This working tree was in
+# exactly that state — `git ls-files --eol` reported `i/lf w/crlf` — and it
+# only looked fine because the file had not been checked out since the script
+# last wrote it. CI never saw it because CI runs on Linux.
+#
+# `text eol=lf` rather than `-text`: the bytes are what matter, and they are
+# still text worth reading in a diff. What they must never be is
+# platform-dependent, because one of the two decides which apps may claim to
+# speak for a web origin and the other decides how far a passkey scopes.
+packages/phone_auth_native/android/src/main/res/raw/privileged_browsers.json text eol=lf
+packages/phone_auth_native/android/src/main/res/raw/public_suffix_list.dat text eol=lf
+
+# Byte-exact by construction: a sealed vault export the restore tests open.
+# Git already detects it as binary; saying so means that never depends on
+# whether a NUL happens to land in the first 8000 bytes.
+mobile/test/fixtures/vault-export-v1.bakv binary
