@@ -9,6 +9,7 @@
 const fs = require('fs');
 const net = require('net');
 const { EventEmitter } = require('events');
+const { StringDecoder } = require('string_decoder');
 
 const { endpointFile } = require('./paths');
 
@@ -81,6 +82,16 @@ class AgentConnection extends EventEmitter {
     this.socket = null;
     this.token = null;
     this.buffer = '';
+    // Not `chunk.toString('utf8')`. TCP splits wherever it likes, including
+    // between the two bytes of a `ç`, and decoding each chunk on its own turns
+    // whichever character straddles the boundary into replacement characters.
+    // The line still parses as JSON, so nothing fails: it is the item's *name*
+    // that comes back wrong, in an app whose every string is Portuguese, and
+    // only for answers big enough to be split -- which a vault listing is.
+    // `client.rs` never had this because `read_line` collects bytes to the
+    // newline and validates the whole line at once. This decoder is the same
+    // guarantee: it holds an incomplete sequence back until the rest arrives.
+    this.decoder = new StringDecoder('utf8');
     this.nextId = 1;
     this.pending = new Map();
     this.connected = false;
@@ -147,7 +158,7 @@ class AgentConnection extends EventEmitter {
   }
 
   consume(chunk) {
-    this.buffer += chunk.toString('utf8');
+    this.buffer += this.decoder.write(chunk);
     let newline;
     while ((newline = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, newline).trim();
@@ -204,6 +215,10 @@ class AgentConnection extends EventEmitter {
     }
     this.pending.clear();
     this.buffer = '';
+    // Replaced rather than kept: a decoder holding half a character from the
+    // socket that just died would prepend it to the first line of the next
+    // connection, which is the one line that has to parse.
+    this.decoder = new StringDecoder('utf8');
   }
 
   fail(reason) {

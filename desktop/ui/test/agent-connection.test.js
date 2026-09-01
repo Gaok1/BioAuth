@@ -186,6 +186,48 @@ test('a large reply that does terminate is still served', HANGS_WITHOUT_THE_FIX,
   assert.equal((await agent.call('status', {})).wide, wide);
 });
 
+test('a reply split inside a character is not corrupted', HANGS_WITHOUT_THE_FIX, async (t) => {
+  // The chunk boundaries are the operating system's to choose, and the one
+  // above -- 600 000 ASCII `w`s -- can be cut anywhere without harm. Every
+  // string this product shows a person is Portuguese, and decoding each chunk
+  // on its own turns whichever accented character straddles the split into
+  // replacement characters. Nothing fails: the line still parses, so the item
+  // simply comes back with the wrong name.
+  //
+  // Split deliberately in the middle of the two bytes of `í`, and with a gap
+  // so the kernel cannot coalesce the two writes back into one segment.
+  const name = 'Cofre físico — Notação';
+  const agent = await fakeAgent(t, {
+    onConnection: (socket) => {
+      socket.on('data', (chunk) => {
+        for (const line of chunk.toString('utf8').split('\n')) {
+          if (!line.trim()) continue;
+          const { id, method } = JSON.parse(line);
+          const reply = Buffer.from(
+            `${JSON.stringify({ id, ok: true, result: { name } })}\n`,
+            'utf8'
+          );
+          // Only the call under test is split. The `subscribe` the connect
+          // handler issues is answered whole, or its two halves interleave
+          // with these and the test would be measuring that instead.
+          if (method !== 'status') {
+            socket.write(reply);
+            continue;
+          }
+          const split = reply.indexOf(Buffer.from('í', 'utf8')) + 1;
+          assert.ok(split > 0, 'the split has to land inside a character');
+          socket.write(reply.subarray(0, split));
+          setTimeout(() => socket.write(reply.subarray(split)), 20);
+        }
+      });
+    },
+  });
+
+  agent.start();
+  await statusMatching(agent, (status) => status.connected);
+  assert.equal((await agent.call('status', {})).name, name);
+});
+
 test('a malformed endpoint file is reported, not thrown', () => {
   // Valid JSON, no usable port -- a half-written file, or one from a build that
   // spelled the field differently. `net.createConnection` throws synchronously
