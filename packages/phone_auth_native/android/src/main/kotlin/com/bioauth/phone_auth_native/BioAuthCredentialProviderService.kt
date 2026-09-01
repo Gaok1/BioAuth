@@ -53,7 +53,12 @@ class BioAuthCredentialProviderService : CredentialProviderService() {
                     options.userName,
                     credentialEntryPendingIntent(this, WebAuthnCredentialActivity.ACTION_CREATE, null),
                 ).setPublicKeyCredentialCount(core.credentialsFor(
-                    WebAuthnRequestOptions(options.rpId, options.challenge, emptyList()),
+                    WebAuthnRequestOptions(
+                        options.rpId,
+                        options.challenge,
+                        emptyList(),
+                        credentialsRestricted = false,
+                    ),
                 ).size).build()
                 callback.onResult(BeginCreateCredentialResponse(listOf(entry)))
             }.onFailure {

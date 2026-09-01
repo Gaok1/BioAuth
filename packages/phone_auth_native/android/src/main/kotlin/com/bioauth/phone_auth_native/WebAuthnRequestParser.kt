@@ -19,6 +19,17 @@ internal data class WebAuthnRequestOptions(
     val rpId: String,
     val challenge: ByteArray,
     val allowedCredentialIds: List<ByteArray>,
+    /**
+     * Whether the relying party named the credentials it will accept.
+     *
+     * Not the same question as whether [allowedCredentialIds] is empty, and
+     * that is the point: descriptors this authenticator has to ignore are
+     * dropped from that list, so a request naming three credentials of a type
+     * we do not support arrives here with nothing in it. An empty list means
+     * "any credential", and reading that request as one would widen a ceremony
+     * the relying party had scoped.
+     */
+    val credentialsRestricted: Boolean,
 )
 
 internal object WebAuthnRequestParser {
@@ -103,13 +114,11 @@ internal object WebAuthnRequestParser {
 
         return WebAuthnCreationOptions(
             rpId = rpId,
-            rpName = bounded(rp.optString("name", rpId), "rp.name", 128),
+            rpName = display(rp.optString("name").ifBlank { rpId }),
             userHandle = userHandle,
-            userName = bounded(user.requiredString("name"), "user.name", 128),
-            userDisplayName = bounded(
-                user.optString("displayName", user.requiredString("name")),
-                "user.displayName",
-                128,
+            userName = display(user.requiredString("name")),
+            userDisplayName = display(
+                user.optString("displayName").ifBlank { user.requiredString("name") },
             ),
             challenge = challenge,
             excludedCredentialIds = credentialIds(root.optJSONArray("excludeCredentials")),
@@ -137,6 +146,8 @@ internal object WebAuthnRequestParser {
             rpId = validRpId(root.requiredString("rpId")),
             challenge = challenge(root.requiredString("challenge")),
             allowedCredentialIds = credentialIds(root.optJSONArray("allowCredentials")),
+            credentialsRestricted =
+                (root.optJSONArray("allowCredentials")?.length() ?: 0) > 0,
         )
     }
 
@@ -208,19 +219,36 @@ internal object WebAuthnRequestParser {
      */
     private fun challenge(encoded: String): ByteArray = decode(encoded, "challenge")
 
+    /**
+     * The credential ids in a descriptor list, skipping what is not ours to act on.
+     *
+     * `allowCredentials` and `excludeCredentials` are lists a relying party
+     * writes for every authenticator at once, so an entry this one cannot use
+     * is an ordinary thing to find there, not a malformed request. WebAuthn
+     * says as much: a descriptor whose `type` the client does not recognise is
+     * to be ignored. Refusing the whole list instead meant one entry naming a
+     * credential type we do not implement -- or a list longer than a bound we
+     * invented -- cost the user the login they had a passkey for.
+     *
+     * Skipping is safe here because a descriptor we drop could never have
+     * matched: the ids this authenticator issues are a fixed size, and one that
+     * does not decode is not one of them. What it must not do is turn a scoped
+     * request into an open one, which is what `credentialsRestricted` is for.
+     */
     private fun credentialIds(array: JSONArray?): List<ByteArray> {
         if (array == null) return emptyList()
-        require(array.length() <= 64) { "Too many credential descriptors" }
-        return (0 until array.length()).map { index ->
-            val descriptor = array.optJSONObject(index)
-                ?: throw IllegalArgumentException("credential descriptor is invalid")
-            require(descriptor.optString("type") == "public-key") {
-                "credential descriptor type is invalid"
-            }
-            decode(descriptor.requiredString("id"), "credential.id").also {
-                require(it.size in 1..1024) { "credential.id is invalid" }
-            }
+        val ids = mutableListOf<ByteArray>()
+        for (index in 0 until array.length()) {
+            // A bound on work rather than on the request: past this many, the
+            // list is read no further and the ceremony still happens.
+            if (ids.size >= MAX_CREDENTIAL_DESCRIPTORS) break
+            val descriptor = array.optJSONObject(index) ?: continue
+            if (descriptor.optString("type") != "public-key") continue
+            val id = runCatching { decode(descriptor.requiredString("id"), "credential.id") }
+                .getOrNull() ?: continue
+            if (id.size in 1..1024) ids.add(id)
         }
+        return ids
     }
 
     private fun validRpId(value: String): String {
@@ -234,8 +262,29 @@ internal object WebAuthnRequestParser {
         return rpId
     }
 
-    private fun bounded(value: String, field: String, max: Int): String =
-        value.trim().also { require(it.isNotEmpty() && it.length <= max) { "$field is invalid" } }
+    /**
+     * A name to put in front of the user, cut to something a phone can show.
+     *
+     * Truncating rather than refusing, because CTAP2 says an authenticator may
+     * do exactly that -- it names 64 bytes as the least it must keep -- and
+     * because the alternative was a relying party with a long product name
+     * being unable to register a passkey at all. What the user sees is a
+     * shortened title; what they saw before was a ceremony that failed.
+     */
+    private fun display(value: String): String {
+        // The untrimmed value when trimming leaves nothing: whitespace is a
+        // poor name, and inventing one would be worse.
+        val chosen = value.trim().ifEmpty { value }
+        if (chosen.length <= MAX_DISPLAY_CHARS) return chosen
+        // Never between the halves of a surrogate pair. The cut string is
+        // encoded as CBOR text, and half a pair is not UTF-8.
+        val end = if (Character.isHighSurrogate(chosen[MAX_DISPLAY_CHARS - 1])) {
+            MAX_DISPLAY_CHARS - 1
+        } else {
+            MAX_DISPLAY_CHARS
+        }
+        return chosen.substring(0, end)
+    }
 
     private fun JSONObject.requiredObject(name: String): JSONObject =
         optJSONObject(name) ?: throw IllegalArgumentException("$name is required")
@@ -264,6 +313,12 @@ internal object WebAuthnRequestParser {
 
     /** The one ceiling every base64url field here shares. */
     private const val MAX_ENCODED_CHARS = 4096
+
+    /** How many descriptors are read out of one credential list. */
+    private const val MAX_CREDENTIAL_DESCRIPTORS = 256
+
+    /** How long a name from the relying party may be before it is cut. */
+    private const val MAX_DISPLAY_CHARS = 128
 
     private const val BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     private val ATTACHMENT_VALUES = setOf("platform", "cross-platform")

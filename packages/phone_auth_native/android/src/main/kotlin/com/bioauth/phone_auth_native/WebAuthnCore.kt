@@ -58,7 +58,7 @@ internal class WebAuthnCore(
 
     fun credentialsFor(request: WebAuthnRequestOptions): List<PasskeyRecord> =
         store.allForRp(request.rpId).filter { credential ->
-            request.allowedCredentialIds.isEmpty() ||
+            !request.credentialsRestricted ||
                 request.allowedCredentialIds.any { it.contentEquals(credential.credentialId) }
         }.filter { runCatching { keyStore.publicKey(it.keyAlias) }.isSuccess }
 
@@ -146,7 +146,7 @@ internal class WebAuthnCore(
         val credential = store.find(credentialId)
             ?: throw IllegalArgumentException("Passkey not found")
         require(credential.rpId == options.rpId) { "Passkey belongs to another relying party" }
-        require(options.allowedCredentialIds.isEmpty() ||
+        require(!options.credentialsRestricted ||
             options.allowedCredentialIds.any { it.contentEquals(credentialId) }
         ) { "Passkey is not allowed by the relying party" }
         val next = credential.signCount + 1u

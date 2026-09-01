@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 internal class WebAuthnRequestParserTest {
@@ -111,17 +112,117 @@ internal class WebAuthnRequestParserTest {
     }
 
     @Test
-    fun rejectsMalformedCredentialDescriptorsInsteadOfTreatingThemAsDiscoverable() {
+    fun skipsCredentialDescriptorsInsteadOfTreatingThemAsDiscoverable() {
+        // `allowCredentials` is written once for every authenticator, so an
+        // entry this one cannot use is ordinary, and WebAuthn says to ignore a
+        // descriptor whose type the client does not recognise. Refusing the
+        // request meant one unusable entry cost the user a login they held a
+        // passkey for.
         val challenge = b64(ByteArray(32))
-        assertFailsWith<IllegalArgumentException> {
-            WebAuthnRequestParser.request(
-                """{
-                  "rpId":"example.org",
-                  "challenge":"$challenge",
-                  "allowCredentials":[{"type":"password","id":"AQ"}]
-                }""",
-            )
+        val ours = b64(byteArrayOf(9, 9, 9))
+        val mixed = WebAuthnRequestParser.request(
+            """{
+              "rpId":"example.org",
+              "challenge":"$challenge",
+              "allowCredentials":[
+                {"type":"password","id":"AQ"},
+                {"type":"public-key","id":"$ours"},
+                {"type":"public-key","id":"not base64url!!"}
+              ]
+            }""",
+        )
+        assertEquals(1, mixed.allowedCredentialIds.size)
+        assertContentEquals(byteArrayOf(9, 9, 9), mixed.allowedCredentialIds.single())
+
+        // And the half this test was named for. A list where nothing survives
+        // is still a list: the relying party scoped the ceremony, so it stays
+        // scoped to nothing rather than opening to every passkey for the site.
+        val none = WebAuthnRequestParser.request(
+            """{
+              "rpId":"example.org",
+              "challenge":"$challenge",
+              "allowCredentials":[{"type":"password","id":"AQ"}]
+            }""",
+        )
+        assertTrue(none.allowedCredentialIds.isEmpty())
+        assertTrue(none.credentialsRestricted)
+
+        // An absent list is the one that means "any credential this phone has".
+        val open = WebAuthnRequestParser.request(
+            """{"rpId":"example.org","challenge":"$challenge"}""",
+        )
+        assertTrue(open.allowedCredentialIds.isEmpty())
+        assertFalse(open.credentialsRestricted)
+    }
+
+    @Test
+    fun readsALongCredentialListInsteadOfRefusingIt() {
+        // Sixty-four was a number this parser invented; WebAuthn names none. A
+        // relying party listing more of them was answered with "Too many
+        // credential descriptors" and the sign-in stopped there.
+        val challenge = b64(ByteArray(32))
+        val filler = (1..300).joinToString(",") {
+            """{"type":"public-key","id":"${b64(byteArrayOf(it.toByte()))}"}"""
         }
+        val request = WebAuthnRequestParser.request(
+            """{
+              "rpId":"example.org",
+              "challenge":"$challenge",
+              "allowCredentials":[$filler]
+            }""",
+        )
+        // Read up to the bound and no further -- a limit on this phone's work,
+        // not a verdict on the request, so the ceremony still happens.
+        assertEquals(256, request.allowedCredentialIds.size)
+        assertTrue(request.credentialsRestricted)
+    }
+
+    @Test
+    fun cutsALongNameInsteadOfRefusingToRegister() {
+        // CTAP2 lets an authenticator truncate these and names 64 bytes as the
+        // least it must keep. Refusing meant a relying party with a long
+        // product name could not register a passkey at all.
+        val challenge = b64(ByteArray(32))
+        val user = b64(byteArrayOf(1))
+        val long = "x".repeat(400)
+        val creation = WebAuthnRequestParser.creation(
+            """{
+              "rp":{"id":"example.org","name":"$long"},
+              "user":{"id":"$user","name":"$long","displayName":""},
+              "challenge":"$challenge",
+              "pubKeyCredParams":[{"type":"public-key","alg":-7}]
+            }""",
+        )
+        assertEquals(128, creation.rpName.length)
+        assertEquals(128, creation.userName.length)
+        // An empty `displayName` is a field a relying party may send, and it
+        // used to be the thing that failed the ceremony. It falls back to the
+        // name, which is what the user is shown anyway.
+        assertEquals(creation.userName, creation.userDisplayName)
+    }
+
+    @Test
+    fun neverCutsANameThroughHalfACharacter() {
+        // The name is encoded as CBOR text, and half a surrogate pair is not
+        // UTF-8. The pair straddles the boundary only at one exact length.
+        val challenge = b64(ByteArray(32))
+        val user = b64(byteArrayOf(1))
+        val key = String(Character.toChars(0x1F511))
+        val name = "a".repeat(127) + key + "tail"
+        val creation = WebAuthnRequestParser.creation(
+            """{
+              "rp":{"id":"example.org","name":"Example"},
+              "user":{"id":"$user","name":"$name","displayName":"Alice"},
+              "challenge":"$challenge",
+              "pubKeyCredParams":[{"type":"public-key","alg":-7}]
+            }""",
+        )
+        assertEquals(127, creation.userName.length)
+        assertTrue(
+            creation.userName.none {
+                Character.isHighSurrogate(it) || Character.isLowSurrogate(it)
+            },
+        )
     }
 
     @Test
