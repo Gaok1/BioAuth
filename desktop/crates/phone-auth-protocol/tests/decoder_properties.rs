@@ -18,7 +18,11 @@
 //!    re-encodes what it read and compares.
 //!
 //! `PROPTEST_CASES` bounds the run. Left at proptest's default here so the
-//! suite stays inside a normal `cargo test`; CI raises it.
+//! suite stays inside a normal `cargo test`; CI raises it, and
+//! `docs/review-brief.md` asks a reviewer to raise it further still.
+//!
+//! Which is why [`decoder_config`] exists: raising the case count on its own
+//! was not enough to run this suite.
 
 use phone_auth_protocol::cbor::{Reader, Writer};
 use phone_auth_protocol::locker;
@@ -27,6 +31,32 @@ use phone_auth_protocol::{
     ApplicationFrame, ApplicationFrameKind, AuthRequest, AuthResponse, Enrolment, MAX_VALIDITY_MS,
 };
 use proptest::prelude::*;
+
+/// The case count from the environment, with the reject ceilings raised to
+/// match it.
+///
+/// Several strategies below build a value, encode it and keep only the ones
+/// that decode inside the protocol's bounds. Every discard is counted, so the
+/// discards grow in step with `cases` -- and proptest's ceilings on them do
+/// not: they are fixed at 65536 local and 1024 global no matter how many cases
+/// are asked for. At the 65536 cases `docs/review-brief.md` tells a reviewer to
+/// run, three of these tests stopped with `Test aborted: Too many local
+/// rejects` after tens of thousands of successful cases and nothing falsified.
+/// That message reads exactly like a failure, in the one document written to be
+/// handed to somebody who has never seen this code.
+///
+/// Tied to `cases` rather than set to a large constant, so a strategy that
+/// starts rejecting nearly everything still trips the ceiling and says so. The
+/// `max` keeps an explicitly-set `PROPTEST_MAX_*_REJECTS`, and the default case
+/// count, from ever lowering it.
+fn decoder_config() -> ProptestConfig {
+    let base = ProptestConfig::default();
+    ProptestConfig {
+        max_local_rejects: base.cases.saturating_mul(32).max(base.max_local_rejects),
+        max_global_rejects: base.cases.saturating_mul(2).max(base.max_global_rejects),
+        ..base
+    }
+}
 
 /// Bytes that look enough like a frame to get past the first few checks.
 ///
@@ -111,6 +141,8 @@ const DECODERS: &[Decoder] = &[
 ];
 
 proptest! {
+    #![proptest_config(decoder_config())]
+
     /// Random bytes into every decoder. Reaching the end of this test is the
     /// assertion: a panic anywhere in the list fails it.
     #[test]

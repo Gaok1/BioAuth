@@ -100,6 +100,15 @@ cd desktop/ui && npm test
 The property suites take their case count from the environment, so a reviewer
 can turn them up far past what CI runs and see whether anything falls out.
 
+That second line is the one worth running, and it did not work until recently.
+Several of those strategies build a value, encode it and keep only the ones
+that decode inside the protocol's bounds; proptest counts every discard and
+aborts at ceilings that do **not** scale with the case count. At 65536 the run
+stopped with `Test aborted: Too many local rejects` after tens of thousands of
+successful cases and nothing falsified — a message that reads exactly like a
+failure and is not one. `decoder_config` in that file now raises the two
+ceilings in step with `cases`, so the command above runs as printed.
+
 ## What a useful report looks like
 
 Findings against the questions above, each with the file and the input that
