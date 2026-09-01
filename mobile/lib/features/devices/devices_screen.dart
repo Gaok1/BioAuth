@@ -7,6 +7,7 @@ import '../../shared/authentication_request_card.dart';
 import '../../shared/device_card.dart';
 import '../../shared/page_heading.dart';
 import '../authentication/authentication_request_screen.dart';
+import '../permissions/permission_screen.dart';
 
 class DevicesScreen extends ConsumerWidget {
   const DevicesScreen({super.key});
@@ -72,6 +73,18 @@ class DevicesScreen extends ConsumerWidget {
                   onRevoke: () => ref
                       .read(appControllerProvider.notifier)
                       .revokeDevice(device.id),
+                  // Onde se decide o que este computador pode pedir. A mesma
+                  // lista existe do outro lado e as duas se acertam sozinhas,
+                  // então é indiferente onde se edita -- que é o ponto de ter
+                  // esta tela aqui e não só lá.
+                  onPermissions: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => PermissionScreen(
+                        verifierId: device.id,
+                        verifierName: device.name,
+                      ),
+                    ),
+                  ),
                 );
               },
             ),

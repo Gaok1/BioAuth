@@ -5,10 +5,19 @@ import '../domain/desktop_device.dart';
 import 'connection_status.dart';
 
 class DeviceCard extends StatelessWidget {
-  const DeviceCard({required this.device, required this.onRevoke, super.key});
+  const DeviceCard({
+    required this.device,
+    required this.onRevoke,
+    this.onPermissions,
+    super.key,
+  });
 
   final DesktopDevice device;
   final VoidCallback onRevoke;
+
+  /// Abre o que este computador pode autorizar. Ausente onde o card é só
+  /// leitura.
+  final VoidCallback? onPermissions;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +67,11 @@ class DeviceCard extends StatelessWidget {
             PopupMenuButton<void>(
               tooltip: 'Opções do dispositivo',
               itemBuilder: (context) => [
+                if (onPermissions case final open?)
+                  PopupMenuItem<void>(
+                    onTap: open,
+                    child: const Text('Permissões'),
+                  ),
                 PopupMenuItem<void>(
                   onTap: () => _confirmRevoke(context),
                   child: const Text('Revogar dispositivo'),
