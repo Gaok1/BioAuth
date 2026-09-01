@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
@@ -197,6 +198,64 @@ void main() {
       isNull,
       reason: 'the plaintext arrived after the vault was told to forget',
     );
+  });
+
+  /// A copy is the most-used action on this screen and it said nothing at all.
+  ///
+  /// A failure has been shown in red all along, so success and failure were
+  /// told apart by one of them being invisible. Android's own copy preview used
+  /// to cover it, and `EXTRA_IS_SENSITIVE` is what suppresses that preview --
+  /// which makes the silence this app's doing rather than the platform's.
+  group('a copy says whether it happened', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('a successful copy leaves a notice naming the item', () async {
+      final controller = VaultController(
+        store: _MemoryVaultStore(),
+        copy: (_) async {},
+      );
+      addTearDown(controller.dispose);
+      await controller.unlock();
+      expect(controller.notice, isNull);
+
+      await controller.copy(controller.items.single);
+
+      expect(controller.notice, contains('Example'));
+      expect(controller.error, isNull);
+    });
+
+    test('a refused copy leaves the error and no notice', () async {
+      final controller = VaultController(
+        store: _MemoryVaultStore(),
+        copy: (_) async => throw PlatformException(code: 'not_found'),
+      );
+      addTearDown(controller.dispose);
+      await controller.unlock();
+
+      await controller.copy(controller.items.single);
+
+      expect(
+        controller.notice,
+        isNull,
+        reason: 'nothing reached the clipboard, so nothing may say it did',
+      );
+      expect(controller.error, isNotNull);
+    });
+
+    test('the next action clears what the last one said', () async {
+      final controller = VaultController(
+        store: _MemoryVaultStore(),
+        copy: (_) async {},
+      );
+      addTearDown(controller.dispose);
+      await controller.unlock();
+      await controller.copy(controller.items.single);
+      expect(controller.notice, isNotNull);
+
+      controller.lock();
+
+      expect(controller.notice, isNull);
+    });
   });
 }
 

@@ -69,6 +69,21 @@ class VaultController extends ChangeNotifier {
   bool busy = false;
   String? error;
 
+  /// What the last action did, when it worked.
+  ///
+  /// A copy was completely silent. The biometric prompt closes, the list looks
+  /// identical, and nothing anywhere says the clipboard changed -- while a
+  /// failure has been shown in red all along, so the two outcomes were told
+  /// apart by one of them being invisible.
+  ///
+  /// The platform used to cover this: Android raises a preview of whatever was
+  /// copied. `EXTRA_IS_SENSITIVE` is what suppresses that preview, and setting
+  /// it is right -- it is also the app removing the only confirmation there was
+  /// and putting nothing back. It matters most for a TOTP item, where what
+  /// lands on the clipboard is six digits and what is stored is the seed, and
+  /// the user has no way to tell which one they are about to paste.
+  String? notice;
+
   /// Whether a write landed in the store after this list was read.
   ///
   /// Only the desktop can do that: the screen's own writes replace [_items] as
@@ -194,6 +209,7 @@ class VaultController extends ChangeNotifier {
     locked = true;
     _forget();
     error = null;
+    notice = null;
     notifyListeners();
   }
 
@@ -313,9 +329,13 @@ class VaultController extends ChangeNotifier {
     if (item.kind == VaultItemKind.totp) {
       final code = await generateTotp(readTotpSecret(fetched.secret));
       await _copy(code.digits);
+      // Said out loud, because this is the one item whose stored value and
+      // copied value are different things.
+      notice = 'Código de ${item.name} copiado — não a semente.';
       return;
     }
     await _copy(fetched.secret);
+    notice = 'Senha de ${item.name} copiada.';
   });
 
   Future<void> create(VaultItemInput input) =>
@@ -434,6 +454,8 @@ class VaultController extends ChangeNotifier {
     final generation = _generation;
     busy = true;
     error = null;
+    // The last action's word on itself does not survive the next one starting.
+    notice = null;
     unrecoverable = false;
     _discardable = false;
     notifyListeners();

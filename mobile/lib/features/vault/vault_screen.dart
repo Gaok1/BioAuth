@@ -289,6 +289,25 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ),
+      // Not styled as an error and not a dialog: it is the answer to "did that
+      // work", and it stays until the next action rather than timing out,
+      // because a confirmation that has already faded is one the user is
+      // reading the list to look for.
+      if (controller.notice case final message?)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Row(
+            children: [
+              Icon(
+                Icons.check_circle_outline,
+                size: 18,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
       if (controller.busy) const LinearProgressIndicator(),
       Expanded(
         child: controller.items.isEmpty
