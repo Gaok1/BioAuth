@@ -314,9 +314,13 @@ suas branches foram apagados depois de `git branch --no-merged main` voltar
 vazio — a onda 2 começa de worktrees novos, a partir da `main` já integrada.
 
 `T4` não é coberto por nenhum dos três toolchains — são scripts de shell, com
-suíte própria em `install.test.ps1` e `install.test.sh`, que precisam ser
-rodadas à mão. Se a instalação do native host regredir, nada no gate atual
-avisa.
+suíte própria em `install.test.ps1` e `install.test.sh`. As duas **passaram a
+rodar na CI**, ao lado das suítes irmãs do integrador de arquivos, que já
+rodavam: `install.test.sh` no job Linux e `install.test.ps1` no job Windows com
+`shell: powershell`, porque ele copia `$PSHOME\powershell.exe` como host de mentira e
+esse caminho não existe sob `pwsh`. Nenhuma das duas precisa de navegador —
+montam um diretório temporário, instalam, conferem os três manifestos e o
+caminho dentro deles, desinstalam e conferem que sumiram.
 
 **Onda 2, integrada em 2026-08-28.** `T5` (`VLT-03`) e `T6` (`VLT-04`) foram
 mergeados; `T6b` deu chamador ao caminho de leitura do cofre no CLI. `T7`

@@ -140,6 +140,16 @@ jobs:
           npm test
       - name: Nautilus integration tests
         run: bash desktop/file-manager/tests/linux.sh
+      # The native host is how the browser extension reaches the agent at
+      # all, and installing it is three manifests with a path in each of
+      # them. It had a test suite from the day it was written and no job
+      # ever ran it, so a regression there would surface as an extension
+      # that had simply stopped working. Nothing here needs a browser: the
+      # script builds a stub host in a temporary directory, points HOME at
+      # another one, installs, checks the manifests, uninstalls and checks
+      # they are gone.
+      - name: Native host installer
+        run: bash desktop/browser-extension/native-host/install.test.sh
       - name: Rust checks
         working-directory: desktop
         run: |
@@ -193,6 +203,15 @@ jobs:
       - name: Explorer integration tests
         shell: powershell
         run: .\desktop\file-manager\tests\windows.ps1
+      # The other half of the installer suite, and the reason this one
+      # names `powershell` rather than taking the runner's default: it
+      # copies `$PSHOME\powershell.exe` as a stub host, and that path
+      # exists under Windows PowerShell and not under pwsh. Everything it
+      # touches is a temporary directory and a registry root of its own
+      # under HKCU.
+      - name: Native host installer
+        shell: powershell
+        run: .\desktop\browser-extension\native-host\install.test.ps1
       - name: Authenticode verifier rejects unsigned files
         shell: powershell
         run: |
