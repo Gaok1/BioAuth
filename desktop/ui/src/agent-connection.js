@@ -15,6 +15,25 @@ const { endpointFile } = require('./paths');
 /** Reconnect backoff, in milliseconds. */
 const RETRY_MS = 2000;
 
+/**
+ * The most an unterminated reply may hold before the connection is dropped.
+ *
+ * A reply ends at a newline, so until one arrives every byte has to be kept.
+ * Nothing bounded that: a peer that writes and never terminates a line grew
+ * this buffer for as long as it kept writing, in the process that owns the
+ * tray. Every other boundary in this product already refuses rather than
+ * accumulates -- the native host rejects a frame over 128 KiB before
+ * allocating for it, the agent caps relayed WebAuthn options at 6000 bytes --
+ * and this one was reading from a socket with no ceiling at all.
+ *
+ * A megabyte is far above any legitimate line. The widest is a vault page,
+ * which the protocol caps at thirty-two items whose fields are themselves
+ * bounded, so tens of kilobytes is the real ceiling; this leaves an order of
+ * magnitude of room. Over it, the connection is dropped and retried, which is
+ * the same path a malformed line already takes.
+ */
+const MAX_UNTERMINATED_CHARS = 1_048_576;
+
 /// How long to wait for the agent to answer one call, in milliseconds.
 //
 // Mirrors `READ_TIMEOUT` in `client.rs`, and for the same reason: longer than
@@ -153,6 +172,13 @@ class AgentConnection extends EventEmitter {
       clearTimeout(waiter.timer);
       if (message.ok) waiter.resolve(message.result);
       else waiter.reject(new Error(message.error ? message.error.message : 'agent error'));
+    }
+
+    // Checked on what is left, not on what arrived: complete replies have just
+    // been taken out of the buffer above, so only a line still waiting for its
+    // newline can trip this. A large answer that does terminate is served.
+    if (this.buffer.length > MAX_UNTERMINATED_CHARS) {
+      this.fail('agent sent an oversized line');
     }
   }
 

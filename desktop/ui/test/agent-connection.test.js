@@ -142,6 +142,50 @@ test('an agent that closes the connection still counts as serving', HANGS_WITHOU
   assert.equal((await dropped).reachable, true);
 });
 
+test('a line that never ends is dropped, not buffered forever', HANGS_WITHOUT_THE_FIX, async (t) => {
+  // A reply ends at a newline, so until one arrives every byte has to be kept.
+  // Nothing bounded that, and this buffer lives in the process that owns the
+  // tray -- a peer that writes without ever terminating a line grew it for as
+  // long as it kept writing. Every other boundary in this product refuses
+  // instead of accumulating; this one read from a socket with no ceiling.
+  const agent = await fakeAgent(t, {
+    onConnection: (socket) => socket.write('x'.repeat(1_200_000)),
+  });
+
+  const oversized = statusMatching(
+    agent,
+    (status) => !status.connected && /oversized/.test(status.reason || '')
+  );
+  agent.start();
+
+  assert.match((await oversized).reason, /oversized line/);
+});
+
+test('a large reply that does terminate is still served', HANGS_WITHOUT_THE_FIX, async (t) => {
+  // The bound is on what is *unterminated*. A legitimate answer bigger than a
+  // single chunk must survive being reassembled, or the fix above would have
+  // traded an unbounded buffer for a broken vault listing.
+  const wide = 'w'.repeat(600_000);
+  const agent = await fakeAgent(t, {
+    onConnection: (socket) => {
+      // Answers by id. Replying with a fixed one settles the `subscribe` the
+      // connect handler issues and nothing else, so the call under test waits
+      // for a reply that never carries its number.
+      socket.on('data', (chunk) => {
+        for (const line of chunk.toString('utf8').split('\n')) {
+          if (!line.trim()) continue;
+          const { id } = JSON.parse(line);
+          socket.write(`${JSON.stringify({ id, ok: true, result: { wide } })}\n`);
+        }
+      });
+    },
+  });
+
+  agent.start();
+  await statusMatching(agent, (status) => status.connected);
+  assert.equal((await agent.call('status', {})).wide, wide);
+});
+
 test('a malformed endpoint file is reported, not thrown', () => {
   // Valid JSON, no usable port -- a half-written file, or one from a build that
   // spelled the field differently. `net.createConnection` throws synchronously
