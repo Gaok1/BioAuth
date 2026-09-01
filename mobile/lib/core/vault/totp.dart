@@ -240,9 +240,14 @@ int _pow10(int exponent) {
 
 /// Whether a string could be a TOTP seed, for a form that wants to say so
 /// before the user leaves the field.
+///
+/// The same two forms the item form accepts: a bare seed, or the whole
+/// `otpauth://totp/...` next to the QR code. Asking only about the first would
+/// have this answer "no" to half of what people paste -- and it is the answer a
+/// field shows while somebody is still typing in it.
 bool looksLikeTotpSecret(String value) {
   try {
-    TotpSecret.parse(value);
+    readTotpSecret(value);
     return true;
   } on TotpException {
     return false;

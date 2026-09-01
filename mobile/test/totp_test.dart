@@ -334,8 +334,22 @@ void main() {
   test('a form can tell a seed from a password before the field is left', () {
     expect(looksLikeTotpSecret('JBSWY3DPEHPK3PXP'), isTrue);
     expect(looksLikeTotpSecret('jbsw y3dp ehpk 3pxp'), isTrue);
+    // What a site shows next to the QR code, which is the other half of what
+    // people paste into that field.
+    expect(
+      looksLikeTotpSecret('otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP'),
+      isTrue,
+    );
     expect(looksLikeTotpSecret('hunter2!'), isFalse);
     expect(looksLikeTotpSecret(''), isFalse);
+    // An otpauth naming a hash this cannot generate is not a seed this form
+    // should say yes to: the item would be refused a moment later on save.
+    expect(
+      looksLikeTotpSecret(
+        'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&algorithm=MD5',
+      ),
+      isFalse,
+    );
   });
 
   group('a TOTP item in the vault', () {
