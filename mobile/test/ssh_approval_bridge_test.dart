@@ -79,4 +79,56 @@ void main() {
       returnsNormally,
     );
   });
+
+  /// An approval answers the sheet the user read, and nothing else.
+  ///
+  /// The id is chosen by the computer asking, and one map of pending answers is
+  /// shared by every session -- so two in flight at once are two desktops, or
+  /// one desktop on two credentials.
+  test(
+    'a second request under the same id is not covered by the first',
+    () async {
+      final shown = <SshApprovalRequest>[];
+      final approval = InteractiveSshApproval(onRequest: shown.add);
+
+      final first = approval.confirm(request);
+      // Same id, a different login. A signature here opens a session that
+      // outlives the tap, so `deploy@SHA256:x` must not answer for `root`.
+      final second = await approval.confirm(
+        const SshApprovalRequest(
+          id: 'r1',
+          verifierName: 'PC',
+          user: 'root',
+          destination: 'prod.example',
+        ),
+      );
+
+      expect(second, isFalse);
+      expect(shown, hasLength(1), reason: 'the second never reached a sheet');
+
+      approval.settle('r1', approved: true);
+      expect(
+        await first,
+        isTrue,
+        reason: 'the one the user read still gets its answer',
+      );
+    },
+  );
+
+  test('a genuine retry still waits on the one answer', () async {
+    final shown = <SshApprovalRequest>[];
+    final approval = InteractiveSshApproval(onRequest: shown.add);
+
+    final first = approval.confirm(request);
+    final retry = approval.confirm(request);
+    expect(
+      shown,
+      hasLength(1),
+      reason: 'one login must not cost two approvals',
+    );
+
+    approval.settle('r1', approved: true);
+    expect(await first, isTrue);
+    expect(await retry, isTrue);
+  });
 }

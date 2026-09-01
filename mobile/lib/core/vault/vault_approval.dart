@@ -98,7 +98,25 @@ class InteractiveVaultApproval implements VaultApproval {
   /// Called when a validated request needs a decision, to put it on screen.
   final void Function(VaultApprovalRequest request) onRequest;
 
-  final Map<String, Completer<bool>> _pending = {};
+  final Map<String, ({String shown, Completer<bool> completer})> _pending = {};
+
+  /// Everything the sheet puts in front of the user, as one string.
+  ///
+  /// An answer covers what was on screen when it was given, and nothing else.
+  /// The id alone cannot say that: it is chosen by the computer asking.
+  static String _shown(VaultApprovalRequest request) => _fields([
+    request.verifierName,
+    request.operation.name,
+    request.itemName,
+    request.username,
+    request.uri,
+  ]);
+
+  /// Length-prefixed rather than joined on a separator, because every field
+  /// here is a string a computer chose and any separator is one it could put
+  /// inside a name to make two different sheets read alike.
+  static String _fields(List<String> values) =>
+      values.map((value) => '${value.length}:$value').join();
 
   @override
   Future<bool> confirm(VaultApprovalRequest request) {
@@ -106,19 +124,29 @@ class InteractiveVaultApproval implements VaultApproval {
     // than stacking a second sheet: the desktop retrying must not turn one
     // approval into two.
     final existing = _pending[request.id];
-    if (existing != null) return existing.future;
+    if (existing != null) {
+      if (existing.shown == _shown(request)) return existing.completer.future;
+      // Same id, different request. The id comes from the computer asking, and
+      // sessions run one frame each -- so two of them in flight at once are two
+      // desktops, or one desktop on two credentials, and this map is shared by
+      // all of them. Handing back the first one's answer would let an approval
+      // the user gave for "guardar um item novo" settle a "copiar a senha de"
+      // they were never shown. Refused, which the desktop can retry under an
+      // id of its own.
+      return Future.value(false);
+    }
 
     final completer = Completer<bool>();
-    _pending[request.id] = completer;
+    _pending[request.id] = (shown: _shown(request), completer: completer);
     onRequest(request);
     return completer.future;
   }
 
   /// The UI side: the user tapped.
   void settle(String requestId, {required bool approved}) {
-    final completer = _pending.remove(requestId);
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(approved);
+    final pending = _pending.remove(requestId);
+    if (pending != null && !pending.completer.isCompleted) {
+      pending.completer.complete(approved);
     }
   }
 
@@ -131,7 +159,8 @@ class InteractiveVaultApproval implements VaultApproval {
   /// somewhere else: a session that died, or the app leaving the foreground.
   /// Null once the request is settled, which is also the answer to "is this
   /// still worth showing".
-  Future<bool>? answerFor(String requestId) => _pending[requestId]?.future;
+  Future<bool>? answerFor(String requestId) =>
+      _pending[requestId]?.completer.future;
 
   /// Refuses everything outstanding. Called when the app leaves the
   /// foreground: a sheet the user cannot see must not stay answerable.

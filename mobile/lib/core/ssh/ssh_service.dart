@@ -197,7 +197,20 @@ class InteractiveSshApproval implements SshApproval {
   /// Called when a validated request needs a decision, to put it on screen.
   final void Function(SshApprovalRequest request) onRequest;
 
-  final Map<String, Completer<bool>> _pending = {};
+  final Map<String, ({String shown, Completer<bool> completer})> _pending = {};
+
+  /// Everything the sheet puts in front of the user, as one string.
+  ///
+  /// An answer covers what was on screen when it was given. The id cannot
+  /// stand for that on its own: the computer asking is the one that picks it.
+  static String _shown(SshApprovalRequest request) => [
+    request.verifierName,
+    request.user,
+    request.destination,
+    // Length-prefixed rather than joined on a separator: every field is a
+    // string a computer chose, and any separator is one it could put inside a
+    // name to make two different sheets read alike.
+  ].map((value) => '${value.length}:$value').join();
 
   @override
   Future<bool> confirm(SshApprovalRequest request) {
@@ -205,18 +218,25 @@ class InteractiveSshApproval implements SshApproval {
     // than stacking a second sheet: one login must not cost two approvals, and
     // two sheets is how a user approves the one they were not reading.
     final existing = _pending[request.id];
-    if (existing != null) return existing.future;
+    if (existing != null) {
+      if (existing.shown == _shown(request)) return existing.completer.future;
+      // Same id, a different login. A signature here opens a session that
+      // outlives the tap, so an answer given for `alice@laptop` must not be
+      // spent on `root@server`. Refused rather than shared; a desktop that
+      // meant it can ask again under its own id.
+      return Future.value(false);
+    }
 
     final completer = Completer<bool>();
-    _pending[request.id] = completer;
+    _pending[request.id] = (shown: _shown(request), completer: completer);
     onRequest(request);
     return completer.future;
   }
 
   void settle(String requestId, {required bool approved}) {
-    final completer = _pending.remove(requestId);
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(approved);
+    final pending = _pending.remove(requestId);
+    if (pending != null && !pending.completer.isCompleted) {
+      pending.completer.complete(approved);
     }
   }
 
@@ -224,7 +244,8 @@ class InteractiveSshApproval implements SshApproval {
   ///
   /// Handed to the sheet so it can close itself when the answer came from
   /// somewhere else — the session that raised it died, or the app went away.
-  Future<bool>? answerFor(String requestId) => _pending[requestId]?.future;
+  Future<bool>? answerFor(String requestId) =>
+      _pending[requestId]?.completer.future;
 
   /// Refuses everything outstanding. A sheet the user can no longer see must
   /// not stay answerable.
