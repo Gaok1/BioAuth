@@ -160,15 +160,47 @@ impl AuditLog {
             return Ok(());
         }
         let entries = self.read_all();
-        if entries.len() <= self.retain {
+
+        // Newest first, bounded by the count *and* by the bytes.
+        //
+        // The count alone was the whole rule, and it holds only while `retain`
+        // entries fit inside the threshold -- an invariant nothing stated and
+        // nothing checked. Entries are bounded by the protocol, not small: the
+        // request fields alone allow 64 + 128 + 256 + 128 UTF-16 units before the
+        // device name, the origin and a failure detail. Past roughly a kilobyte
+        // each, five hundred of them no longer fit in 512 KiB, and both halves of
+        // this function break at once.
+        //
+        // `entries.len() <= self.retain` returned early, so the file was never
+        // trimmed and grew without bound. Then, once there were more than
+        // `retain` of them, every append trimmed -- reading and rewriting the
+        // whole log -- because the result was still over the threshold. That is
+        // exactly the cost the comment above says this design avoids.
+        //
+        // Half the threshold, so a trim leaves room for the appends that follow
+        // it rather than for one.
+        let budget = (self.trim_threshold_bytes / 2) as usize;
+        let mut lines: Vec<Vec<u8>> = Vec::new();
+        let mut bytes = 0usize;
+        for entry in entries.iter().rev().take(self.retain) {
+            let mut line = serde_json::to_vec(entry)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            line.push(b'\n');
+            // Never empty. One entry larger than the whole budget is still the
+            // most recent thing that happened, and a log answering "nothing has
+            // ever been authorized" is worse than one that is too big.
+            if !lines.is_empty() && bytes + line.len() > budget {
+                break;
+            }
+            bytes += line.len();
+            lines.push(line);
+        }
+        if lines.len() >= entries.len() {
             return Ok(());
         }
-        let kept = &entries[entries.len() - self.retain..];
-        let mut buffer = Vec::new();
-        for entry in kept {
-            serde_json::to_writer(&mut buffer, entry)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-            buffer.push(b'\n');
+        let mut buffer = Vec::with_capacity(bytes);
+        for line in lines.iter().rev() {
+            buffer.extend_from_slice(line);
         }
         // Rotation rewrites the whole log, so the replacement has to be as
         // narrow as the file it replaces: a plain `fs::write` would hand the
@@ -351,6 +383,42 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// `retain` entries have to fit inside the threshold, and nothing said so.
+    ///
+    /// Fifty entries of about 224 bytes is 11 KiB against a 2 KiB threshold.
+    /// Under the count rule alone this never trimmed at all: the file crossed
+    /// the threshold at ten entries, `entries.len() <= self.retain` returned
+    /// early, and it went on doing that for as long as the agent kept
+    /// authorizing things. The real limits are 500 and 512 KiB, which is the
+    /// same shape as soon as an entry averages over a kilobyte -- and the
+    /// protocol allows 64 + 128 + 256 + 128 UTF-16 units of request fields
+    /// before the device name, the origin and a failure detail.
+    #[test]
+    fn a_log_whose_entries_do_not_fit_the_count_is_still_bounded() {
+        let path =
+            std::env::temp_dir().join(format!("phoneauth-audit-{}-wide.jsonl", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let log = AuditLog::with_limits(&path, 50, 2048);
+
+        for index in 0..40 {
+            log.append(&entry(&format!("r-{index}"), index as i64))
+                .expect("append");
+        }
+
+        let size = fs::metadata(&path).expect("stat").len();
+        assert!(
+            size <= 2048,
+            "the log grew to {size} bytes, past the threshold it trims at"
+        );
+        assert_eq!(
+            log.recent(1)[0].request_id,
+            "r-39",
+            "trimming keeps the newest entries"
+        );
+
+        fs::remove_file(&path).ok();
+    }
+
     /// A crashed rotation leaves the temp file behind. The next trim has to
     /// replace it rather than fail, or one interrupted write would stop the
     /// log from ever being trimmed again.
@@ -367,7 +435,12 @@ mod tests {
             log.append(&entry("entry", index)).expect("append");
         }
 
-        assert_eq!(log.recent(10).len(), 2, "the log kept trimming");
+        // One, not `retain`. At a 64-byte threshold the byte budget binds long
+        // before the count does -- a single entry serialises to about 224 --
+        // and the floor keeps the newest one rather than emptying the log.
+        // What this test is about is that trimming happened at all with the
+        // temp file in the way: untrimmed, six appends are six entries.
+        assert_eq!(log.recent(10).len(), 1, "the log kept trimming");
 
         fs::remove_dir_all(&dir).ok();
     }
