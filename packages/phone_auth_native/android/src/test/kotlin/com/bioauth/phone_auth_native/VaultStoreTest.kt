@@ -10,6 +10,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class VaultStoreTest {
     @Test
@@ -48,7 +49,7 @@ class VaultStoreTest {
     fun `a stored item outside the bounds is corruption, not a bad request`() {
         val cases = mapOf(
             "an empty name" to """{"id":"a","revision":1,"kind":0,"name":"","username":"","uri":"","secret":"s","updatedAtMs":1}""",
-            "an oversized name" to """{"id":"a","revision":1,"kind":0,"name":"${"n".repeat(256)}","username":"","uri":"","secret":"s","updatedAtMs":1}""",
+            "an oversized name" to """{"id":"a","revision":1,"kind":0,"name":"${"n".repeat(VaultStoreData.MAX_NAME + 1)}","username":"","uri":"","secret":"s","updatedAtMs":1}""",
             "an empty secret" to """{"id":"a","revision":1,"kind":0,"name":"n","username":"","uri":"","secret":"","updatedAtMs":1}""",
             "a revision below one" to """{"id":"a","revision":0,"kind":0,"name":"n","username":"","uri":"","secret":"s","updatedAtMs":1}""",
             "an unknown kind" to """{"id":"a","revision":1,"kind":9,"name":"n","username":"","uri":"","secret":"s","updatedAtMs":1}""",
@@ -182,7 +183,69 @@ class VaultStoreTest {
             ).kind,
         )
         assertFailsWith<VaultStoreFailure> {
-            VaultItemInput.from(inputMap(name = "x".repeat(256)), requireId = false)
+            VaultItemInput.from(
+                inputMap(name = "x".repeat(VaultStoreData.MAX_NAME + 1)),
+                requireId = false,
+            )
+        }
+    }
+
+    /**
+     * The two validators have to agree, field by field, at the boundary.
+     *
+     * One checks an item arriving in a request; the other checks an item read
+     * back out of the decrypted blob. They were fourteen bare literals across
+     * two paths, and they do not fail the same way: a bound that ends up
+     * tighter on the read side turns an item this store itself accepted into
+     * `store_corrupt`, and that is not a message about a long field -- it is
+     * the screen saying the vault cannot be opened, offering to discard it.
+     *
+     * Both directions are checked. Exactly at the maximum must survive the
+     * round trip, or the accept path is looser than the store; one unit over
+     * must be refused by both, or the store is looser than the accept path.
+     */
+    @Test
+    fun `the accept path and the stored-blob path agree on every bound`() {
+        fun blobFor(item: VaultItem): ByteArray {
+            val json = """{"version":1,"items":[{"id":"${item.id}",""" +
+                """"revision":${item.revision},"kind":${item.kind},""" +
+                """"name":"${item.name}","username":"${item.username}",""" +
+                """"uri":"${item.uri}","secret":"${item.secret}",""" +
+                """"updatedAtMs":${item.updatedAtMs}}]}"""
+            return json.toByteArray()
+        }
+
+        val bounds = listOf<Triple<String, Int, (String) -> VaultItem>>(
+            Triple("id", VaultStoreData.MAX_ID) { value -> item(id = value) },
+            Triple("name", VaultStoreData.MAX_NAME) { value -> item().copy(name = value) },
+            Triple("username", VaultStoreData.MAX_USERNAME) { value ->
+                item().copy(username = value)
+            },
+            Triple("uri", VaultStoreData.MAX_URI) { value -> item().copy(uri = value) },
+            Triple("secret", VaultStoreData.MAX_SECRET) { value -> item(secret = value) },
+        )
+
+        for ((field, max, build) in bounds) {
+            // Caught rather than left to throw: an item refused here comes
+            // out of `decode` as a `VaultStoreFailure`, and an uncaught one
+            // reports as a line number with no field in it -- which is the
+            // whole question this test is asking.
+            val atMax = runCatching { VaultStoreCodec.decode(blobFor(build("a".repeat(max)))) }
+            assertTrue(
+                atMax.isSuccess,
+                "a stored item with a $field of exactly $max was called corruption: " +
+                    "${atMax.exceptionOrNull()}",
+            )
+            assertEquals(1, atMax.getOrThrow().size, field)
+
+            val overMax = build("a".repeat(max + 1))
+            assertEquals(
+                "store_corrupt",
+                assertFailsWith<VaultStoreFailure> {
+                    VaultStoreCodec.decode(blobFor(overMax))
+                }.code,
+                "a stored item with a $field of ${max + 1} was accepted",
+            )
         }
     }
 

@@ -51,7 +51,7 @@ internal data class VaultItemInput(
             val map = arguments as? Map<*, *> ?: invalid("item must be a map")
             val id = map["id"]?.let { it as? String ?: invalid("id must be a string") }
             if (requireId && id == null) invalid("id is required")
-            id?.let { validateText("id", it, 64, allowEmpty = false) }
+            id?.let { validateText("id", it, VaultStoreData.MAX_ID, allowEmpty = false) }
             val kindValue = map["kind"] as? Number ?: invalid("kind is required")
             val kind = kindValue.exactLongOrNull()?.takeIf { it in KIND_RANGE }?.toInt()
                 ?: invalid("kind must be a known item kind")
@@ -59,10 +59,10 @@ internal data class VaultItemInput(
             val username = map.optionalString("username")
             val uri = map.optionalString("uri")
             val secret = map.string("secret")
-            validateText("name", name, 255, allowEmpty = false)
-            validateText("username", username, 255, allowEmpty = true)
-            validateText("uri", uri, 1024, allowEmpty = true)
-            validateText("secret", secret, 4096, allowEmpty = false)
+            validateText("name", name, VaultStoreData.MAX_NAME, allowEmpty = false)
+            validateText("username", username, VaultStoreData.MAX_USERNAME, allowEmpty = true)
+            validateText("uri", uri, VaultStoreData.MAX_URI, allowEmpty = true)
+            validateText("secret", secret, VaultStoreData.MAX_SECRET, allowEmpty = false)
             return VaultItemInput(id, kind, name, username, uri, secret)
         }
     }
@@ -87,6 +87,29 @@ internal object VaultStoreData {
     const val PAGE_SIZE = 32
 
     /**
+     * How long each field may be, in UTF-16 code units.
+     *
+     * Named for the reason `KIND_RANGE` is named. Two paths check these: the
+     * one that accepts an item from a request, and the one that reads an item
+     * back out of the decrypted blob. They were fourteen bare literals across
+     * those two paths, and they do not fail the same way. A bound that is
+     * tighter on the read side turns an item the store itself accepted into
+     * `store_corrupt`, which is not "that field is too long" -- it is the
+     * screen that says the vault cannot be opened and offers to discard it.
+     *
+     * The same four numbers are checked by `vault_store.dart` on the Dart side
+     * and by `phone-auth-protocol`'s `vault.rs` on the desktop, which counts
+     * the same units. Those cannot share a definition with this file; these
+     * two paths can, and did not.
+     */
+    const val MAX_ID = 64
+    const val MAX_NAME = 255
+    const val MAX_USERNAME = 255
+    const val MAX_URI = 1024
+    const val MAX_SECRET = 4096
+    const val MAX_CURSOR = 128
+
+    /**
      * The ceiling a restore may not cross.
      *
      * The vault is one blob decrypted into memory on every operation, so a
@@ -97,7 +120,7 @@ internal object VaultStoreData {
     const val MAX_ITEMS = 4096
 
     fun create(items: List<VaultItem>, input: VaultItemInput, nowMs: Long, id: String = UUID.randomUUID().toString()): Pair<List<VaultItem>, VaultItem> {
-        validateText("id", id, 64, allowEmpty = false)
+        validateText("id", id, VaultStoreData.MAX_ID, allowEmpty = false)
         // The same ceiling a restore is held to, and for the same reason. Only
         // `restore` checked it, so the ordinary way items arrive -- one at a
         // time, from the phone or from a desktop asking -- could walk straight
@@ -127,7 +150,7 @@ internal object VaultStoreData {
     }
 
     fun delete(items: List<VaultItem>, id: String, expectedRevision: Int): List<VaultItem> {
-        validateText("id", id, 64, allowEmpty = false)
+        validateText("id", id, VaultStoreData.MAX_ID, allowEmpty = false)
         requireRevision(expectedRevision)
         val current = items.find { it.id == id }
             ?: throw VaultStoreFailure("not_found", "Vault item does not exist")
@@ -201,13 +224,13 @@ internal object VaultStoreData {
     private fun VaultItemInput.identity() = listOf(kind.toString(), name, username, uri)
 
     fun fetch(items: List<VaultItem>, id: String): VaultItem {
-        validateText("id", id, 64, allowEmpty = false)
+        validateText("id", id, VaultStoreData.MAX_ID, allowEmpty = false)
         return items.find { it.id == id }
             ?: throw VaultStoreFailure("not_found", "Vault item does not exist")
     }
 
     fun page(items: List<VaultItem>, cursor: String?): Map<String, Any?> {
-        if (cursor != null) validateText("cursor", cursor, 128, allowEmpty = true)
+        if (cursor != null) validateText("cursor", cursor, VaultStoreData.MAX_CURSOR, allowEmpty = true)
         val offset = if (cursor.isNullOrEmpty()) 0 else cursor.toIntOrNull()
             ?: invalid("cursor is invalid")
         if (offset !in 0..items.size) invalid("cursor is invalid")
@@ -311,13 +334,13 @@ internal object VaultStoreCodec {
      */
     private fun validate(item: VaultItem) {
         try {
-            validateText("id", item.id, 64, allowEmpty = false)
+            validateText("id", item.id, VaultStoreData.MAX_ID, allowEmpty = false)
             requireRevision(item.revision)
             if (item.kind.toLong() !in KIND_RANGE) corrupt()
-            validateText("name", item.name, 255, allowEmpty = false)
-            validateText("username", item.username, 255, allowEmpty = true)
-            validateText("uri", item.uri, 1024, allowEmpty = true)
-            validateText("secret", item.secret, 4096, allowEmpty = false)
+            validateText("name", item.name, VaultStoreData.MAX_NAME, allowEmpty = false)
+            validateText("username", item.username, VaultStoreData.MAX_USERNAME, allowEmpty = true)
+            validateText("uri", item.uri, VaultStoreData.MAX_URI, allowEmpty = true)
+            validateText("secret", item.secret, VaultStoreData.MAX_SECRET, allowEmpty = false)
         } catch (failure: VaultStoreFailure) {
             if (failure.code == "store_corrupt") throw failure
             corrupt()
