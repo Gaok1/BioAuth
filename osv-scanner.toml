@@ -1,0 +1,35 @@
+# What this file is allowed to do: silence an advisory that has nowhere to go,
+# and say when it must be looked at again. It is not a place to park findings.
+#
+# Every entry needs a date. An ignore without one is a decision that outlives
+# the reason for it, and the reason here is "upstream has not shipped a fix
+# yet" -- which stops being true without anybody editing this file.
+
+# image-size 2.0.2: infinite loops in the JXL, HEIF and ICNS parsers, reachable
+# by handing the parser a malformed image of one of those types.
+#
+# Three things about where it sits:
+#
+#   * It is a dev dependency. `addons-linter` pulls it in, and `addons-linter`
+#     is how the Firefox extension package is checked before it is zipped. It
+#     is not in the extension, not in the tray, not in the agent, and not in
+#     anything a user installs.
+#   * The only images it is ever pointed at are this repository's own icons.
+#     A denial of service against a linter reading files a maintainer just
+#     wrote is a linter that stops, on a machine where somebody is watching.
+#   * There is nothing to upgrade to. 2.0.2 is the latest published version of
+#     image-size, `last_affected` is 2.0.2 with no fixed release, and
+#     addons-linter 10.10.0 -- also the latest -- pins exactly that version.
+#
+# So the choice is between a red build that says nothing new every run, and an
+# ignore that expires. December is far enough out for upstream to publish and
+# near enough that this does not quietly become permanent.
+[[IgnoredVulns]]
+id = "GHSA-5p2g-fcmc-qvqq"
+ignoreUntil = 2026-12-01
+reason = "image-size is a dev-only dependency of addons-linter, points only at this repo's own icons, and has no fixed version published."
+
+[[IgnoredVulns]]
+id = "GHSA-w3rx-r6r6-pgpr"
+ignoreUntil = 2026-12-01
+reason = "Same package, same path, same absence of a fix: the ICNS half of the image-size advisories."

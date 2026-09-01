@@ -272,9 +272,15 @@ jobs:
         # ignore it: a library package's lock is a resolution nobody installs,
         # because the application resolves the graph again. What ships is
         # `mobile/pubspec.lock`, which is committed and is scanned below.
+        #
+        # `--config` is named rather than left to discovery. The scanner looks
+        # for an `osv-scanner.toml` beside each file it scans, so a config at
+        # the repository root -- which is where a person looks for one -- is
+        # read for none of the three lockfiles below.
         uses: google/osv-scanner-action/osv-scanner-action@v2.5.1
         with:
           scan-args: |-
+            --config=osv-scanner.toml
             --lockfile=desktop/Cargo.lock
             --lockfile=desktop/ui/package-lock.json
             --lockfile=mobile/pubspec.lock
