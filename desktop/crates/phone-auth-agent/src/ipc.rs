@@ -557,6 +557,19 @@ fn vault_generate_copy(
             .expect("service mutex")
             .record_generated_copy(result);
     };
+    // Before the password exists. There is no phone prompt on this path, so the
+    // reason is not the one `vault.copy` gives -- it is that generating a
+    // secret and moving it into locked pages for a request that cannot be
+    // satisfied is work done to be thrown away, and it made the two methods
+    // answer the same bad `clearAfterMs` with two different sentences.
+    let ttl = match crate::service::clipboard_ttl(params.clear_after_ms) {
+        Ok(ttl) => ttl,
+        Err(error) => {
+            record(Err(&error));
+            return Reply::err(id, error.code, error.message);
+        }
+    };
+
     let defaults = Policy::default();
     let policy = Policy {
         length: params.length.unwrap_or(defaults.length),
@@ -576,10 +589,6 @@ fn vault_generate_copy(
     };
     let secret = SecretBuffer::from_slice(generated.as_bytes());
     drop(generated);
-
-    let ttl = params
-        .clear_after_ms
-        .map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
 
     match clipboard::copy_secret(&secret, ttl) {
         Ok(outcome) => {
@@ -685,7 +694,7 @@ mod tests {
 #[cfg(test)]
 mod concurrent_client_tests {
     use super::*;
-    use crate::client::AgentClient;
+    use crate::client::{AgentClient, ClientError};
     use crate::config::AgentConfig;
 
     /// Serves `service` on an ephemeral port and returns once the endpoint file
@@ -1010,6 +1019,59 @@ mod concurrent_client_tests {
             .cloned()
             .expect("the refusal was not written down");
         assert_eq!(generated["outcome"], "failed");
+    }
+
+    /// One field, two methods, one answer.
+    ///
+    /// `clearAfterMs` is offered by `vault.copy` and by `vault.generate-copy`,
+    /// and they used to refuse the same impossible value differently:
+    /// `vault.copy` checked it itself and named the parameter, while
+    /// `vault.generate-copy` generated a password, moved it into locked pages,
+    /// handed the timeout to the clipboard and relayed what came back --
+    /// `clear timeout must be between ...`, a name that appears in no API.
+    ///
+    /// Asserted as equality rather than against a literal. What matters is not
+    /// the sentence but that one sentence answers for both, so this keeps
+    /// holding if the wording changes.
+    #[test]
+    fn both_methods_refuse_an_impossible_clipboard_timeout_identically() {
+        let (_service, paths) = start_agent("vault-copy-ttl");
+        let mut client = AgentClient::connect(&paths).expect("client");
+
+        // An hour: the module refuses rather than clamps, on the grounds that
+        // a caller asking for one has misunderstood the feature.
+        let generate = client
+            .call(
+                "vault.generate-copy",
+                json!({ "clearAfterMs": 3_600_000u64 }),
+            )
+            .expect_err("an hour on the clipboard must be refused");
+        // `itemId` and `expectedRevision` are required, and deliberately point
+        // at nothing: the timeout is checked before the phone is asked, which
+        // is the other half of what this test is for. With no device paired,
+        // any answer about the vault would be the wrong one.
+        let copy = client
+            .call(
+                "vault.copy",
+                json!({
+                    "itemId": "no-such-item",
+                    "expectedRevision": 1,
+                    "clearAfterMs": 3_600_000u64,
+                }),
+            )
+            .expect_err("an hour on the clipboard must be refused");
+
+        let (ClientError::Agent(generate), ClientError::Agent(copy)) = (generate, copy) else {
+            panic!("both refusals must come from the agent, not from the transport");
+        };
+        assert_eq!(generate.code, "bad-params");
+        assert_eq!(generate.code, copy.code);
+        assert_eq!(generate.message, copy.message);
+        assert!(
+            copy.message.contains("clearAfterMs"),
+            "a refusal has to name the field it is about: {}",
+            copy.message
+        );
     }
 
     /// With no phone paired there is no vault, and both methods have to say so.

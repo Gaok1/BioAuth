@@ -1484,19 +1484,7 @@ impl Service {
         // Checked before the phone is asked. A timeout this refuses would
         // otherwise be discovered after the user had already approved the
         // prompt, with the secret in hand and nowhere to put it.
-        let ttl = params
-            .clear_after_ms
-            .map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
-        if ttl < clipboard::MIN_TTL || ttl > clipboard::MAX_TTL {
-            return Err(ServiceError::new(
-                "bad-params",
-                format!(
-                    "clearAfterMs must be between {}ms and {}ms",
-                    clipboard::MIN_TTL.as_millis(),
-                    clipboard::MAX_TTL.as_millis()
-                ),
-            ));
-        }
+        let ttl = clipboard_ttl(params.clear_after_ms)?;
 
         let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
@@ -1961,6 +1949,34 @@ fn vault_error(error: VaultError) -> ServiceError {
 /// A timeout outside the accepted range is the caller's mistake, not a broken
 /// clipboard, and gets a code that says so — reporting it as unavailable would
 /// send the user looking for a problem on their machine.
+/// The clipboard lifetime a caller asked for, refused early if it is impossible.
+///
+/// `copy_secret` checks this too and is the real gate; this exists so the two
+/// methods that offer `clearAfterMs` refuse it in the same words and at the
+/// same point. They did neither. `vault.copy` checked here and named the
+/// parameter; `vault.generate-copy` let the clipboard raise it and reported
+/// `clear timeout must be between ...`, which is the same limit under a name
+/// that appears in no API. Adjacent methods, one field, two answers.
+///
+/// Early also means before the work: `vault.generate-copy` drew a password and
+/// moved it into locked pages before finding out the request could not be
+/// satisfied. Nothing leaked -- the buffer is wiped when it drops -- but a
+/// value that was never going to be used is not worth generating.
+pub(crate) fn clipboard_ttl(clear_after_ms: Option<u64>) -> Result<Duration, ServiceError> {
+    let ttl = clear_after_ms.map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
+    if ttl < clipboard::MIN_TTL || ttl > clipboard::MAX_TTL {
+        return Err(ServiceError::new(
+            "bad-params",
+            format!(
+                "clearAfterMs must be between {}ms and {}ms",
+                clipboard::MIN_TTL.as_millis(),
+                clipboard::MAX_TTL.as_millis()
+            ),
+        ));
+    }
+    Ok(ttl)
+}
+
 pub(crate) fn clipboard_error(error: clipboard::ClipboardError) -> ServiceError {
     let code = match &error {
         clipboard::ClipboardError::TtlOutOfRange { .. } => "bad-params",
