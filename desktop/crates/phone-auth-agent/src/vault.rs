@@ -15,8 +15,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use phone_auth_protocol::vault::{
-    FetchRequest, FetchResponse, ItemSummary, ListRequest, ListResponse, OPERATION_FETCH,
-    OPERATION_LIST,
+    CreateRequest, FetchRequest, FetchResponse, ItemKind, ItemSummary, ListRequest, ListResponse,
+    OPERATION_CREATE, OPERATION_FETCH, OPERATION_LIST, WriteResponse,
 };
 use phone_auth_protocol::{
     ApplicationErrorCode, ApplicationFrame, ApplicationFrameKind, PROTOCOL_VERSION,
@@ -85,6 +85,20 @@ impl std::fmt::Display for VaultError {
     }
 }
 
+/// What the desktop wants stored, on its way to the phone.
+///
+/// Deliberately without a `Drop` of its own: its fields are moved straight
+/// into a `CreateRequest`, which wipes the secret when it goes, and a type
+/// that wipes cannot have its fields moved out. Callers hold the password in
+/// locked memory and build one of these at the last moment.
+pub struct NewItem {
+    pub kind: ItemKind,
+    pub name: String,
+    pub username: String,
+    pub uri: String,
+    pub secret: String,
+}
+
 /// A phone's vault, reached over one already established session.
 pub struct PhoneVault<'a> {
     session: &'a mut Box<dyn SecureSession + Send>,
@@ -142,6 +156,40 @@ impl<'a> PhoneVault<'a> {
         decoded.map_err(|error| VaultError::protocol(error.to_string()))
     }
 
+    /// Stores a new item on the phone, after the user approves it there.
+    ///
+    /// The secret travels and is never kept. `CreateRequest` wipes its own on
+    /// drop, and the caller's copy should live in locked memory until this
+    /// returns -- this side of the product does not have a place to put a
+    /// password, and that is the point of it.
+    ///
+    /// `create` is the one operation whose approval sheet is worded from the
+    /// frame rather than from the phone's own store, because the item does not
+    /// exist there yet. So the name sent here is the name the person reads
+    /// before deciding.
+    pub fn create(&mut self, item: NewItem) -> Result<WriteResponse, VaultError> {
+        let request = CreateRequest {
+            verifier_name: self.verifier_name.clone(),
+            kind: item.kind,
+            name: item.name,
+            username: item.username,
+            uri: item.uri,
+            secret: item.secret,
+        };
+        request
+            .validate()
+            .map_err(|error| VaultError::protocol(error.to_string()))?;
+
+        // `exchange` wipes the bytes it sends, which is what matters here:
+        // this is the one request payload in the product that carries a
+        // secret, the mirror of the reply `fetch` already wipes.
+        let mut answer = self.exchange(OPERATION_CREATE, request.encode())?;
+        let decoded = WriteResponse::decode(&answer);
+        answer.zeroize();
+
+        decoded.map_err(|error| VaultError::protocol(error.to_string()))
+    }
+
     /// Sends one application frame and returns the payload of the matching
     /// reply, or an error nobody can mistake for a grant.
     fn exchange(&mut self, operation: &str, payload: Vec<u8>) -> Result<Vec<u8>, VaultError> {
@@ -151,7 +199,7 @@ impl<'a> PhoneVault<'a> {
             ));
         }
         let issued_at_ms = now_ms();
-        let request = ApplicationFrame {
+        let mut request = ApplicationFrame {
             protocol_version: PROTOCOL_VERSION,
             kind: ApplicationFrameKind::Request,
             request_id: random::request_id(),
@@ -165,9 +213,15 @@ impl<'a> PhoneVault<'a> {
             .validate()
             .map_err(|error| VaultError::protocol(error.to_string()))?;
 
-        self.session
-            .send(&request.encode())
-            .map_err(|_| VaultError::Unavailable)?;
+        // Bound and wiped rather than sent from a temporary. Every other
+        // operation's payload is an id or a cursor, but `vault.create` carries
+        // a password, and it would otherwise sit in freed heap on the one side
+        // of this product whose whole promise is that it never keeps one.
+        let mut encoded = request.encode();
+        let sent = self.session.send(&encoded);
+        encoded.zeroize();
+        request.payload.zeroize();
+        sent.map_err(|_| VaultError::Unavailable)?;
         let mut raw = self
             .session
             .receive(RECEIVE_TIMEOUT)
@@ -470,6 +524,62 @@ mod tests {
             error,
             VaultError::Protocol("the vault listing did not end".into())
         );
+    }
+
+    #[test]
+    fn a_create_carries_the_new_item_and_comes_back_with_its_id() {
+        // The name matters more here than anywhere else: `create` is the only
+        // vault operation whose approval sheet is worded from the frame,
+        // because the item does not exist on the phone yet. What is sent is
+        // what the person reads before deciding.
+        let mut transport = session(true, |request| {
+            assert_eq!(request.operation, OPERATION_CREATE);
+            let asked = CreateRequest::decode(&request.payload).expect("payload decodes");
+            assert_eq!(asked.verifier_name, "Workstation");
+            assert_eq!(asked.name, "Banco");
+            assert_eq!(asked.username, "alice");
+            assert_eq!(asked.uri, "https://banco.example.com");
+            assert_eq!(asked.secret, "correct horse battery staple");
+            reply(
+                request,
+                WriteResponse {
+                    item_id: "item-9".into(),
+                    revision: 1,
+                }
+                .encode(),
+            )
+        });
+
+        let written = PhoneVault::new(&mut transport, "Workstation")
+            .create(NewItem {
+                kind: ItemKind::Login,
+                name: "Banco".into(),
+                username: "alice".into(),
+                uri: "https://banco.example.com".into(),
+                secret: "correct horse battery staple".into(),
+            })
+            .expect("the create succeeds");
+        assert_eq!(written.item_id, "item-9");
+        assert_eq!(written.revision, 1);
+    }
+
+    #[test]
+    fn a_create_over_an_unauthenticated_session_never_sends_the_secret() {
+        // The check that stops it is the same one guarding every other
+        // operation, but this is the one whose payload is a password: a
+        // session that is not both authenticated and confidential must be
+        // refused before the frame is built, not after.
+        let mut transport = session(false, |_| unreachable!("nothing may be sent"));
+        let error = PhoneVault::new(&mut transport, "Workstation")
+            .create(NewItem {
+                kind: ItemKind::Login,
+                name: "Banco".into(),
+                username: String::new(),
+                uri: String::new(),
+                secret: "correct horse battery staple".into(),
+            })
+            .expect_err("an unsuitable session is refused");
+        assert!(matches!(error, VaultError::Protocol(_)), "{error:?}");
     }
 
     #[test]
