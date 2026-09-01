@@ -296,15 +296,36 @@ internal object VaultStoreCodec {
         }
     }
 
+    /**
+     * A stored item that fails these did not come from a request, so it is not
+     * `invalid_arguments`.
+     *
+     * The bounds are shared with [VaultItemInput.from], and the helpers that
+     * enforce them raise the code a bad *request* gets. Everything else in
+     * [decode] says `store_corrupt`, and the difference is not cosmetic: the
+     * screen treats `store_corrupt` as permanent -- it stops offering
+     * "Desbloquear" and starts offering the discard, which is the only way out
+     * of a blob that will never parse. Under the request code it kept the
+     * button live, so the answer to a vault that cannot open was to try to
+     * open it again, and the one thing that could help was hidden.
+     */
     private fun validate(item: VaultItem) {
-        validateText("id", item.id, 64, allowEmpty = false)
-        requireRevision(item.revision)
-        if (item.kind.toLong() !in KIND_RANGE) throw VaultStoreFailure("store_corrupt", "Vault storage is corrupt")
-        validateText("name", item.name, 255, allowEmpty = false)
-        validateText("username", item.username, 255, allowEmpty = true)
-        validateText("uri", item.uri, 1024, allowEmpty = true)
-        validateText("secret", item.secret, 4096, allowEmpty = false)
+        try {
+            validateText("id", item.id, 64, allowEmpty = false)
+            requireRevision(item.revision)
+            if (item.kind.toLong() !in KIND_RANGE) corrupt()
+            validateText("name", item.name, 255, allowEmpty = false)
+            validateText("username", item.username, 255, allowEmpty = true)
+            validateText("uri", item.uri, 1024, allowEmpty = true)
+            validateText("secret", item.secret, 4096, allowEmpty = false)
+        } catch (failure: VaultStoreFailure) {
+            if (failure.code == "store_corrupt") throw failure
+            corrupt()
+        }
     }
+
+    private fun corrupt(): Nothing =
+        throw VaultStoreFailure("store_corrupt", "Vault storage is corrupt")
 }
 
 internal object VaultCiphertext {

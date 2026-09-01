@@ -38,6 +38,32 @@ class VaultStoreTest {
         assertFails { VaultCiphertext.open(tamperedCipher, tampered) }
     }
 
+    /**
+     * A blob that will never parse has to say so with the code the screen
+     * acts on. `store_corrupt` is what stops it offering "Desbloquear" and
+     * starts offering the discard; under the code for a bad request it kept
+     * the button live and hid the only thing that helps.
+     */
+    @Test
+    fun `a stored item outside the bounds is corruption, not a bad request`() {
+        val cases = mapOf(
+            "an empty name" to """{"id":"a","revision":1,"kind":0,"name":"","username":"","uri":"","secret":"s","updatedAtMs":1}""",
+            "an oversized name" to """{"id":"a","revision":1,"kind":0,"name":"${"n".repeat(256)}","username":"","uri":"","secret":"s","updatedAtMs":1}""",
+            "an empty secret" to """{"id":"a","revision":1,"kind":0,"name":"n","username":"","uri":"","secret":"","updatedAtMs":1}""",
+            "a revision below one" to """{"id":"a","revision":0,"kind":0,"name":"n","username":"","uri":"","secret":"s","updatedAtMs":1}""",
+            "an unknown kind" to """{"id":"a","revision":1,"kind":9,"name":"n","username":"","uri":"","secret":"s","updatedAtMs":1}""",
+        )
+
+        for ((what, item) in cases) {
+            val blob = """{"version":1,"items":[$item]}""".toByteArray()
+            assertEquals(
+                "store_corrupt",
+                assertFailsWith<VaultStoreFailure> { VaultStoreCodec.decode(blob) }.code,
+                what,
+            )
+        }
+    }
+
     @Test
     fun `future storage versions fail closed without looking corrupt`() {
         val futurePlaintext = """{"version":2,"items":[]}""".toByteArray()
