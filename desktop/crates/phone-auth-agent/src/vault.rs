@@ -190,14 +190,24 @@ impl<'a> PhoneVault<'a> {
         decoded.map_err(|error| VaultError::protocol(error.to_string()))
     }
 
-    /// Sends one application frame and returns the payload of the matching
-    /// reply, or an error nobody can mistake for a grant.
-    fn exchange(&mut self, operation: &str, payload: Vec<u8>) -> Result<Vec<u8>, VaultError> {
+    /// Whether this request may be sent at all.
+    ///
+    /// Separated from [`exchange`](Self::exchange) so that both ways of saying
+    /// no leave through one door, which is where the payload is wiped.
+    fn check(&self, request: &ApplicationFrame) -> Result<(), VaultError> {
         if !self.session.security().suitable_for_authorization() {
             return Err(VaultError::protocol(
                 "the vault needs an authenticated confidential session",
             ));
         }
+        request
+            .validate()
+            .map_err(|error| VaultError::protocol(error.to_string()))
+    }
+
+    /// Sends one application frame and returns the payload of the matching
+    /// reply, or an error nobody can mistake for a grant.
+    fn exchange(&mut self, operation: &str, payload: Vec<u8>) -> Result<Vec<u8>, VaultError> {
         let issued_at_ms = now_ms();
         let mut request = ApplicationFrame {
             protocol_version: PROTOCOL_VERSION,
@@ -209,9 +219,17 @@ impl<'a> PhoneVault<'a> {
             expires_at_ms: issued_at_ms + VALIDITY_MS,
             payload,
         };
-        request
-            .validate()
-            .map_err(|error| VaultError::protocol(error.to_string()))?;
+        // Both refusals happen with the password already in `request.payload`,
+        // and both used to return with it still there. The success path below
+        // goes out of its way to keep that payload out of freed heap; a
+        // session that turned out not to be confidential, or a frame a size
+        // bound refuses, took the same password to the same place by the
+        // shorter route. Checked here, after the frame exists, so there is one
+        // buffer to wipe and one place that wipes it.
+        if let Err(error) = self.check(&request) {
+            request.payload.zeroize();
+            return Err(error);
+        }
 
         // Bound and wiped rather than sent from a temporary. Every other
         // operation's payload is an id or a cursor, but `vault.create` carries
