@@ -20,6 +20,11 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/protocol/application_frame.dart';
+import 'package:phone_auth/core/protocol/locker_payloads.dart' as locker;
+import 'package:phone_auth/core/protocol/luks_payloads.dart' as luks;
+import 'package:phone_auth/core/protocol/permission_payloads.dart'
+    as permissions;
+import 'package:phone_auth/core/protocol/ssh_payloads.dart' as ssh;
 import 'package:phone_auth/core/protocol/vault_payloads.dart' as wire;
 
 import 'support/property_config.dart';
@@ -39,7 +44,34 @@ void main() {
     'VaultDeleteRequest': (bytes) => wire.VaultDeleteRequest.decode(bytes),
     'VaultDeleteResponse': (bytes) => wire.VaultDeleteResponse.decode(bytes),
     'VaultWriteResponse': (bytes) => wire.VaultWriteResponse.decode(bytes),
+    // Everything below reads a session too. The list used to stop at the
+    // vault, which made the property a statement about one purpose rather than
+    // about the wire: a locker frame, an ssh frame or a permissions frame
+    // reaches its handler by the same path, through callers that catch
+    // `FormatException` and nothing else.
+    'LockerWrapRequest': (bytes) => locker.LockerWrapRequest.decode(bytes),
+    'LockerWrapResponse': (bytes) => locker.LockerWrapResponse.decode(bytes),
+    'LockerUnwrapRequest': (bytes) => locker.LockerUnwrapRequest.decode(bytes),
+    'LockerUnwrapResponse': (bytes) =>
+        locker.LockerUnwrapResponse.decode(bytes),
+    'LuksEnrollRequest': (bytes) => luks.LuksEnrollRequest.decode(bytes),
+    'LuksEnrollResponse': (bytes) => luks.LuksEnrollResponse.decode(bytes),
+    'LuksUnlockRequest': (bytes) => luks.LuksUnlockRequest.decode(bytes),
+    'LuksUnlockResponse': (bytes) => luks.LuksUnlockResponse.decode(bytes),
+    'SshSignRequest': (bytes) => ssh.SshSignRequest.decode(bytes),
+    'SshSignResponse': (bytes) => ssh.SshSignResponse.decode(bytes),
+    'PermissionSyncRequest': (bytes) =>
+        permissions.PermissionSyncRequest.decode(bytes),
+    'PermissionSyncResponse': (bytes) =>
+        permissions.PermissionSyncResponse.decode(bytes),
   };
+
+  // What belongs above: every decoder this side points at bytes it did not
+  // write. `Enrolment` is deliberately not one of them -- the phone builds an
+  // enrolment and sends it, and the desktop is the side that reads one, which
+  // is why its `decode` exists here only to close a round trip in a test. The
+  // day the phone reads an enrolment from a QR code it goes in the map, and it
+  // will need the same wrapping the others have.
 
   /// Bytes that look enough like CBOR to get past the first branch.
   ///
