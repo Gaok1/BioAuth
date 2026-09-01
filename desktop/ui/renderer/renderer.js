@@ -52,6 +52,21 @@ function renderStatus(status) {
   renderTransports(status.transports || [], status.blockedOn || []);
 }
 
+/// The device waiting on the agent, and the last one that refused to go.
+///
+/// The same reason the vault panel holds `vaultCopying`: this list is rebuilt
+/// from scratch by every status poll, which is every four seconds, and a
+/// `devices.forget` is in flight across at least one of them. The button that
+/// was disabled was a detached node by then, and the row on screen offered the
+/// press again.
+///
+/// The failure had nowhere to go either. The old handler wrote the error onto
+/// the button and never re-enabled it, so a forget that failed left a dead
+/// button labelled with a sentence -- and the next poll replaced it with a
+/// fresh "esquecer" that said nothing had happened.
+let forgetting = null;
+let forgetFailure = null;
+
 function renderDevices(devices) {
   const container = el('devices');
   clear(container);
@@ -69,14 +84,32 @@ function renderDevices(devices) {
     row.appendChild(node('h3', null, device.displayName));
 
     const forget = node('button', 'tag', 'esquecer');
+    // Re-applied on every render, so neither state is lost to a poll.
+    if (forgetting === device.deviceId) {
+      forget.disabled = true;
+    } else if (forgetFailure && forgetFailure.deviceId === device.deviceId) {
+      forget.textContent = forgetFailure.message;
+    }
     forget.addEventListener('click', async () => {
+      if (forgetting) return;
+      forgetting = device.deviceId;
+      forgetFailure = null;
       forget.disabled = true;
       try {
         await api.call('devices.forget', { deviceId: device.deviceId });
-        await refresh();
       } catch (error) {
-        forget.textContent = error.message;
+        forgetFailure = { deviceId: device.deviceId, message: error.message };
+      } finally {
+        forgetting = null;
+        // Both: this button when it is still the one on screen, and the state
+        // above for when a poll has already replaced it. Neither knows which
+        // of the two happened.
+        forget.disabled = false;
+        forget.textContent = forgetFailure ? forgetFailure.message : 'esquecer';
       }
+      // On the way out of both paths. A device that went needs the list
+      // without it; one that refused to go needs the reason on the live row.
+      await refresh();
     });
     row.appendChild(forget);
     entry.appendChild(row);
