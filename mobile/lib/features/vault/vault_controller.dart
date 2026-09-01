@@ -8,6 +8,7 @@ import '../../core/vault/totp.dart';
 import '../../core/vault/vault_export.dart';
 import 'vault_favourites.dart';
 import 'vault_store.dart';
+import '../../core/vault/vault_mutations.dart';
 
 typedef VaultClipboard = Future<void> Function(String value);
 
@@ -33,14 +34,30 @@ class VaultController extends ChangeNotifier {
     VaultStore? store,
     VaultClipboard? copy,
     VaultFavourites? favourites,
+    VaultMutations? mutations,
   }) : _store = store ?? const NativeVaultStore(),
        _favourites = favourites ?? VaultFavourites(),
-       _copy = copy ?? copySensitive;
+       _mutations = mutations ?? VaultMutations.shared,
+       _copy = copy ?? copySensitive {
+    _mutations.addListener(_storeChanged);
+  }
 
   final VaultStore _store;
   final VaultFavourites _favourites;
   final VaultClipboard _copy;
+  final VaultMutations _mutations;
   List<VaultItemSummary> _items = const [];
+
+  /// Every replacement of the list goes through here.
+  ///
+  /// [stale] means "these items are older than the store", so it has to die
+  /// with the items it described. Clearing it at each assignment site instead
+  /// was one edit away from a banner that never went away.
+  set _list(List<VaultItemSummary> items) {
+    _items = items;
+    stale = false;
+  }
+
   String _query = '';
   String? _revealedId;
   String? _revealedSecret;
@@ -51,6 +68,14 @@ class VaultController extends ChangeNotifier {
   bool locked = true;
   bool busy = false;
   String? error;
+
+  /// Whether a write landed in the store after this list was read.
+  ///
+  /// Only the desktop can do that: the screen's own writes replace [_items] as
+  /// they finish. Left unsaid, a password created from the PC simply was not
+  /// on the phone, and three separate failures already tell the user to
+  /// "atualize o cofre" — an instruction the screen had no way to follow.
+  bool stale = false;
 
   /// Whether the last failure was one no retry can fix.
   ///
@@ -146,7 +171,7 @@ class VaultController extends ChangeNotifier {
   }
 
   Future<void> unlock() => _run(() async {
-    _items = await _store.listAll();
+    _list = await _store.listAll();
     locked = false;
     // Deliberately not awaited. The vault opens at the vault's speed; if the
     // preference store is slow or absent, the list appears unordered and
@@ -182,7 +207,7 @@ class VaultController extends ChangeNotifier {
   /// the app leaves the foreground, so this was not a state anybody had to go
   /// looking for.
   void _forget() {
-    _items = const [];
+    _list = const [];
     _query = '';
     _revealedId = null;
     _revealedSecret = null;
@@ -247,9 +272,35 @@ class VaultController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _mutations.removeListener(_storeChanged);
     _totpTicker?.cancel();
     super.dispose();
   }
+
+  /// A write served to a desktop landed in the store this screen is showing.
+  ///
+  /// Deliberately does not reload. Listing decrypts the vault and the key is
+  /// auth-per-use, so reloading here would raise a fingerprint prompt out of
+  /// nowhere. The list says it is behind and [refresh] spends the biometric
+  /// when the user asks for it.
+  void _storeChanged() {
+    if (_disposed || locked || stale) return;
+    stale = true;
+    notifyListeners();
+  }
+
+  /// Reads the vault again, at the cost of one biometric prompt.
+  ///
+  /// The way out of every "atualize o cofre" the screen can show: a revision
+  /// conflict on copy or on reveal, an edit refused because the item moved,
+  /// and a list that a desktop wrote behind.
+  Future<void> refresh() => _run(() async {
+    _list = await _store.listAll();
+    // Whatever was on screen was read from the list that just went away.
+    _revealedId = null;
+    _revealedSecret = null;
+    _clearTotp();
+  });
 
   Future<void> copy(VaultItemSummary item) => _run(() async {
     final fetched = await _store.fetch(item.id);
@@ -324,7 +375,7 @@ class VaultController extends ChangeNotifier {
         for (final item in items) item.toInput(),
       ]);
       outcome = restored;
-      _items = restored.items ?? await _store.listAll();
+      _list = restored.items ?? await _store.listAll();
     });
     return outcome;
   }
@@ -358,7 +409,7 @@ class VaultController extends ChangeNotifier {
     await _run(() async {
       final restored = await _store.restore(items);
       outcome = restored;
-      _items = restored.items ?? await _store.listAll();
+      _list = restored.items ?? await _store.listAll();
     });
     return outcome;
   }
@@ -372,7 +423,7 @@ class VaultController extends ChangeNotifier {
   /// that cannot say returns null and the vault is read again.
   Future<void> _mutate(Future<List<VaultItemSummary>?> Function() action) =>
       _run(() async {
-        _items = await action() ?? await _store.listAll();
+        _list = await action() ?? await _store.listAll();
         _revealedId = null;
         _revealedSecret = null;
         _clearTotp();

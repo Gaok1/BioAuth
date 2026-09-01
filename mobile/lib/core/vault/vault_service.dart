@@ -6,6 +6,7 @@ import '../protocol/application_frame.dart';
 import '../protocol/vault_payloads.dart' as wire;
 import 'vault_approval.dart';
 import 'vault_listing.dart';
+import 'vault_mutations.dart';
 
 /// Serves vault application frames without exposing storage failure details.
 class VaultService {
@@ -14,8 +15,13 @@ class VaultService {
     VaultApproval? approval,
     VaultListing? listing,
     ApplicationIdempotency? retries,
+    VaultMutations? mutations,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now,
+       // Shared by default rather than owned, unlike everything else here:
+       // this one exists to reach the vault screen, and a service that made
+       // its own would announce every write to nobody.
+       _mutations = mutations ?? VaultMutations.shared,
        // Its own by default, for the same reason `_listing` has one and with
        // the same consequence: a service that owns its cache gives it up when
        // it dies, and this service dies after one frame. A retry arrives on
@@ -40,6 +46,7 @@ class VaultService {
   final VaultApproval _approval;
   final DateTime Function() _clock;
   final ApplicationIdempotency _idempotency;
+  final VaultMutations _mutations;
 
   /// How many summaries go in one response.
   ///
@@ -286,6 +293,7 @@ class VaultService {
     // service made has to invalidate it: otherwise the next request for this
     // item would name it whatever it was called before.
     _listing.forget();
+    _mutations.recordWrite();
     return wire.VaultWriteResponse(
       itemId: written.id,
       revision: written.revision,
@@ -307,6 +315,7 @@ class VaultService {
     // service made has to invalidate it: otherwise the next request for this
     // item would name it whatever it was called before.
     _listing.forget();
+    _mutations.recordWrite();
     return wire.VaultWriteResponse(
       itemId: written.id,
       revision: written.revision,
@@ -326,6 +335,7 @@ class VaultService {
       ),
     );
     _listing.forget();
+    _mutations.recordWrite();
     return wire.VaultDeleteResponse(itemId: request.itemId).encode();
   }
 

@@ -102,6 +102,11 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
                 actions: [
                   if (!controller.locked) ...[
                     IconButton(
+                      tooltip: 'Atualizar cofre',
+                      onPressed: controller.busy ? null : controller.refresh,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                    IconButton(
                       tooltip: 'Backup do cofre',
                       onPressed: _backup,
                       icon: const Icon(Icons.backup_outlined),
@@ -253,6 +258,29 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
           ),
         ),
       ),
+      // Not an error, so not painted as one: nothing failed and nothing was
+      // lost. It says the list is older than the vault, which is the only
+      // way the user learns that a password created on the PC arrived.
+      if (controller.stale)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+          child: Row(
+            children: [
+              const Icon(Icons.sync_problem_outlined, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Um computador gravou no cofre desde que ele foi '
+                  'aberto.',
+                ),
+              ),
+              TextButton(
+                onPressed: controller.busy ? null : controller.refresh,
+                child: const Text('Atualizar'),
+              ),
+            ],
+          ),
+        ),
       if (controller.error case final message?)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
