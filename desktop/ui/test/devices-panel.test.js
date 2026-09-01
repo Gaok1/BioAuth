@@ -233,3 +233,145 @@ test('a forget in flight survives the poll rebuilding the list', async () => {
   await harness.settle();
   assert.equal(harness.forgetButtons()[0].disabled, false);
 });
+
+// The permission editor, and the window every assertion here is about: the
+// same four-second poll rebuilds this list while a write is in flight.
+
+const grantedDevice = {
+  deviceId: 'phone-1',
+  displayName: 'Pixel',
+  credentials: [
+    {
+      credentialId: 'desktop-1-login',
+      keyKind: 'StrongBox',
+      purpose: 'Authorization',
+      permissionsRevision: 3,
+      permissions: [
+        { service: 'sudo', action: '*', resource: '*', user: '*' },
+      ],
+    },
+  ],
+};
+
+function permissionAgent(handlers = {}) {
+  return async (method, params) => {
+    if (method === 'status') {
+      return { verifierName: 'PhoneAuth', pairedDevices: [grantedDevice] };
+    }
+    if (method === 'audit.recent') return { entries: [] };
+    if (handlers[method]) return handlers[method](params);
+    return {};
+  };
+}
+
+/// The checkboxes in the editor row, in the order `GRANTABLE` lists them.
+function checkboxes(harness) {
+  return harness
+    .element('devices')
+    .children.flatMap((entry) => entry.children)
+    .flatMap((row) => row.children)
+    .flatMap((child) => child.children)
+    .filter((child) => child.tagName === 'input');
+}
+
+function syncButton(harness) {
+  return harness
+    .element('devices')
+    .children.flatMap((entry) => entry.children)
+    .flatMap((row) => row.children)
+    .find((child) => child.tagName === 'button' && child.textContent === 'sincronizar');
+}
+
+test('the editor shows what is granted and sends the whole set', async () => {
+  const sent = [];
+  const harness = boot({
+    call: permissionAgent({
+      'devices.setPermissions': (params) => {
+        sent.push(params);
+        return { updated: true };
+      },
+    }),
+  });
+  await harness.settle();
+
+  const boxes = checkboxes(harness);
+  // `sudo` is first in GRANTABLE and is the one grant this credential holds.
+  assert.equal(boxes[0].checked, true, 'a granted service was not ticked');
+  assert.equal(boxes[1].checked, false);
+
+  // Ticking `login` must send both, not just the new one: the agent replaces
+  // the set, so a call carrying one service is a revocation of the other.
+  boxes[1].checked = true;
+  await boxes[1].emit('change');
+  await harness.settle();
+
+  assert.equal(sent.length, 1);
+  // Copied into this realm first: the params object was built inside the vm
+  // context, and its Array has a different prototype than the literal below.
+  assert.deepEqual(
+    Array.from(sent[0].permissions, (permission) => permission.service).sort(),
+    ['login', 'sudo']
+  );
+  assert.equal(sent[0].permissions[0].resource, '*');
+});
+
+test('a second tick while the first is in flight is put back, not sent', async () => {
+  // The poll rebuilds this list mid-write, so the box the user ticked may be
+  // a detached node by the time the agent answers. Two writes racing would
+  // have the later one carry a set built from the older render — and silently
+  // revoke whatever the first one granted.
+  let release;
+  const sent = [];
+  const harness = boot({
+    call: permissionAgent({
+      'devices.setPermissions': (params) => {
+        sent.push(params);
+        return new Promise((resolve) => {
+          release = () => resolve({ updated: true });
+        });
+      },
+    }),
+  });
+  await harness.settle();
+
+  const boxes = checkboxes(harness);
+  boxes[1].checked = true;
+  const first = boxes[1].emit('change');
+  await harness.settle();
+
+  // Fired, not awaited. Without the guard the second change starts a write
+  // the fake never answers, and awaiting it hangs the run for the full test
+  // timeout instead of failing -- which reads as a broken test rather than a
+  // broken guard.
+  boxes[2].checked = true;
+  void boxes[2].emit('change');
+  await harness.settle();
+
+  assert.equal(sent.length, 1, 'a second write went out while the first was open');
+  assert.equal(boxes[2].checked, false, 'the box stayed ticked on a call never made');
+
+  release();
+  await first;
+});
+
+test('a sync that fails says why on a live row', async () => {
+  const harness = boot({
+    call: permissionAgent({
+      'devices.syncPermissions': () => {
+        throw new Error('o telefone não respondeu');
+      },
+    }),
+  });
+  await harness.settle();
+
+  await syncButton(harness).emit('click');
+  await harness.settle();
+
+  const shown = harness
+    .element('devices')
+    .children.flatMap((entry) => entry.children)
+    .flatMap((row) => row.children)
+    .some((child) => child.textContent === 'o telefone não respondeu');
+  assert.equal(shown, true, 'a failed sync said nothing');
+  assert.equal(syncButton(harness).disabled, false, 'the button stayed dead');
+});

@@ -70,6 +70,8 @@ test('the list is exactly what the panels call', () => {
   assert.deepEqual([...ALLOWED_METHODS].sort(), [
     'audit.recent',
     'devices.forget',
+    'devices.setPermissions',
+    'devices.syncPermissions',
     'pair.begin',
     'pair.cancel',
     'pair.confirm',

@@ -25,15 +25,22 @@
 /** Methods the renderer may invoke. Anything not listed is refused. */
 const ALLOWED_METHODS = new Set([
   'status',
-  // No `devices.list`: the device panel reads `status.pairedDevices`, which
-  // the tray already polls. No `devices.setPermissions` either -- it changes
-  // what a paired phone is allowed to authorize, which is the most
-  // consequential thing in the `devices` namespace, and no panel has ever
-  // offered it. Both sat here from the first commit. The agent still serves
-  // both: `devices.list` is what `phone-auth devices` calls, and
-  // `devices.setPermissions` has no client at all in this repo -- which is a
-  // reason to leave it out of a window's reach, not a reason to keep it in.
+  // Still no `devices.list`: the device panel reads `status.pairedDevices`,
+  // which the tray already polls and which carries the same credentials.
   'devices.forget',
+  // Changing what a paired phone may authorize is the most consequential
+  // thing in this namespace, and these two sat on this list for months with
+  // no caller -- which is why they were taken off. They are back because the
+  // device panel now offers both, which is the rule this list is kept by:
+  // an entry exists while its caller does.
+  //
+  // Neither can reveal anything. `setPermissions` writes a list the panel
+  // already displays, and `syncPermissions` settles that list with the phone
+  // and answers with a count and a revision. The phone is the other place the
+  // same list can be edited, and without the sync a change made there would
+  // wait for a session that had some other reason to happen.
+  'devices.setPermissions',
+  'devices.syncPermissions',
   'pair.begin',
   'pair.cancel',
   'pair.pending',

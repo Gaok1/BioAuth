@@ -67,6 +67,127 @@ function renderStatus(status) {
 let forgetting = null;
 let forgetFailure = null;
 
+/// The services a grant may name, and what to call them on screen.
+///
+/// A closed list because the enforcing side treats `service` as an exact match
+/// against a small vocabulary -- there is no wildcard for it, by design, since
+/// a wildcard service is a grant of everything. A free-text box here would
+/// mostly produce grants that match nothing.
+const GRANTABLE = [
+  ['sudo', 'sudo'],
+  ['login', 'login'],
+  ['vault', 'cofre'],
+  ['locker', 'arquivos'],
+  ['ssh', 'ssh'],
+  ['luks', 'disco'],
+  ['webauthn', 'passkeys'],
+];
+
+/// How every field but `service` says "any value". The same string the agent
+/// and the phone use; an empty one is a grant that matches nothing.
+const ANY = '*';
+
+/// Which credential is mid-write, and the last failure, for the same reason
+/// `forgetting` exists: this list is rebuilt by every status poll and the
+/// element that was disabled is a detached node by the time the call returns.
+let permissionBusy = null;
+let permissionFailure = null;
+
+function credentialKey(device, credential) {
+  return `${device.deviceId}/${credential.credentialId}`;
+}
+
+/// The editor for one credential's grants, plus the button that settles them
+/// with the phone.
+///
+/// Checkboxes rather than a free-text list: `service` is matched exactly
+/// against a closed vocabulary, so the useful choice is which of them, and the
+/// remaining three fields are `*` unless somebody needs otherwise -- which the
+/// CLI still covers.
+function permissionEditor(device, credential) {
+  const key = credentialKey(device, credential);
+  const busy = permissionBusy === key;
+  const box = node('div', 'row');
+  const granted = new Set(
+    (credential.permissions || []).map((permission) => permission.service)
+  );
+
+  for (const [service, label] of GRANTABLE) {
+    const wrapper = node('label', 'tag');
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = granted.has(service);
+    check.disabled = busy;
+    check.addEventListener('change', async () => {
+      if (permissionBusy) {
+        // Put back: the poll that follows the in-flight write is what decides
+        // what is true, and a box left ticked in the meantime says the agent
+        // agreed when it was never asked.
+        check.checked = granted.has(service);
+        return;
+      }
+      const next = new Set(granted);
+      if (check.checked) next.add(service);
+      else next.delete(service);
+      await writePermissions(device, credential, next);
+    });
+    wrapper.appendChild(check);
+    wrapper.appendChild(document.createTextNode(` ${label}`));
+    box.appendChild(wrapper);
+  }
+
+  const sync = node('button', 'tag', busy ? 'sincronizando…' : 'sincronizar');
+  sync.disabled = busy;
+  sync.addEventListener('click', async () => {
+    if (permissionBusy) return;
+    await runPermissionCall(key, () =>
+      api.call('devices.syncPermissions', {
+        deviceId: device.deviceId,
+        credentialId: credential.credentialId,
+      })
+    );
+  });
+  box.appendChild(sync);
+
+  if (permissionFailure && permissionFailure.key === key) {
+    box.appendChild(node('span', 'tag tag--warn', permissionFailure.message));
+  }
+  return box;
+}
+
+async function writePermissions(device, credential, services) {
+  await runPermissionCall(credentialKey(device, credential), () =>
+    api.call('devices.setPermissions', {
+      deviceId: device.deviceId,
+      credentialId: credential.credentialId,
+      permissions: [...services].map((service) => ({
+        service,
+        action: ANY,
+        resource: ANY,
+        user: ANY,
+      })),
+    })
+  );
+}
+
+/// One at a time, and the list refreshed on both paths.
+///
+/// A success needs the row redrawn from what the agent now holds; a failure
+/// needs the reason on a live row rather than on the detached one the poll
+/// already replaced.
+async function runPermissionCall(key, call) {
+  permissionBusy = key;
+  permissionFailure = null;
+  try {
+    await call();
+  } catch (error) {
+    permissionFailure = { key, message: error.message };
+  } finally {
+    permissionBusy = null;
+  }
+  await refresh();
+}
+
 function renderDevices(devices) {
   const container = el('devices');
   clear(container);
@@ -147,6 +268,7 @@ function renderDevices(devices) {
         permissions.appendChild(node('li', null, 'sem permissões — não autoriza nada'));
       }
       entry.appendChild(permissions);
+      entry.appendChild(permissionEditor(device, credential));
     }
 
     container.appendChild(entry);
