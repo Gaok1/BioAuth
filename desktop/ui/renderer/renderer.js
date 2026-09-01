@@ -396,10 +396,23 @@ function vaultNote(text, kind) {
   note.className = kind === 'bad' ? 'muted note--bad' : 'muted';
 }
 
+/// Loads the list. Returns null when the panel now shows a current one, or the
+/// reason it does not.
+///
+/// The answer matters to exactly one caller: storing an item re-lists straight
+/// afterwards, and used to write its own success line over whatever this left
+/// behind. A listing that failed set `vaultItems` to null, so the panel went
+/// empty -- and the sentence explaining why was replaced, half a tick later,
+/// by "guardado". A person who declined the second Keystore prompt got a
+/// success message above an empty vault and nothing anywhere saying to press
+/// Atualizar.
 async function loadVault() {
-  if (vaultLoading) return;
+  // Another listing is already on its way and will write the note itself.
+  // Not a failure to report: the panel does end up current.
+  if (vaultLoading) return null;
   vaultLoading = true;
   vaultNote('Perguntando ao telefone…');
+  let failure = null;
   try {
     const listed = await api.call('vault.list', {});
     vaultItems = listed.items || [];
@@ -410,11 +423,13 @@ async function loadVault() {
     );
   } catch (error) {
     vaultItems = null;
-    vaultNote(error.message, 'bad');
+    failure = error.message;
+    vaultNote(failure, 'bad');
   } finally {
     vaultLoading = false;
     renderVault();
   }
+  return failure;
 }
 
 function matchesQuery(item, query) {
@@ -583,9 +598,22 @@ el('vault-store').addEventListener('click', async (event) => {
     }
     // The listing this panel holds is now behind by one item, and it is the
     // one the person just made: refreshing is what lets them copy it.
+    //
+    // And it can fail on its own. Listing decrypts the vault, so it raises a
+    // second Keystore prompt a moment after the one the person just answered
+    // for the write -- with no approval sheet to explain it, which is the
+    // reason `copyItem` no longer re-lists at all. Declining that prompt does
+    // not undo the write: the item is on the phone, and both halves have to be
+    // said, or the panel reads "guardado" over a list that is empty for a
+    // reason nobody mentioned.
     vaultItems = null;
-    await loadVault();
-    vaultNote(`"${name}" guardado com senha de ${result.length} caracteres.`);
+    const failure = await loadVault();
+    const stored = `"${name}" guardado com senha de ${result.length} caracteres.`;
+    if (failure) {
+      vaultNote(`${stored} A lista não pôde ser atualizada: ${failure}`, 'bad');
+    } else {
+      vaultNote(stored);
+    }
   } catch (error) {
     vaultNote(error.message, 'bad');
   } finally {

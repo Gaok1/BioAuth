@@ -195,6 +195,34 @@ test('storing a login sends no secret and is given none back', async () => {
   assert.equal(harness.element('vault-new-name').value, '');
 });
 
+test('a store whose re-listing fails still says the item was stored', async () => {
+  // The write and the listing are two trips to the phone, and the second
+  // raises its own Keystore prompt with no approval sheet to explain it.
+  // Declining it does not undo the first. The panel used to write "guardado"
+  // over the listing's error and leave an empty list underneath, so the one
+  // action available -- press Atualizar -- was the one thing not said.
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.create') {
+        return { itemId: 'item-9', revision: 1, length: 20 };
+      }
+      throw new Error('o telefone recusou');
+    },
+  });
+
+  harness.element('vault-new-name').value = 'Banco';
+  await harness.element('vault-store').emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const note = harness.element('vault-note');
+  assert.match(note.textContent, /20 caracteres/, 'the write happened');
+  assert.match(note.textContent, /o telefone recusou/, 'the listing did not');
+  assert.match(note.className, /note--bad/);
+  // Still cleared: the item is on the phone, and leaving the fields filled
+  // invites a second copy of it.
+  assert.equal(harness.element('vault-new-name').value, '');
+});
+
 test('a store that fails keeps what was typed', async () => {
   // Clearing the fields on the way out would lose the person's typing every
   // time the phone declined or the write failed -- which is precisely when
