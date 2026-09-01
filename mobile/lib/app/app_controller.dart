@@ -190,6 +190,13 @@ class AppController extends Notifier<AppState> {
     if (request == null) return;
     final now = (at ?? DateTime.now()).toUtc();
     if (request.isExpiredAt(now)) {
+      // Answered, not just cleared. `receive` already refuses a request that
+      // arrives expired, and `deny` and `blockDevice` both say why in their
+      // own words: the desktop is holding a session open on this phone, and
+      // taking the card off the screen is not an answer to it. A request that
+      // expired while its sheet was up is the same request a minute later, and
+      // this was the one path out of the list that left the other end waiting.
+      _refuseUnasked(request.id);
       _finish(request, ConnectionPhase.expired, AuditOutcome.expired, now);
       return;
     }

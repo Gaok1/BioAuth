@@ -208,6 +208,52 @@ void main() {
     );
   });
 
+  test('a sheet that expires while up is refused, not just cleared', () async {
+    // The three other ways a request leaves the list all answer the desktop
+    // first, and two of them carry a comment saying why. This one took the
+    // card down, wrote the audit entry and left the session on the other end
+    // waiting out its own deadline with nothing coming back.
+    final controller = container.read(appControllerProvider.notifier);
+    final authorizer = container.read(interactiveAuthorizerProvider);
+    final asking = AuthenticationRequest(
+      requestId: 'expiring',
+      verifierId: 'desktop-casa',
+      verifierName: 'Desktop-Casa',
+      credentialId: 'desktop-casa-login-v1',
+      challenge: Uint8List.fromList(List<int>.filled(32, 9)),
+      origin: 'BLE pareado',
+      service: 'sudo',
+      action: 'nixos-rebuild switch',
+      resource: 'Desktop-Casa',
+      user: 'alice',
+      issuedAt: now,
+      expiresAt: now.add(const Duration(minutes: 1)),
+      sessionBinding: Uint8List(32),
+    );
+
+    bool? answered;
+    unawaited(
+      authorizer.confirm(asking, _properties).then((v) => answered = v),
+    );
+    await pumpEventQueue();
+    expect(answered, isNull, reason: 'the sheet is up and waiting on a tap');
+
+    // A minute later the tap lands, and the request is past its deadline.
+    await controller.approve(
+      'expiring',
+      at: now.add(const Duration(minutes: 2)),
+    );
+    await pumpEventQueue();
+
+    expect(answered, isFalse, reason: 'the desktop is told, not left waiting');
+    final state = container.read(appControllerProvider);
+    expect(
+      state.requests.where((request) => request.id == 'expiring'),
+      isEmpty,
+    );
+    expect(state.auditEntries.first.outcome, AuditOutcome.expired);
+  });
+
   test('a request from a blocked desktop is refused, not dropped', () async {
     final controller = container.read(appControllerProvider.notifier);
     final authorizer = container.read(interactiveAuthorizerProvider);
