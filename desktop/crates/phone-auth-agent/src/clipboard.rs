@@ -104,6 +104,10 @@ pub fn copy_secret(secret: &SecretBuffer, ttl: Duration) -> Result<CopyOutcome, 
     let text = std::str::from_utf8(secret.expose()).map_err(|_| ClipboardError::NotText)?;
 
     let excluded = platform::set_text(text)?;
+    // Before the timer, and before anything else can copy: this is what makes
+    // "is the entry still ours" answerable later, by the timer and by a person
+    // pressing clear.
+    platform::remember_ours();
     platform::schedule_clear(ttl);
 
     Ok(CopyOutcome {
@@ -114,6 +118,10 @@ pub fn copy_secret(secret: &SecretBuffer, ttl: Duration) -> Result<CopyOutcome, 
 }
 
 /// Removes the entry now, if it is still ours.
+///
+/// Where the platform can tell. Windows has a clipboard generation counter and
+/// the check is real there; X11 and Wayland have none, so this replaces the
+/// selection with nothing and says so rather than pretending otherwise.
 pub fn clear_now() -> Result<(), ClipboardError> {
     platform::clear()
 }
@@ -158,6 +166,7 @@ fn epoch_ms() -> i64 {
 #[cfg(windows)]
 mod platform {
     use super::{ClipboardError, Exclusions};
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
     use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::{
@@ -171,6 +180,31 @@ mod platform {
     /// `CF_UNICODETEXT`. Spelled out rather than imported so the clipboard code
     /// does not depend on an OLE feature it otherwise has no use for.
     const CF_UNICODETEXT: u32 = 13;
+
+    /// How many times an expiry will try before giving up.
+    ///
+    /// [`open`] already retries for about half a second, and that is enough for
+    /// the ordinary case of a clipboard manager holding the board while the
+    /// user copies. It is not enough for one that holds it longer, and a
+    /// swallowed failure there leaves the secret on the clipboard for good --
+    /// after the copy told the user, to the second, when it would be gone.
+    const CLEAR_ATTEMPTS: u32 = 8;
+
+    /// Between those attempts. Eight of these spans about half a minute.
+    const CLEAR_RETRY_DELAY: Duration = Duration::from_millis(4000);
+
+    /// The clipboard generation this module last wrote, or zero for none.
+    ///
+    /// A clear happens in two situations -- a timer firing, and a person asking
+    /// -- and only the timer knew which entry it was allowed to remove, because
+    /// it captured the generation itself. This is how the other one knows too:
+    /// pressing clear after copying something else must empty nothing.
+    static OURS: AtomicU32 = AtomicU32::new(0);
+
+    /// Records the entry just placed as this module's.
+    pub(super) fn remember_ours() {
+        OURS.store(sequence(), Ordering::Relaxed);
+    }
 
     /// Set to a `DWORD` 0 to keep the entry out of `Win+V` history.
     const FORMAT_HISTORY: &str = "CanIncludeInClipboardHistory";
@@ -322,17 +356,34 @@ mod platform {
         // and anything it held would outlive it too.
         std::thread::spawn(move || {
             std::thread::sleep(ttl);
-            if sequence() == ours {
-                let _ = clear();
+            for _ in 0..CLEAR_ATTEMPTS {
+                // Asked again every time round, so a copy the user makes while
+                // this is retrying ends the retries rather than being deleted
+                // by one of them.
+                if sequence() != ours {
+                    return;
+                }
+                if clear().is_ok() {
+                    return;
+                }
+                std::thread::sleep(CLEAR_RETRY_DELAY);
             }
         });
     }
 
     pub(super) fn clear() -> Result<(), ClipboardError> {
+        let ours = OURS.load(Ordering::Relaxed);
+        // Nothing of ours is out there, or the user has copied since. Emptying
+        // now would destroy their content, which is the data-loss bug this
+        // module's header refuses to trade for a security feature.
+        if ours == 0 || ours != sequence() {
+            return Ok(());
+        }
         open()?;
         // SAFETY: opened above.
         unsafe { EmptyClipboard() };
         close();
+        OURS.store(0, Ordering::Relaxed);
         Ok(())
     }
 
@@ -480,9 +531,16 @@ mod platform {
         Ok(Exclusions::default())
     }
 
+    /// Nothing to remember: neither tool exposes a generation counter, so
+    /// ownership is not a question this platform can answer. See [`clear`].
+    pub(super) fn remember_ours() {}
+
     pub(super) fn schedule_clear(ttl: Duration) {
         std::thread::spawn(move || {
             std::thread::sleep(ttl);
+            // Once, deliberately. Retrying without an ownership check would
+            // widen the window in which this deletes something the user copied
+            // in the meantime, which is the worse of the two failures.
             let _ = clear();
         });
     }
@@ -506,6 +564,8 @@ mod platform {
 mod platform {
     use super::{ClipboardError, Exclusions};
     use std::time::Duration;
+
+    pub(super) fn remember_ours() {}
 
     pub(super) fn set_text(_text: &str) -> Result<Exclusions, ClipboardError> {
         Err(ClipboardError::Unsupported)
@@ -613,6 +673,30 @@ mod tests {
             platform::testing::read_text().as_deref(),
             Some("the user's own text"),
             "the expiry timer cleared a clipboard entry that was not ours"
+        );
+    }
+
+    /// Pressing clear after copying something else must empty nothing.
+    ///
+    /// The timer has always known which entry it was allowed to remove; this
+    /// path did not, and `EmptyClipboard` does not ask.
+    #[cfg(windows)]
+    #[test]
+    fn clearing_by_hand_leaves_a_later_copy_alone() {
+        let _guard = test_lock();
+        let secret = SecretBuffer::from_slice(b"already-pasted");
+
+        copy_secret(&secret, MIN_TTL).expect("copy");
+        // Not through `copy_secret`: this stands for the user copying with
+        // Ctrl+C, which is the case the check exists for.
+        platform::set_text("the user's own text").expect("user copy");
+
+        clear_now().expect("clear");
+
+        assert_eq!(
+            platform::testing::read_text().as_deref(),
+            Some("the user's own text"),
+            "clearing by hand destroyed a clipboard entry that was not ours"
         );
     }
 
