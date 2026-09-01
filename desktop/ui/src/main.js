@@ -15,6 +15,7 @@ const { AgentConnection } = require('./agent-connection');
 const { AgentSupervisor } = require('./agent-supervisor');
 const { endpointFile } = require('./paths');
 const { SecureUpdater } = require('./secure-updater');
+const { allowsNavigation, externalTarget } = require('./window-guards');
 
 /** Methods the renderer may invoke. Anything not listed is refused. */
 const ALLOWED_METHODS = new Set([
@@ -108,11 +109,37 @@ function createWindow() {
     window.hide();
   });
 
-  // External links open in the real browser, never inside the app window.
+  // The window stays the page it loaded.
+  //
+  // `preload.js` attaches the agent bridge to whatever document lives here, so
+  // a navigation is not a change of view: it is a change of who holds
+  // `vault.copy`. Nothing in the renderer navigates, which is why this never
+  // fired -- and why letting it stay unguarded cost nothing to fix.
+  window.webContents.on('will-navigate', (event, url) => {
+    if (allowsNavigation(window.webContents.getURL(), url)) return;
+    event.preventDefault();
+    console.log(`phone-auth-tray: refused navigation to ${url}`);
+  });
+
+  // External links open in the real browser, never inside the app window --
+  // and only if they are web links. `shell.openExternal` hands anything else
+  // to the OS to resolve, which on Windows means `file:` and every protocol
+  // handler an installed program registered.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    const target = externalTarget(url);
+    if (target) shell.openExternal(target);
+    else console.log(`phone-auth-tray: refused to open ${url}`);
     return { action: 'deny' };
   });
+
+  // A view onto a local socket needs no camera, no microphone, no location and
+  // no notifications. Electron grants these to a `file:` page without asking.
+  const permissions = window.webContents.session;
+  permissions.setPermissionRequestHandler((_contents, permission, callback) => {
+    console.log(`phone-auth-tray: refused permission ${permission}`);
+    callback(false);
+  });
+  permissions.setPermissionCheckHandler(() => false);
 }
 
 function toggleWindow() {
