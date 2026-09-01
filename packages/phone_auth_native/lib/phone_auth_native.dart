@@ -374,15 +374,13 @@ class PhoneAuthWebAuthnRelay {
     required String origin,
     required String optionsJson,
   }) async {
-    final response = await _channel.invokeMapMethod<String, Object?>(
-      'performWebAuthn',
-      {
-        'requestId': requestId,
-        'operation': operation,
-        'origin': origin,
-        'optionsJson': optionsJson,
-      },
-    );
+    final response = await _channel
+        .invokeMapMethod<String, Object?>('performWebAuthn', {
+          'requestId': requestId,
+          'operation': operation,
+          'origin': origin,
+          'optionsJson': optionsJson,
+        });
     final json = response?['responseJson'];
     if (json is! String || json.isEmpty) {
       throw const FormatException('Invalid native WebAuthn response');
