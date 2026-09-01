@@ -245,6 +245,16 @@
       // sidebar holds a stale text input used to claim the reply and answer
       // "select the password field" while the frame holding the real one was
       // still working.
+      //
+      // The frame check belongs in the claim too. It was only asked inside
+      // `performFill`, so a cross-origin iframe with a stale focused field --
+      // an advertisement that once focused an input, and frames keep their
+      // `activeElement` after focus leaves them -- claimed the reply and then
+      // refused it with "this frame cannot be filled". The top frame, which
+      // could have been filled, never got to answer. One embed was enough to
+      // take the toolbar button away from a whole page, with a message about
+      // a frame the user never knew was there.
+      if (!frameIsFillable(window)) return undefined;
       if (!passwordFieldFor(fillTarget(document))) return undefined;
       performFill({
         view: window,

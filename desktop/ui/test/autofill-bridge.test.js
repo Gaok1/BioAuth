@@ -53,6 +53,13 @@ function input({
   };
 }
 
+/// The ordinary case: a page that is not in a frame at all.
+function topFrame() {
+  const view = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  view.top = view;
+  return view;
+}
+
 /// A frame whose parent is another origin: `top` reads, `top.location` throws.
 function crossOriginFrame({ protocol = 'https:' } = {}) {
   return {
@@ -396,11 +403,12 @@ test('the listener ignores messages that are not its own', () => {
 /// the field the person is typing in.
 test('a frame with nothing focused does not answer for the page', async () => {
   const claims = [];
-  const boot_ = (document) => {
+  const boot_ = (document, window = topFrame()) => {
     let listener;
     boot({
       document,
-      window: {},
+      window,
+      runtimeMessage: async () => ({ ok: true, password: 'hunter2' }),
       onMessage: (value) => {
         listener = value;
       },
@@ -428,7 +436,7 @@ test('a frame with nothing focused does not answer for the page', async () => {
       'the frame with the field claims the reply'
     );
   });
-  assert.equal(reply.ok, false, 'no view was given, so it refuses -- but it says so');
+  assert.equal(reply.ok, true, 'the frame that claimed went on to fill');
 });
 
 /// Clicking the username line is how people use a password manager, and this
@@ -488,9 +496,9 @@ test('a form with several password boxes gets none of them', async () => {
 /// held the password box was still working.
 test('a frame whose stale field cannot be filled does not claim the reply', () => {
   const listeners = [];
-  const bootFrame = (document) => {
+  const bootFrame = (document, window = topFrame()) => {
     let listener;
-    boot({ document, window: {}, onMessage: (value) => { listener = value; } });
+    boot({ document, window, onMessage: (value) => { listener = value; } });
     listeners.push(listener);
     return listener;
   };
@@ -508,4 +516,19 @@ test('a frame whose stale field cannot be filled does not claim the reply', () =
   const { username } = loginForm();
   const real = bootFrame({ activeElement: username });
   assert.equal(real({ type: 'bioauth-autofill-fill' }, {}, () => {}), true);
+
+  // And a cross-origin frame holding a perfectly good password field does not,
+  // however focused it is. It cannot be filled, so claiming the reply only
+  // takes it from the frame that can -- which is one embed silencing the
+  // toolbar button for a whole page, with a message about a frame the user
+  // never knew was there.
+  const advert = bootFrame(
+    { activeElement: loginForm().password },
+    crossOriginFrame()
+  );
+  assert.equal(
+    advert({ type: 'bioauth-autofill-fill' }, {}, () => {}),
+    undefined,
+    'an advertisement took the reply away from the page it sits in'
+  );
 });
