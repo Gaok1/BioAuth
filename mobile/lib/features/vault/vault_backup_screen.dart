@@ -47,7 +47,11 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
           padding: const EdgeInsets.all(20),
           children: [
             if (_backup case final backup?) ...[
-              _CodeCard(backup: backup, onSave: () => _save(backup)),
+              _CodeCard(
+                backup: backup,
+                onSave: () => _save(backup),
+                onCopy: () => _copyCode(backup.code),
+              ),
               const SizedBox(height: 24),
             ],
 
@@ -133,6 +137,28 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
       _busy = false;
       _backup = backup;
     });
+  }
+
+  /// Copies the code that opens the backup, and says which happened.
+  ///
+  /// The same reasoning as a copied password: nothing on screen changes when
+  /// the clipboard takes the value, and `EXTRA_IS_SENSITIVE` suppresses the
+  /// preview Android would otherwise raise. Here the stakes are higher -- this
+  /// string is the only way back into the file, and a user who believes they
+  /// have it saves the backup and closes the screen.
+  Future<void> _copyCode(String code) async {
+    try {
+      await copySensitive(code);
+      if (!mounted) return;
+      setState(() => _message = 'Código copiado.');
+    } on Object {
+      if (!mounted) return;
+      setState(
+        () => _message =
+            'Não foi possível copiar. Anote o código exatamente como está '
+            'acima — sem ele o backup não abre.',
+      );
+    }
   }
 
   Future<void> _save(VaultBackup backup) async {
@@ -280,10 +306,18 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
 }
 
 class _CodeCard extends StatelessWidget {
-  const _CodeCard({required this.backup, required this.onSave});
+  const _CodeCard({
+    required this.backup,
+    required this.onSave,
+    required this.onCopy,
+  });
 
   final VaultBackup backup;
   final VoidCallback onSave;
+
+  /// Handed down rather than done here, because the answer belongs on the
+  /// screen's one message line and this card has nowhere to put it.
+  final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -321,8 +355,11 @@ class _CodeCard extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
                 // The code that opens the whole backup, so it is copied the
-                // same guarded way a single password is.
-                onPressed: () => copySensitive(backup.code),
+                // same guarded way a single password is -- and answered for.
+                // Unawaited, the clipboard refusing threw into a button
+                // callback with nobody catching it: no message, no copy, and
+                // the one string that opens this file left only on screen.
+                onPressed: onCopy,
                 icon: const Icon(Icons.copy, size: 18),
                 label: const Text('Copiar código'),
               ),

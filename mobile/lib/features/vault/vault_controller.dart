@@ -519,6 +519,15 @@ class VaultController extends ChangeNotifier {
           'Outra operação do cofre está em andamento. Tente de novo em '
               'instantes.',
         'vault_full' => 'O cofre está cheio.',
+        // The vault operation worked. The item was fetched, the biometric was
+        // spent and the plaintext was decrypted -- and then the clipboard
+        // refused it. Blaming the vault sends the user to look at the wrong
+        // thing, and a retry buys another fingerprint for the same failure.
+        'clipboard_unavailable' =>
+          'Este aparelho não tem área de transferência, então nada foi '
+              'copiado. Use "Revelar" para ler o valor na tela.',
+        'clipboard_failed' =>
+          'A área de transferência recusou o valor; nada foi copiado.',
         'key_invalidated' =>
           'A chave deste cofre foi invalidada por um novo cadastro de '
               'biometria. O conteúdo não pode mais ser aberto — nem por você, '

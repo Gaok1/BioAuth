@@ -242,6 +242,34 @@ void main() {
       expect(controller.error, isNotNull);
     });
 
+    /// The vault operation worked: the item was fetched, the biometric was
+    /// spent, the plaintext was decrypted -- and the clipboard refused it.
+    /// "Não foi possível concluir a operação do cofre" points at the vault,
+    /// which is the one part that did its job.
+    test(
+      'a clipboard that refuses is named, not blamed on the vault',
+      () async {
+        for (final code in ['clipboard_unavailable', 'clipboard_failed']) {
+          final controller = VaultController(
+            store: _MemoryVaultStore(),
+            copy: (_) async => throw PlatformException(code: code),
+          );
+          addTearDown(controller.dispose);
+          await controller.unlock();
+
+          await controller.copy(controller.items.single);
+
+          expect(controller.error, contains('copiad'), reason: code);
+          expect(
+            controller.error,
+            isNot(contains('operação do cofre')),
+            reason: code,
+          );
+          expect(controller.notice, isNull, reason: code);
+        }
+      },
+    );
+
     test('the next action clears what the last one said', () async {
       final controller = VaultController(
         store: _MemoryVaultStore(),
