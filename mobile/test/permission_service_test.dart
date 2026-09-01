@@ -230,6 +230,8 @@ void main() {
     }
   });
 
+  _dispatch();
+
   test('um payload ilegível vira erro e não uma concessão', () async {
     final store = _MemoryStore();
     final frame = ApplicationFrame(
@@ -249,5 +251,38 @@ void main() {
 
     expect(reply.kind, ApplicationFrameKind.error);
     expect(store.writes, 0);
+  });
+}
+
+/// A sessão tem uma regra escrita no próprio arquivo: *um frame que ela não
+/// consegue ler fica com o handler, que responde com um erro em vez de estourar
+/// no despacho*. Decidir se um frame é de permissões não pode ser o lugar onde
+/// essa regra quebra — um frame ilegível não é "nosso", é de quem já sabe
+/// recusá-lo direito.
+void _dispatch() {
+  test('um frame ilegível não é reivindicado nem estoura', () {
+    for (final bytes in [
+      Uint8List.fromList([0x89, 4]),
+      Uint8List.fromList([0x89, 4, 0xff, 0xff, 0xff]),
+      Uint8List(0),
+    ]) {
+      expect(() => PermissionService.serves(bytes), returnsNormally);
+      expect(PermissionService.serves(bytes), isFalse);
+    }
+  });
+
+  test('um frame de outra operação não é reivindicado', () {
+    final other = ApplicationFrame(
+      protocolVersion: 1,
+      kind: ApplicationFrameKind.request,
+      requestId: 'req-1',
+      sessionBinding: _binding,
+      operation: 'vault.list',
+      issuedAt: DateTime.utc(2026, 9, 1, 12),
+      expiresAt: DateTime.utc(2026, 9, 1, 12, 2),
+      payload: Uint8List(0),
+    ).encode();
+
+    expect(PermissionService.serves(other), isFalse);
   });
 }

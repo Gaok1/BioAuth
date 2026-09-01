@@ -394,15 +394,18 @@ impl Service {
             }
         };
 
+        // Compared field by field, not by count. Trading `sudo` for `ssh` is
+        // the same length and is the change most worth reporting.
+        let settled: Vec<Permission> = answered.permissions.iter().map(from_wire).collect();
         let adopted = answered.revision != credential.permissions_revision
-            || answered.permissions.len() != credential.permissions.len();
+            || settled != credential.permissions;
         let mut device = device;
         if let Some(stored) = device
             .credentials
             .iter_mut()
             .find(|stored| stored.credential_id == credential_id)
         {
-            stored.permissions = answered.permissions.iter().map(from_wire).collect();
+            stored.permissions = settled.clone();
             stored.permissions_revision = answered.revision;
         }
         let count = answered.permissions.len();

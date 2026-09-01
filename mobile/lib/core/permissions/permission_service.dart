@@ -39,8 +39,21 @@ class PermissionService {
   final DateTime Function() _clock;
 
   /// Se este frame é para cá.
-  static bool serves(ApplicationFrame frame) =>
-      frame.operation == permissionsSyncOperation;
+  ///
+  /// Recebe os bytes e não um frame já decodificado, porque decidir isto não
+  /// pode ser o lugar onde um frame ilegível estoura. A regra da sessão é que
+  /// um frame que ela não consegue ler fica com o handler, que responde com um
+  /// erro — e não com uma exceção subindo pelo despacho. Um frame que não
+  /// decodifica aqui simplesmente não é nosso, e segue para quem já sabe
+  /// recusá-lo direito.
+  static bool serves(Uint8List frame) {
+    try {
+      return ApplicationFrame.decode(frame).operation ==
+          permissionsSyncOperation;
+    } on Object {
+      return false;
+    }
+  }
 
   Future<Uint8List> handle(
     Uint8List frame, {

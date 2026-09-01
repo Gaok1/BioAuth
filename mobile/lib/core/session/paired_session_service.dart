@@ -416,7 +416,7 @@ class PairedSessionService {
         // the request that could name another. So a session opened for SSH
         // reaches the SSH credential's grants and nothing else, which is the
         // same rule the switch below enforces, arrived at differently.
-        if (PermissionService.serves(ApplicationFrame.decode(frame))) {
+        if (PermissionService.serves(frame)) {
           await outcome.session.send(
             await _answered(
               PermissionService(
