@@ -148,8 +148,17 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
         backup.bytes,
         mimeType: 'application/octet-stream',
       ).saveTo(location.path);
+      // Checked after the write, not only before the picker. This was the one
+      // `await` in the file whose result was reported without asking whether
+      // there was still a screen to report it to, and it is the slowest one
+      // here: the bytes are going to whatever the person chose, which can be
+      // an SD card or a cloud folder. Leaving the screen while it wrote raised
+      // "setState() called after dispose()" -- after the backup had in fact
+      // been written, so the error named the wrong thing entirely.
+      if (!mounted) return;
       setState(() => _message = 'Backup salvo. Guarde o código separado dele.');
     } on Object {
+      if (!mounted) return;
       setState(() => _message = 'Não foi possível salvar o arquivo.');
     }
   }
@@ -171,9 +180,18 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
       // code, or "restore" is a button whose effect they learn afterwards.
       header = inspectVaultExport(bytes);
     } on VaultExportException catch (failure) {
+      // The guard below the block only ever covered the way out through the
+      // bottom. These two leave before reaching it, and they are the likely
+      // ways out: picking a file that is not a BAV1 backup is what
+      // `inspectVaultExport` is there to reject. Reading it is also the wait
+      // -- the bytes come from wherever the person pointed -- so leaving the
+      // screen while a wrong file is read reported the rejection to a screen
+      // that had gone, as "setState() called after dispose()".
+      if (!mounted) return;
       setState(() => _message = failure.message);
       return;
     } on Object {
+      if (!mounted) return;
       setState(() => _message = 'Não foi possível ler o arquivo.');
       return;
     }
@@ -212,9 +230,14 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
     try {
       preview = await parseVaultImport(await file.readAsBytes());
     } on VaultImportException catch (failure) {
+      // Same shape as `_restore`, and the same reason: a Bitwarden export that
+      // will not parse is the ordinary outcome here, and it leaves before the
+      // guard below.
+      if (!mounted) return;
       setState(() => _message = failure.message);
       return;
     } on Object {
+      if (!mounted) return;
       setState(() => _message = 'Não foi possível ler o arquivo.');
       return;
     }
