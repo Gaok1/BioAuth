@@ -21,6 +21,36 @@ const Duration totpPeriod = Duration(seconds: 30);
 /// Digits in a generated code. Six is what every issuer prints.
 const int totpDigits = 6;
 
+/// The hash inside the HMAC.
+///
+/// SHA-1 is what nearly every issuer emits, what RFC 4226 specifies, and what
+/// a bare stored seed means. RFC 6238 also defines the other two, and a few
+/// issuers use them -- refusing those meant the account could not be added at
+/// all, which is not something the user can do anything about. Guessing SHA-1
+/// for them would be worse: a plausible code that never works, every time.
+enum TotpAlgorithm {
+  sha1('SHA1'),
+  sha256('SHA256'),
+  sha512('SHA512');
+
+  const TotpAlgorithm(this.label);
+
+  /// The spelling an `otpauth://` URI uses.
+  final String label;
+
+  /// The algorithm a URI named, or null when it named something else.
+  ///
+  /// `SHA-256` with the hyphen is accepted alongside `SHA256`: issuers write
+  /// both, and a hyphen is not a reason to turn an account away.
+  static TotpAlgorithm? parse(String value) {
+    final wanted = value.toUpperCase().replaceAll('-', '');
+    for (final algorithm in TotpAlgorithm.values) {
+      if (algorithm.label == wanted) return algorithm;
+    }
+    return null;
+  }
+}
+
 class TotpException implements Exception {
   const TotpException(this.message);
   final String message;
@@ -38,11 +68,13 @@ class TotpSecret {
     this.bytes, {
     this.digits = totpDigits,
     this.period = totpPeriod,
+    this.algorithm = TotpAlgorithm.sha1,
   });
 
   final Uint8List bytes;
   final int digits;
   final Duration period;
+  final TotpAlgorithm algorithm;
 
   /// Reads a seed the way a person copies one: with spaces, in lower case,
   /// sometimes padded, sometimes not.
@@ -54,6 +86,7 @@ class TotpSecret {
     String secret, {
     int digits = totpDigits,
     Duration period = totpPeriod,
+    TotpAlgorithm algorithm = TotpAlgorithm.sha1,
   }) {
     if (digits < 6 || digits > 8) {
       throw const TotpException('Um código TOTP tem de 6 a 8 dígitos');
@@ -84,7 +117,12 @@ class TotpSecret {
       }
     }
     if (out.isEmpty) throw const TotpException('A chave TOTP é curta demais');
-    return TotpSecret(Uint8List.fromList(out), digits: digits, period: period);
+    return TotpSecret(
+      Uint8List.fromList(out),
+      digits: digits,
+      period: period,
+      algorithm: algorithm,
+    );
   }
 
   /// Reads an `otpauth://totp/...` URI, which is what a QR code holds.
@@ -101,12 +139,15 @@ class TotpSecret {
     if (secret == null || secret.isEmpty) {
       throw const TotpException('O otpauth não traz uma chave');
     }
-    // SHA-1 is the only algorithm every issuer and every authenticator agree
-    // on, and it is what the RFC specifies. An `algorithm=` naming anything
-    // else is refused rather than silently generating wrong codes.
-    final algorithm = parsed.queryParameters['algorithm']?.toUpperCase();
-    if (algorithm != null && algorithm != 'SHA1') {
-      throw TotpException('Algoritmo TOTP não suportado: $algorithm');
+    // An `algorithm=` this does not implement is still refused rather than
+    // ignored: reading it as SHA-1 would generate a plausible code that no
+    // issuer ever accepts, every time, with nothing on screen to say why.
+    final named = parsed.queryParameters['algorithm'];
+    final algorithm = named == null || named.isEmpty
+        ? TotpAlgorithm.sha1
+        : TotpAlgorithm.parse(named);
+    if (algorithm == null) {
+      throw TotpException('Algoritmo TOTP não suportado: $named');
     }
     return TotpSecret.parse(
       secret,
@@ -117,6 +158,7 @@ class TotpSecret {
             int.tryParse(parsed.queryParameters['period'] ?? '') ??
             totpPeriod.inSeconds,
       ),
+      algorithm: algorithm,
     );
   }
 }
@@ -154,7 +196,12 @@ Future<TotpCode> generateTotp(TotpSecret secret, {DateTime? at}) async {
     remaining >>= 8;
   }
 
-  final mac = await Hmac.sha1().calculateMac(
+  final hmac = switch (secret.algorithm) {
+    TotpAlgorithm.sha1 => Hmac.sha1(),
+    TotpAlgorithm.sha256 => Hmac.sha256(),
+    TotpAlgorithm.sha512 => Hmac.sha512(),
+  };
+  final mac = await hmac.calculateMac(
     message,
     secretKey: SecretKey(secret.bytes),
   );
@@ -162,7 +209,8 @@ Future<TotpCode> generateTotp(TotpSecret secret, {DateTime? at}) async {
 
   // The dynamic truncation of RFC 4226: the low nibble of the last byte picks
   // where the four bytes come from, so no fixed slice of the HMAC is what an
-  // attacker sees repeatedly.
+  // attacker sees repeatedly. Taken from the end of the digest rather than a
+  // fixed index, so it is already right for the longer two.
   final offset = hash[hash.length - 1] & 0x0f;
   final binary =
       ((hash[offset] & 0x7f) << 24) |
@@ -251,7 +299,9 @@ TotpSecret readTotpSecret(String stored) {
 /// time, with nothing on screen to suggest the app is the reason. An
 /// authenticator that is confidently wrong is worse than one that refuses.
 String storedTotpSecret(TotpSecret secret) =>
-    secret.digits == totpDigits && secret.period == totpPeriod
+    secret.digits == totpDigits &&
+        secret.period == totpPeriod &&
+        secret.algorithm == TotpAlgorithm.sha1
     ? totpSecretToBase32(secret)
     : encodeTotpSecret(secret);
 
@@ -264,6 +314,11 @@ String encodeTotpSecret(TotpSecret secret, {String label = ''}) {
       'secret': totpSecretToBase32(secret),
       'digits': '${secret.digits}',
       'period': '${secret.period.inSeconds}',
+      // Written only when it is not the default, so every URI stored before
+      // this parameter existed still encodes to the same bytes -- which is
+      // what keeps a restore from seeing one account as two.
+      if (secret.algorithm != TotpAlgorithm.sha1)
+        'algorithm': secret.algorithm.label,
     },
   ).toString();
 }

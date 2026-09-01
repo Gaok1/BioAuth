@@ -27,9 +27,6 @@ void main() {
       DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
 
   group('RFC 6238 Appendix B', () {
-    // Only the SHA-1 rows: SHA-256 and SHA-512 use different seeds in the
-    // document, and this generator is SHA-1 by design because that is what
-    // every issuer emits.
     const vectors = {
       59: '94287082',
       1111111109: '07081804',
@@ -45,6 +42,57 @@ void main() {
 
         expect(code.digits, entry.value);
       });
+    }
+
+    /// The other two rows of the same table.
+    ///
+    /// Each uses its own seed: the document repeats "1234567890" to the
+    /// digest's block size, so these are not the SHA-1 seed under a different
+    /// hash. Refusing `algorithm=` used to mean an account on either of them
+    /// could not be added at all.
+    final byAlgorithm = {
+      TotpAlgorithm.sha256: (
+        seed: '12345678901234567890123456789012',
+        codes: {
+          59: '46119246',
+          1111111109: '68084774',
+          1111111111: '67062674',
+          1234567890: '91819424',
+          2000000000: '90698825',
+          20000000000: '77737706',
+        },
+      ),
+      TotpAlgorithm.sha512: (
+        seed:
+            '1234567890123456789012345678901234567890'
+            '123456789012345678901234',
+        codes: {
+          59: '90693936',
+          1111111109: '25091201',
+          1111111111: '99943326',
+          1234567890: '93441116',
+          2000000000: '38618901',
+          20000000000: '47863826',
+        },
+      ),
+    };
+
+    for (final entry in byAlgorithm.entries) {
+      final secret = TotpSecret(
+        Uint8List.fromList(entry.value.seed.codeUnits),
+        digits: 8,
+        algorithm: entry.key,
+      );
+      for (final vector in entry.value.codes.entries) {
+        test(
+          '${entry.key.label} t=${vector.key} gives ${vector.value}',
+          () async {
+            final code = await generateTotp(secret, at: atSeconds(vector.key));
+
+            expect(code.digits, vector.value);
+          },
+        );
+      }
     }
   });
 
@@ -140,11 +188,58 @@ void main() {
     /// Generating wrong codes silently is the worst outcome here: the user
     /// would blame the site, the clock, and eventually this app.
     test('an algorithm this does not implement is refused, not ignored', () {
+      for (final named in ['SHA3-256', 'MD5', 'sha', '']) {
+        expect(
+          () => TotpSecret.fromUri(
+            'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&algorithm=$named',
+          ),
+          named.isEmpty ? returnsNormally : throwsA(isA<TotpException>()),
+          reason: named,
+        );
+      }
+    });
+
+    test('the algorithms RFC 6238 defines are read from the uri', () {
+      for (final written in ['SHA256', 'sha256', 'SHA-256']) {
+        expect(
+          TotpSecret.fromUri(
+            'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&algorithm=$written',
+          ).algorithm,
+          TotpAlgorithm.sha256,
+          reason: written,
+        );
+      }
       expect(
-        () => TotpSecret.fromUri(
-          'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256',
-        ),
-        throwsA(isA<TotpException>()),
+        TotpSecret.fromUri(
+          'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&algorithm=SHA512',
+        ).algorithm,
+        TotpAlgorithm.sha512,
+      );
+    });
+
+    /// The seed alone does not say which hash it is for, so an item on
+    /// anything but SHA-1 has to store the whole URI -- exactly as it already
+    /// does for digits and window. Storing the bare seed would read back as
+    /// SHA-1 and produce a code no issuer accepts, which is the failure this
+    /// file exists to avoid.
+    test('a seed on another hash is stored whole, and reads back the same', () {
+      final secret = TotpSecret.parse(
+        'JBSWY3DPEHPK3PXP',
+        algorithm: TotpAlgorithm.sha512,
+      );
+
+      final stored = storedTotpSecret(secret);
+      expect(stored, startsWith('otpauth://'));
+      expect(readTotpSecret(stored).algorithm, TotpAlgorithm.sha512);
+
+      // And SHA-1 still stores bare, so nothing already in a vault moves.
+      expect(
+        storedTotpSecret(TotpSecret.parse('JBSWY3DPEHPK3PXP')),
+        'JBSWY3DPEHPK3PXP',
+      );
+      expect(
+        encodeTotpSecret(TotpSecret.parse('JBSWY3DPEHPK3PXP', digits: 8)),
+        isNot(contains('algorithm')),
       );
     });
 
