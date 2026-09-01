@@ -104,11 +104,16 @@ pub fn copy_secret(secret: &SecretBuffer, ttl: Duration) -> Result<CopyOutcome, 
     let text = std::str::from_utf8(secret.expose()).map_err(|_| ClipboardError::NotText)?;
 
     let excluded = platform::set_text(text)?;
-    // Before the timer, and before anything else can copy: this is what makes
-    // "is the entry still ours" answerable later, by the timer and by a person
-    // pressing clear.
-    platform::remember_ours();
-    platform::schedule_clear(ttl);
+    // One reading of the clipboard's generation, handed to both the people who
+    // need it: the timer that will expire this entry, and a person pressing
+    // clear. They used to take a reading each, a few instructions apart, and
+    // two readings of a counter the rest of the machine is also moving are two
+    // different answers to "is the entry still ours". Disagreeing, they made
+    // between them the two failures this module is here to avoid: a clear that
+    // deletes what the user copied, and a timer that fires and leaves the
+    // secret sitting there.
+    let ours = platform::claim();
+    platform::schedule_clear(ttl, ours);
 
     Ok(CopyOutcome {
         clears_at_ms: epoch_ms() + ttl.as_millis() as i64,
@@ -201,9 +206,14 @@ mod platform {
     /// pressing clear after copying something else must empty nothing.
     static OURS: AtomicU32 = AtomicU32::new(0);
 
-    /// Records the entry just placed as this module's.
-    pub(super) fn remember_ours() {
-        OURS.store(sequence(), Ordering::Relaxed);
+    /// Records the entry just placed as this module's, and says which it is.
+    ///
+    /// The one place the counter is read after a copy. The caller passes the
+    /// answer on to [`schedule_clear`] rather than letting it read again.
+    pub(super) fn claim() -> u32 {
+        let ours = sequence();
+        OURS.store(ours, Ordering::Relaxed);
+        ours
     }
 
     /// Set to a `DWORD` 0 to keep the entry out of `Win+V` history.
@@ -350,8 +360,7 @@ mod platform {
         unsafe { GetClipboardSequenceNumber() }
     }
 
-    pub(super) fn schedule_clear(ttl: Duration) {
-        let ours = sequence();
+    pub(super) fn schedule_clear(ttl: Duration, ours: u32) {
         // Captures a `u32`, never the secret: this closure outlives the copy,
         // and anything it held would outlive it too.
         std::thread::spawn(move || {
@@ -533,9 +542,11 @@ mod platform {
 
     /// Nothing to remember: neither tool exposes a generation counter, so
     /// ownership is not a question this platform can answer. See [`clear`].
-    pub(super) fn remember_ours() {}
+    pub(super) fn claim() -> u32 {
+        0
+    }
 
-    pub(super) fn schedule_clear(ttl: Duration) {
+    pub(super) fn schedule_clear(ttl: Duration, _ours: u32) {
         std::thread::spawn(move || {
             std::thread::sleep(ttl);
             // Once, deliberately. Retrying without an ownership check would
@@ -565,13 +576,15 @@ mod platform {
     use super::{ClipboardError, Exclusions};
     use std::time::Duration;
 
-    pub(super) fn remember_ours() {}
+    pub(super) fn claim() -> u32 {
+        0
+    }
 
     pub(super) fn set_text(_text: &str) -> Result<Exclusions, ClipboardError> {
         Err(ClipboardError::Unsupported)
     }
 
-    pub(super) fn schedule_clear(_ttl: Duration) {}
+    pub(super) fn schedule_clear(_ttl: Duration, _ours: u32) {}
 
     pub(super) fn clear() -> Result<(), ClipboardError> {
         Err(ClipboardError::Unsupported)
@@ -674,6 +687,44 @@ mod tests {
             Some("the user's own text"),
             "the expiry timer cleared a clipboard entry that was not ours"
         );
+    }
+
+    /// The timer expires the generation it was handed, not the one it finds.
+    ///
+    /// Arming the timer used to read the clipboard's generation counter a
+    /// second time, a few instructions after the reading that told the
+    /// clear-by-hand path which entry was ours. Two readings of a counter the
+    /// whole session moves are two answers, and between them they made both of
+    /// the failures this module refuses. Read the higher one and the timer had
+    /// adopted a stranger's entry, and deleted it on schedule. Read the lower
+    /// and the timer fired on a generation `clear` disagreed with, returned
+    /// `Ok` without emptying anything, and left the secret on the board past
+    /// the second the user was promised it would be gone -- silently, because
+    /// a refusal to clear someone else's entry is the correct answer to the
+    /// only question `clear` was asked.
+    ///
+    /// One reading now, taken by `claim` and handed on.
+    #[cfg(windows)]
+    #[test]
+    fn the_timer_expires_only_the_generation_it_was_given() {
+        let _guard = test_lock();
+
+        platform::set_text("only-this-generation").expect("copy");
+        let ours = platform::claim();
+
+        // Armed with a generation that is not the one on the board -- which is
+        // what the second reading amounted to whenever anything at all had
+        // copied in between.
+        platform::schedule_clear(MIN_TTL, ours.wrapping_sub(1));
+        std::thread::sleep(MIN_TTL + Duration::from_millis(750));
+
+        assert_eq!(
+            platform::testing::read_text().as_deref(),
+            Some("only-this-generation"),
+            "the timer emptied a generation it was never given"
+        );
+
+        clear_now().expect("clear");
     }
 
     /// Pressing clear after copying something else must empty nothing.
