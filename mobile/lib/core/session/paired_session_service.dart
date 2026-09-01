@@ -258,7 +258,9 @@ class PairedSessionService {
     );
     if (_stopped || _closed.contains(record.verifierId)) {
       await outcome.session.close();
-      throw StateError('Serviço de sessões encerrado');
+      throw StateError(
+        _stopped ? 'Serviço de sessões encerrado' : 'Dispositivo revogado',
+      );
     }
     if (outcome.wasPairing) {
       // The transport reported first contact for a device that is already
@@ -286,6 +288,24 @@ class PairedSessionService {
       await outcome.session.send(
         SessionAttach(credentialId: record.credentialId).encode(),
       );
+      // Asked again, because the attach is an await and revocation can land
+      // inside it. `closeDevice` hangs up every session in `_active` for that
+      // verifier and returns, and its whole promise is that when it returns
+      // the phone no longer holds an authenticated channel to a desktop the
+      // user has just stopped trusting. A session still attaching was not in
+      // `_active` to be found, and registered itself on the line below --
+      // after the sweep that was supposed to catch it. It then served one
+      // request and held the channel until the idle timeout, which is the
+      // wait `closeDevice` exists to not have.
+      //
+      // Checked before the registration rather than after, so there is no
+      // await between the answer and acting on it. Throwing here reaches the
+      // `finally`, which is what closes the session.
+      if (_stopped || _closed.contains(record.verifierId)) {
+        throw StateError(
+          _stopped ? 'Serviço de sessões encerrado' : 'Dispositivo revogado',
+        );
+      }
       _active[_key(record)] = outcome.session;
       // The channel is authenticated from here on. Reporting it now is what
       // separates "connected" from "has already answered something": waiting for

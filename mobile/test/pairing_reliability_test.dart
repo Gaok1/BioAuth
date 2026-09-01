@@ -117,6 +117,36 @@ void main() {
     await expectLater(second, throwsA(anything));
   });
 
+  /// The window `closeDevice` could not see into.
+  ///
+  /// Its promise is that when it returns, the phone holds no authenticated
+  /// channel to the revoked desktop. It kept that promise by hanging up every
+  /// session in `_active`, and a session still sending its attach frame is
+  /// authenticated and not in `_active` yet — so the sweep found nothing, the
+  /// attach finished, and the session put itself in the map afterwards. It
+  /// then served one request and held the channel until the idle timeout,
+  /// which is the wait `closeDevice` exists to not have.
+  test('a device revoked mid-attach does not come back after it', () async {
+    final session = _SlowAttachSession();
+    final service = PairedSessionService(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: _UnusedConsent(),
+    );
+
+    final serving = service.serveOne(_record);
+    await session.attaching.future;
+
+    // Nothing to find: this is exactly the state the sweep cannot see.
+    await service.closeDevice('desktop-1');
+    session.releaseAttach.complete();
+
+    await expectLater(serving, throwsStateError);
+    expect(session.closed, isTrue, reason: 'the revoked channel stayed open');
+    // And it never got as far as reading a request off the wire.
+    expect(session.listening.isCompleted, isFalse);
+  });
+
   test('a revoked device is refused even if its loop dials again', () async {
     final session = _IdleSession();
     final service = PairedSessionService(
@@ -1132,6 +1162,25 @@ class _IdleSession implements SecureTransportSession {
     // pauses its subscription between `moveNext` calls and a paused listener
     // never receives the done event.
     unawaited(_incoming.close());
+  }
+}
+
+/// A session whose first `send` -- the attach -- does not finish on its own.
+///
+/// That await is the window revocation used to fall into: the session is
+/// established and authenticated, and not yet in the service's map of live
+/// ones.
+class _SlowAttachSession extends _IdleSession {
+  final attaching = Completer<void>();
+  final releaseAttach = Completer<void>();
+
+  @override
+  Future<void> send(Uint8List frame) async {
+    if (!attaching.isCompleted) {
+      attaching.complete();
+      await releaseAttach.future;
+    }
+    return super.send(frame);
   }
 }
 
