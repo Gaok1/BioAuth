@@ -105,8 +105,37 @@ fn tokens_match(left: &str, right: &str) -> bool {
         == 0
 }
 
+/// How long a new connection has to produce a call the token check accepts.
+///
+/// A malformed line closes the connection and so does a wrong token, both on
+/// the grounds stated below: anything that can reach this port must not
+/// "hold a thread and a socket indefinitely without ever having to produce the
+/// token -- the one check this endpoint has". Saying nothing at all did
+/// precisely that, and was the way left. The read blocks with no deadline, the
+/// thread is never reclaimed, and `thread::spawn` panics once the operating
+/// system stops handing out threads -- which happens on the accept loop, so
+/// the agent stops answering anyone. Every path to a login goes through this
+/// socket.
+///
+/// Ten seconds is enormous for a loopback client that has the token sitting in
+/// a file it has already read.
+const FIRST_CALL_WINDOW: Duration = Duration::from_secs(10);
+
 /// Starts the listener and serves connections until the process ends.
 pub fn serve(service: Arc<Mutex<Service>>, requested_port: u16) -> io::Result<()> {
+    serve_with_first_call_window(service, requested_port, FIRST_CALL_WINDOW)
+}
+
+/// The same, with a window a test can afford to wait out.
+///
+/// Held rather than read from the constant for the reason
+/// `QrNetworkTransport::bind_with_idle_timeout` is: what is under test is that
+/// the window exists, not how long it is.
+pub fn serve_with_first_call_window(
+    service: Arc<Mutex<Service>>,
+    requested_port: u16,
+    first_call_window: Duration,
+) -> io::Result<()> {
     let token = to_hex(&random::bytes::<32>());
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, requested_port)))?;
     let port = listener.local_addr()?.port();
@@ -136,7 +165,9 @@ pub fn serve(service: Arc<Mutex<Service>>, requested_port: u16) -> io::Result<()
                 let service = Arc::clone(&service);
                 let token = token.clone();
                 thread::spawn(move || {
-                    if let Err(error) = handle_connection(stream, service, &token) {
+                    if let Err(error) =
+                        handle_connection(stream, service, &token, first_call_window)
+                    {
                         // A client hanging up mid-request is routine, so this
                         // is informational rather than an error path.
                         eprintln!("phone-auth-agent: connection ended: {error}");
@@ -170,12 +201,20 @@ fn handle_connection(
     stream: TcpStream,
     service: Arc<Mutex<Service>>,
     token: &str,
+    first_call_window: Duration,
 ) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
+    // Set on the handle the read actually uses, not on the one `writer` holds.
+    // They are two descriptors for one socket and Windows does not carry the
+    // option across the duplicate: setting it before `try_clone` and clearing
+    // it afterwards through the original left the reader's deadline in place,
+    // and the agent hung up on an authenticated client every ten seconds.
+    reader.get_ref().set_read_timeout(Some(first_call_window))?;
     // Both the reply path and the event pump write to this socket, so writes
     // are serialised through one lock.
     let writer = Arc::new(Mutex::new(stream));
 
+    let mut trusted = false;
     let mut line = String::new();
     loop {
         line.clear();
@@ -219,6 +258,15 @@ fn handle_connection(
             // A wrong token means the peer is not who the endpoint file was
             // written for. Do not keep the connection open for more attempts.
             return Ok(());
+        }
+
+        if !trusted {
+            // Lifted the moment the peer proves it holds the token. A client
+            // that has done that is entitled to sit still: the tray subscribes
+            // and then sends nothing at all, waiting on events, for as long as
+            // the window is open.
+            reader.get_ref().set_read_timeout(None)?;
+            trusted = true;
         }
 
         let reply = dispatch(&call, &service, &writer);
@@ -703,6 +751,11 @@ mod concurrent_client_tests {
     /// The serving thread is deliberately left running: `serve` only returns on
     /// listener failure, and the test process exiting is what stops it.
     fn start_agent(name: &str) -> (Arc<Mutex<Service>>, Paths) {
+        start_agent_with_window(name, FIRST_CALL_WINDOW)
+    }
+
+    /// The same, with a first-call window short enough to wait out.
+    fn start_agent_with_window(name: &str, window: Duration) -> (Arc<Mutex<Service>>, Paths) {
         let root = std::env::temp_dir().join(format!(
             "phone-auth-ipc-{name}-{}-{:?}",
             std::process::id(),
@@ -720,7 +773,7 @@ mod concurrent_client_tests {
 
         let served = Arc::clone(&service);
         thread::spawn(move || {
-            let _ = serve(served, 0);
+            let _ = serve_with_first_call_window(served, 0, window);
         });
 
         wait_until("the agent to publish its endpoint", || {
@@ -1019,6 +1072,53 @@ mod concurrent_client_tests {
             .cloned()
             .expect("the refusal was not written down");
         assert_eq!(generated["outcome"], "failed");
+    }
+
+    /// A peer that connects and says nothing must not keep the thread.
+    ///
+    /// A malformed line closes the connection and so does a wrong token, both
+    /// so that nothing which can reach the port can "hold a thread and a socket
+    /// indefinitely without ever having to produce the token". Silence did
+    /// exactly that and was the one way left: the read had no deadline, and one
+    /// thread per connection is one thread per silent socket until
+    /// `thread::spawn` panics on the accept loop and the agent stops answering
+    /// anyone.
+    #[test]
+    fn a_connection_that_never_speaks_is_not_kept() {
+        let (_service, paths) = start_agent_with_window("ipc-silent", Duration::from_millis(300));
+        let endpoint = Endpoint::read(&paths).expect("endpoint");
+        let mut socket =
+            std::net::TcpStream::connect(("127.0.0.1", endpoint.port)).expect("connect");
+
+        // Nothing is written. Not a byte, not a newline.
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("read timeout");
+        let mut buffer = [0u8; 1];
+        assert_eq!(
+            socket.read(&mut buffer).expect("read"),
+            0,
+            "the agent held a connection that never produced a token"
+        );
+    }
+
+    /// And the other half, which is why this is a window and not a rule.
+    ///
+    /// The tray subscribes and then sends nothing at all, waiting on events for
+    /// as long as it is open. A deadline that outlived the token check would
+    /// hang up on it every few seconds.
+    #[test]
+    fn a_client_that_produced_the_token_may_sit_still() {
+        let (_service, paths) = start_agent_with_window("ipc-idle", Duration::from_millis(300));
+        let mut client = AgentClient::connect(&paths).expect("client");
+        client.call("status", json!({})).expect("status");
+
+        // Longer than the window it just came through.
+        thread::sleep(Duration::from_millis(900));
+
+        client
+            .call("status", json!({}))
+            .expect("the agent hung up on an idle client that had authenticated");
     }
 
     /// One field, two methods, one answer.
