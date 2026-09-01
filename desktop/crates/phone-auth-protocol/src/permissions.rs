@@ -436,6 +436,56 @@ mod tests {
         assert!(SyncResponse::decode(&payload).is_err());
     }
 
+    /// The bytes, pinned. `mobile/test/permission_payloads_test.dart` asserts
+    /// the same two strings.
+    ///
+    /// Two encoders, two languages, one meaning. Reorder a field here or write
+    /// an integer at a different width and everything still compiles, every
+    /// round-trip test on each side still passes, and the pair only finds out
+    /// in the field -- as "the phone answered a different request", which names
+    /// neither the cause nor the file.
+    #[test]
+    fn the_bytes_are_the_ones_the_phone_expects() {
+        let request = SyncRequest {
+            verifier_name: "Workstation".to_owned(),
+            revision: 7,
+            permissions: vec![
+                grant("sudo", WILDCARD),
+                Permission {
+                    service: "login".to_owned(),
+                    action: "unlock".to_owned(),
+                    resource: WILDCARD.to_owned(),
+                    user: "gaok1".to_owned(),
+                },
+            ],
+        };
+        let response = SyncResponse {
+            revision: 9,
+            permissions: vec![Permission {
+                service: "vault".to_owned(),
+                action: "read".to_owned(),
+                resource: WILDCARD.to_owned(),
+                user: "gaok1".to_owned(),
+            }],
+        };
+
+        assert_eq!(
+            hex(&request.encode()),
+            concat!(
+                "84016b576f726b73746174696f6e078284647375646f612a612a6567616f",
+                "6b3184656c6f67696e66756e6c6f636b612a6567616f6b31",
+            )
+        );
+        assert_eq!(
+            hex(&response.encode()),
+            "8301098184657661756c746472656164612a6567616f6b31"
+        );
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
     #[test]
     fn a_payload_from_another_schema_is_refused() {
         let mut writer = Writer::new();
