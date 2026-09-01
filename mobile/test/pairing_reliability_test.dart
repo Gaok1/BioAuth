@@ -678,6 +678,73 @@ void main() {
     );
   });
 
+  /// The sheets from a desktop's last moments.
+  ///
+  /// `stopDevice` collected what to withdraw, then awaited the hang-up, then
+  /// withdrew. A desktop holds one session per credential and `closeDevice`
+  /// closes them one at a time, so that await is long enough for a still-open
+  /// session to put a request in front of the user — and the withdrawal that
+  /// followed had been decided before it existed.
+  ///
+  /// Left up, such a sheet is exactly what the withdrawal exists to prevent: a
+  /// tap on it raises the Keystore prompt and spends a fingerprint approving
+  /// something for a desktop the user has just revoked.
+  test('a sheet raised while the revoking runs is withdrawn too', () async {
+    final now = DateTime.utc(2026, 8, 27, 12);
+    final session = _SlowClosingAskingSession();
+    final consent = InteractiveAuthorizer(onRequest: (_) {});
+    final runner = PairedSessionRunner(
+      transport: _StubTransport(session),
+      authorizer: _UnusedAuthorizer(),
+      consent: consent,
+      answerTimeout: const Duration(minutes: 2),
+      clock: () => now,
+    );
+    addTearDown(() async {
+      if (!session.releaseClose.isCompleted) session.releaseClose.complete();
+      await runner.stop();
+    });
+
+    runner.sync([_record]);
+    await session.listening.future;
+
+    final revoking = runner.stopDevice('desktop-1');
+    await session.closing.future;
+
+    // Inside the hang-up, with the revocation already under way.
+    session.ask(
+      AuthenticationRequest(
+        requestId: 'request-late',
+        verifierId: 'desktop-1',
+        verifierName: 'Desktop-NixOS',
+        credentialId: _record.credentialId,
+        challenge: Uint8List.fromList(List<int>.generate(32, (i) => i)),
+        origin: 'replaced by session',
+        service: 'sudo',
+        action: 'nixos-rebuild switch',
+        resource: 'Desktop-NixOS',
+        user: 'alice',
+        issuedAt: now,
+        expiresAt: now.add(const Duration(minutes: 1)),
+        sessionBinding: Uint8List(32),
+      ),
+    );
+    await _untilRealTime(
+      () => consent.pendingRequestIds.contains('request-late'),
+    );
+
+    session.releaseClose.complete();
+    await revoking;
+
+    expect(
+      consent.pendingRequestIds,
+      isNot(contains('request-late')),
+      reason:
+          'a sheet raised during the revoking outlived it, tappable, for a '
+          'desktop the user had already revoked',
+    );
+  });
+
   test('a request nobody answers is not held forever', () async {
     final now = DateTime.utc(2026, 8, 27, 12);
     final session = _AskingSession();
@@ -851,6 +918,24 @@ class _OneAsksOneBreaksTransport implements AuthTransport {
 class _AskingSession extends _IdleSession {
   void ask(AuthenticationRequest request) =>
       _incoming.add(const PhoneAuthProtocolCodec().encodeRequest(request));
+}
+
+/// A desktop whose hang-up does not finish until the test lets it.
+///
+/// `closeDevice` hangs up one session at a time and awaits each. This is that
+/// await, held open, so a request can arrive inside it.
+class _SlowClosingAskingSession extends _AskingSession {
+  final closing = Completer<void>();
+  final releaseClose = Completer<void>();
+
+  @override
+  Future<void> close() async {
+    if (!closing.isCompleted) {
+      closing.complete();
+      await releaseClose.future;
+    }
+    return super.close();
+  }
 }
 
 /// A desktop that can put any frame on the channel, not only an [AuthRequest].

@@ -151,15 +151,39 @@ class PairedSessionRunner {
   Future<void> stopDevice(String verifierId) async {
     // Every credential of that desktop, because revoking a computer is not
     // "except for the vault".
-    final orphaned = <String>{};
+    // The sets themselves, not their contents. Each is the live set its
+    // session adds to as it raises requests, and the hang-up below is long
+    // enough to raise one in: `closeDevice` closes one session at a time and
+    // waits for each, a desktop holds one per credential, and the sessions
+    // still open during that can put a request in front of the user.
+    //
+    // Copied here, the withdrawal covered the sheets that existed when the
+    // user tapped revoke and left the ones that arrived while the revoking was
+    // running -- the sheets from a desktop's last moments, still tappable, and
+    // a tap on one spends a fingerprint approving something for a computer the
+    // user has already revoked. Read after the await instead. `stop()` has
+    // always read its pending set on that side of its own await; this is the
+    // same thing, per verifier.
+    final credentials = <String>{};
+    final raisedByStoppedLoops = <Set<String>>[];
     for (final entry in _loops.entries.toList()) {
       if (entry.value.record.verifierId == verifierId) {
+        credentials.add(entry.key);
         _loops.remove(entry.key)?.stop();
         _statuses.remove(entry.key);
-        orphaned.addAll(_raised.remove(entry.key) ?? const <String>{});
+        final raised = _raised.remove(entry.key);
+        if (raised != null) raisedByStoppedLoops.add(raised);
       }
     }
     await _service.closeDevice(verifierId);
+    final orphaned = <String>{
+      for (final raised in raisedByStoppedLoops) ...raised,
+    };
+    // And a set installed since: a session whose teardown had not reached the
+    // `finally` in `_serve` when the sweep above ran still owns its key.
+    for (final credentialId in credentials) {
+      orphaned.addAll(_raised.remove(credentialId) ?? const <String>{});
+    }
     // The channel being gone is not the sheet being gone. A vault or ssh
     // approval waits on a person, so closing the socket underneath it leaves
     // it on screen and answerable for as long as the request's own window
