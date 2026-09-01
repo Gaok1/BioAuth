@@ -106,8 +106,16 @@ impl AgentConfig {
         if self.verifier_id.trim().is_empty() || self.verifier_id.len() > 64 {
             return Err("verifierId must be 1-64 characters".into());
         }
-        if self.verifier_name.trim().is_empty() || self.verifier_name.chars().count() > 128 {
-            return Err("verifierName must be 1-128 characters".into());
+        // Counted the way the wire counts it. `AuthRequest` bounds this field
+        // at 128 UTF-16 units and this check used to bound it at 128 `char`s,
+        // which are not the same thing: anything outside the basic plane --
+        // an emoji in a machine name -- is one `char` and two units. Sixty-five
+        // of them passed here and then failed `AuthRequest::validate`, so the
+        // config was accepted at startup and every authorization built from it
+        // was refused as malformed. This function exists to make that
+        // impossible, so it has to measure what the wire measures.
+        if self.verifier_name.trim().is_empty() || self.verifier_name.encode_utf16().count() > 128 {
+            return Err("verifierName must be 1-128 UTF-16 units".into());
         }
         if self.request_validity_ms <= 0
             || self.request_validity_ms > phone_auth_protocol::MAX_VALIDITY_MS
@@ -236,6 +244,32 @@ mod tests {
         config.request_validity_ms = 60_000;
         config.verifier_name = "  ".into();
         assert!(config.validate().is_err());
+    }
+
+    /// The bound here has to be the bound the wire applies, or this function
+    /// waves through a config that cannot authorize anything.
+    ///
+    /// A name of sixty-five desktop-computer emoji is sixty-five `char`s and a
+    /// hundred and thirty UTF-16 units. Measured in `char`s it passed startup
+    /// and then failed inside `AuthRequest::validate` on every single request
+    /// -- the exact failure this validation was written to move to startup.
+    #[test]
+    fn a_name_the_wire_will_not_carry_is_refused_at_startup() {
+        let mut config = AgentConfig::fresh();
+        config.verifier_name = "\u{1f5a5}".repeat(65);
+        assert_eq!(config.verifier_name.chars().count(), 65);
+
+        assert!(
+            config.validate().is_err(),
+            "a name that no request can carry was accepted as a config"
+        );
+
+        // And what the wire does carry still passes: the bound narrowed for
+        // astral characters, not for names.
+        config.verifier_name = "D".repeat(128);
+        config
+            .validate()
+            .expect("128 units is the bound, not one under it");
     }
 
     #[test]
