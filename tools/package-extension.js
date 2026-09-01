@@ -13,6 +13,7 @@
 // script has no business holding. The zips are the input to that.
 //
 //   node tools/package-extension.js [--out dist/extension]
+//   node tools/package-extension.js --unpacked <dir>    # loadable directories
 //
 // Deliberately dependency-free: it runs in the release workflow before any
 // `npm install`, and a packaging step that can itself pull code from the
@@ -134,42 +135,90 @@ function crc32(buffer) {
   return (crc ^ -1) >>> 0;
 }
 
+function readManifest() {
+  return JSON.parse(fs.readFileSync(path.join(source, 'manifest.json'), 'utf8'));
+}
+
+/** The file set one browser gets, manifest already adjusted for it. */
+function filesFor(target, manifestSource) {
+  const manifest = TARGETS[target](JSON.parse(JSON.stringify(manifestSource)));
+  return [
+    ['manifest.json', Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')],
+    ...INCLUDED.filter((name) => name !== 'manifest.json').map((name) => [
+      name,
+      fs.readFileSync(path.join(source, name)),
+    ]),
+  ];
+}
+
 function build(outDir) {
-  const manifestSource = JSON.parse(
-    fs.readFileSync(path.join(source, 'manifest.json'), 'utf8')
-  );
+  const manifestSource = readManifest();
   fs.mkdirSync(outDir, { recursive: true });
 
   const built = [];
-  for (const [target, adjust] of Object.entries(TARGETS)) {
-    const manifest = adjust(JSON.parse(JSON.stringify(manifestSource)));
-    const entries = [
-      ['manifest.json', Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')],
-      ...INCLUDED.filter((name) => name !== 'manifest.json').map((name) => [
-        name,
-        fs.readFileSync(path.join(source, name)),
-      ]),
-    ];
-
+  for (const target of Object.keys(TARGETS)) {
     const file = path.join(
       outDir,
       `phoneauth-passkeys-${target}-${manifestSource.version}.zip`
     );
-    fs.writeFileSync(file, zip(entries));
+    fs.writeFileSync(file, zip(filesFor(target, manifestSource)));
     built.push({ file, version: manifestSource.version });
   }
   return built;
 }
 
-module.exports = { build, zip, crc32, TARGETS, INCLUDED };
+/**
+ * The same per-browser file sets, as directories rather than zips.
+ *
+ * This is what the desktop installer ships. It used to copy
+ * `desktop/browser-extension/` verbatim, and that directory is deliberately
+ * not loadable: it carries both engines' shapes at once -- MV2
+ * `background.scripts` next to an MV3 `service_worker`, and a Gecko block
+ * Chrome does not know -- so a developer can point either browser at the
+ * source while working. Shipping it meant the one path the native-host
+ * allowlist was registered for was also the one path that hands each browser
+ * half a manifest written for the other.
+ *
+ * A zip is no answer here: nothing unpacks it, and an unpacked extension's ID
+ * on Chromium is a hash of the directory it was loaded from. Unzipping to
+ * Downloads is how a person ends up with an ID the allowlist has never heard
+ * of -- a native host that hangs up, with nothing in the browser to say why.
+ */
+function buildUnpacked(outDir) {
+  const manifestSource = readManifest();
+  const built = [];
+  for (const target of Object.keys(TARGETS)) {
+    const dir = path.join(outDir, target);
+    // Rebuilt rather than merged into: a file dropped from `INCLUDED` has to
+    // leave the shipped directory too, and a stale script in an extension is
+    // one the browser still loads.
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [name, contents] of filesFor(target, manifestSource)) {
+      fs.writeFileSync(path.join(dir, name), contents);
+    }
+    built.push({ dir, version: manifestSource.version });
+  }
+  return built;
+}
+
+module.exports = { build, buildUnpacked, zip, crc32, TARGETS, INCLUDED };
 
 if (require.main === module) {
-  const flag = process.argv.indexOf('--out');
-  const outDir = path.resolve(
-    root,
-    flag === -1 ? 'dist/extension' : process.argv[flag + 1]
-  );
-  for (const { file } of build(outDir)) {
-    console.log(path.relative(root, file));
+  const unpacked = process.argv.indexOf('--unpacked');
+  if (unpacked !== -1) {
+    const outDir = path.resolve(root, process.argv[unpacked + 1]);
+    for (const { dir } of buildUnpacked(outDir)) {
+      console.log(path.relative(root, dir));
+    }
+  } else {
+    const flag = process.argv.indexOf('--out');
+    const outDir = path.resolve(
+      root,
+      flag === -1 ? 'dist/extension' : process.argv[flag + 1]
+    );
+    for (const { file } of build(outDir)) {
+      console.log(path.relative(root, file));
+    }
   }
 }

@@ -145,3 +145,79 @@ test('packaging runs with no installed modules', () => {
 
   assert.equal(fs.readdirSync(out).length, 3);
 });
+
+/// What the desktop installer ships, and the reason it is generated at all.
+///
+/// `extraResources` used to copy `desktop/browser-extension/` verbatim. That
+/// directory holds both engines' shapes on purpose so a developer can point
+/// either browser at the source, which makes it the one thing that must never
+/// be shipped: Chrome got a Gecko block and an MV2 `background.scripts`,
+/// Firefox got a `service_worker` it does not run. And it was not an obscure
+/// path -- it was the path the native-host allowlist is registered against, so
+/// it is exactly what a user following the instructions loads.
+test('the shipped directories are per-browser, not the developer source', () => {
+  const out = sandbox();
+  const built = tool.buildUnpacked(out);
+
+  assert.deepEqual(
+    built.map(({ dir }) => path.basename(dir)).sort(),
+    ['chrome', 'edge', 'firefox']
+  );
+
+  for (const { dir } of built) {
+    assert.deepEqual(fs.readdirSync(dir).sort(), [...tool.INCLUDED].sort());
+
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')
+    );
+    const gecko = path.basename(dir) === 'firefox';
+
+    // The two keys that make the source directory unloadable, each present in
+    // exactly one of the three.
+    assert.equal(
+      manifest.browser_specific_settings !== undefined,
+      gecko,
+      `${path.basename(dir)} manifest carries the wrong engine's settings block`
+    );
+    assert.equal(
+      manifest.background.scripts !== undefined,
+      gecko,
+      `${path.basename(dir)} manifest carries the wrong background shape`
+    );
+    assert.equal(manifest.background.service_worker !== undefined, !gecko);
+  }
+});
+
+/// A file dropped from `INCLUDED` has to leave a directory that already
+/// exists. Merging into it leaves a script the browser still loads, from a
+/// version of the extension nobody built.
+test('rebuilding a shipped directory removes what no longer belongs', () => {
+  const out = sandbox();
+  tool.buildUnpacked(out);
+
+  const stale = path.join(out, 'chrome', 'left-behind.js');
+  fs.writeFileSync(stale, '// from an older build\n');
+  tool.buildUnpacked(out);
+
+  assert.equal(fs.existsSync(stale), false);
+});
+
+/// The hook is what makes the two above true of every package, including a
+/// `npm run dist` on a laptop. Wired into the build config rather than into
+/// the release workflow, because a step only CI runs is a step the local build
+/// skips without saying so.
+test('the packager runs the generation before every pack', () => {
+  const config = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8')
+  ).build;
+
+  assert.equal(config.beforePack, 'build/before-pack.js');
+
+  const shipped = config.extraResources.find(
+    ({ to }) => to === 'browser-extension'
+  );
+  assert.equal(shipped.from, '../browser-extension-dist/');
+
+  const hook = require('../build/before-pack.js');
+  assert.equal(path.basename(hook.OUTPUT), 'browser-extension-dist');
+});

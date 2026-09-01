@@ -33,6 +33,7 @@
       "output": "../dist",
       "buildResources": "assets"
     },
+    "beforePack": "build/before-pack.js",
     "files": [
       "src/**/*",
       "renderer/**/*",
@@ -58,8 +59,12 @@
         ]
       },
       {
-        "from": "../browser-extension/",
+        "from": "../browser-extension-dist/",
         "to": "browser-extension"
+      },
+      {
+        "from": "../browser-extension/native-host/",
+        "to": "browser-extension/native-host"
       },
       {
         "from": "../file-manager/",

@@ -174,6 +174,21 @@ their extensions developer page; Firefox uses `about:debugging` for a temporary
 development install. That is a development path only — see **Distribution**
 below for what an ordinary user gets.
 
+That directory carries both engines' shapes at once so either browser can be
+pointed at the source while working, which is also why it is not what anybody
+installs. An installed copy ships the packaged form instead, one directory per
+browser:
+
+```
+<install dir>/resources/browser-extension/chrome
+<install dir>/resources/browser-extension/edge
+<install dir>/resources/browser-extension/firefox
+```
+
+Load the one for the browser in hand. `tools/package-extension.js --unpacked
+<dir>` writes the same three from a source checkout, and a `beforePack` hook
+runs it on every package so the two cannot drift.
+
 The extension carries both engines' shapes, because they disagree twice.
 Firefox resolves a promise returned from `runtime.onMessage`; Chrome ignores it
 and closes the channel, so replies go through `sendResponse` with `return true`.
@@ -281,10 +296,26 @@ given. This is the recommended path for an organisation.
 (unlisted). The signed `.xpi` is then installable from anywhere, and
 `browser_specific_settings.gecko.id` already pins the ID the installers use.
 
-**One machine, unmanaged:** load unpacked. The Chromium ID changes on every
-reload of an unpacked extension, so the native-host manifest has to be
-rewritten each time — which is why this is documented as a development path
-and not a way to run the thing.
+**One machine, unmanaged:** load unpacked. A Chromium unpacked extension's ID
+is a hash of the absolute directory it was loaded from, so the native-host
+manifest has to be rewritten whenever that directory changes — which is why
+this is documented as a development path and not a way to run the thing.
+
+The failure it produces is worth recognising, because nothing announces it.
+Unzip a release package into `Downloads` and load it there and the browser is
+perfectly happy: the extension installs, runs, and asks the host for a
+passkey. The host reads an ID that is not in its `allowed_origins`, closes the
+pipe, and the only symptom is that nothing happens. Pick a directory that will
+not move, register that one, and it does not recur:
+
+```powershell
+desktop\\browser-extension\\native-host\\install.ps1 `
+  -HostPath "<install dir>\\resources\\bin\\phone-auth-webauthn-host.exe" `
+  -Browsers Chrome -ChromeExtensionId <the id chrome://extensions shows>
+```
+
+Firefox does not have this problem at all: `browser_specific_settings.gecko.id`
+pins the ID in the manifest, so it is the same wherever the directory sits.
 
 Whichever channel, the native host still has to be registered per user with the
 installer above. An extension without it relays nothing.
