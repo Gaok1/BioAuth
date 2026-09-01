@@ -27,7 +27,8 @@ use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
     LuksEnrollParams, LuksEnrollResult, PairingBootstrap, PermissionSummary, SshSignParams,
-    SshSignResult, StatusPayload, VaultCopyParams, VaultCopyResult, VaultFillParams,
+    SshSignResult, StatusPayload, VaultCopyParams, VaultCopyResult, VaultCreateParams,
+    VaultCreateResult, VaultFillParams,
     VaultFillResult, VaultItem, VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
@@ -40,7 +41,9 @@ use crate::transport::{Transport, TransportAvailability, TransportRegistry};
 use phone_auth_protocol::ssh;
 
 use crate::ssh_client::PhoneSsh;
-use crate::vault::{self, PhoneVault, VaultError};
+use crate::password::{self, Policy};
+use crate::vault::{self, NewItem, PhoneVault, VaultError};
+use phone_auth_protocol::vault::ItemKind;
 
 /// How long a pairing bootstrap stays scannable.
 const PAIRING_WINDOW_MS: i64 = 120_000;
@@ -1400,6 +1403,75 @@ impl Service {
     /// wipes itself on drop, moves into locked pages, and goes to the
     /// clipboard. It reaches no return value, no event and no audit entry —
     /// [`VaultCopyResult`] has no field that could carry it.
+    /// Generates a password, stores it on the phone, and forgets it.
+    ///
+    /// The secret exists on this computer for the length of one call and never
+    /// leaves this function: it is generated into a `Zeroizing<String>`, moved
+    /// into the request that wipes it, and never returned, logged or named in
+    /// the audit entry. The reply says what was made, not what it is.
+    ///
+    /// Generated here rather than accepted as a parameter. Taking one would
+    /// have meant a password in the Electron process and on the IPC socket to
+    /// buy nothing: the reason to make it on the desktop is that this is where
+    /// the entropy is, not that this is somewhere to keep it.
+    pub fn vault_create(
+        &mut self,
+        params: &VaultCreateParams,
+    ) -> Result<VaultCreateResult, ServiceError> {
+        // Refused before the phone is asked, the way `vault_copy` checks its
+        // clipboard window first: a policy this rejects would otherwise be
+        // found after the person had approved the sheet.
+        let mut policy = Policy::default();
+        if let Some(length) = params.length {
+            policy.length = length;
+        }
+        if let Some(symbols) = params.symbols {
+            policy.symbols = symbols;
+        }
+        let secret = password::generate(policy)
+            .map_err(|error| ServiceError::new("bad-params", error.to_string()))?;
+
+        let (device_id, credential_id) =
+            self.select_vault_credential(params.credential_id.as_deref())?;
+        let mut session = self
+            .transports
+            .connect(&device_id, &credential_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(&device_id);
+        let development = session.security().is_development;
+        let length = secret.chars().count();
+
+        let written = PhoneVault::new(&mut session, self.config.verifier_name.clone()).create(
+            NewItem {
+                kind: ItemKind::Login,
+                name: params.name.clone(),
+                username: params.username.clone(),
+                uri: params.uri.clone(),
+                // The last copy on this side. `NewItem` hands it straight to a
+                // request that wipes on drop, and `Zeroizing` clears the one
+                // it was cloned from when this function returns.
+                secret: secret.to_string(),
+            },
+        );
+        let _ = session.close();
+
+        let written = match written {
+            Ok(written) => written,
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_vault("", "create", &device_name, development, Err(&error));
+                return Err(error);
+            }
+        };
+
+        self.record_vault(&written.item_id, "create", &device_name, development, Ok(()));
+        Ok(VaultCreateResult {
+            item_id: written.item_id,
+            revision: written.revision,
+            length,
+        })
+    }
+
     pub fn vault_copy(
         &mut self,
         params: &VaultCopyParams,

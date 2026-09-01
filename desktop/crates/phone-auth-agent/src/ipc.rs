@@ -25,7 +25,8 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, LuksEnrollParams, RecentParams, Reply,
-    SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultFillParams,
+    SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultCreateParams,
+    VaultFillParams,
     VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
@@ -421,6 +422,22 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         "vault.list" => match parse::<VaultListParams>(call) {
             Ok(params) => {
                 let result = service.lock().expect("service mutex").vault_list(&params);
+                match result {
+                    Ok(result) => to_reply(id, &result),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // The password is made here and goes straight to the phone. It is in
+        // neither the call nor the reply -- `VaultCreateParams` has no field
+        // to send one in and `VaultCreateResult` none to send one back -- so a
+        // renderer can ask for a login to be created without ever being able
+        // to see what was created.
+        "vault.create" => match parse::<VaultCreateParams>(call) {
+            Ok(params) => {
+                let result = service.lock().expect("service mutex").vault_create(&params);
                 match result {
                     Ok(result) => to_reply(id, &result),
                     Err(error) => Reply::err(id, error.code, error.message),

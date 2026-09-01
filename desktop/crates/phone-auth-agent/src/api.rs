@@ -345,6 +345,52 @@ pub struct VaultCopyParams {
     pub clear_after_ms: Option<u64>,
 }
 
+/// Store a new login on the phone, with a password generated here.
+///
+/// The secret is neither a parameter nor a result, and that is the whole
+/// shape of the call. It is generated inside the agent, sent to the phone and
+/// wiped, so the renderer that asked for it never holds it and neither does
+/// anything else on this computer -- there is no version of this that passes
+/// through a window, a clipboard or a log. Taking a password as a parameter
+/// would have put one in the Electron process for no gain: the point of
+/// creating it on the desktop is that the desktop is where the entropy is,
+/// not that it is somewhere to keep it.
+///
+/// The phone still asks. `vault.create` raises an approval sheet worded from
+/// this request -- the only vault operation whose sheet is, because the item
+/// does not exist there yet -- so `name` is what the person reads before
+/// deciding.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultCreateParams {
+    pub name: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub uri: String,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// Characters to generate. The generator's own default when absent.
+    #[serde(default)]
+    pub length: Option<usize>,
+    /// Whether to include symbols. Left to the generator's default when
+    /// absent, which includes them.
+    #[serde(default)]
+    pub symbols: Option<bool>,
+}
+
+/// What was stored, described without being disclosed.
+///
+/// The length is here so the tray can say what it made without being told
+/// what it is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultCreateResult {
+    pub item_id: String,
+    pub revision: u64,
+    pub length: usize,
+}
+
 /// Release one site's password to the browser, for autofill.
 ///
 /// The one call in this surface that answers with a secret. Everything else

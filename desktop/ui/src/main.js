@@ -36,6 +36,13 @@ const ALLOWED_METHODS = new Set([
   'vault.list',
   'vault.copy',
   'vault.generate-copy',
+  // The other direction, and the one the rule about never storing a password
+  // here makes easy to allow: `vault.create` generates the secret inside the
+  // agent and sends it to the phone. There is no field for one in the call and
+  // none in the reply, so a renderer can ask for a login to be created and
+  // still never be able to see it. The phone raises its own approval sheet,
+  // worded from the request.
+  'vault.create',
 ]);
 
 /**
