@@ -140,6 +140,34 @@
     ) ?? null;
   }
 
+  /// Whether a field captured before the wait is still the field it was.
+  ///
+  /// Every rule above is checked before the host is asked, and the host takes
+  /// as long as a person takes to reach for their phone and approve. Two
+  /// things can happen to an element in that window.
+  ///
+  /// It can leave the document. A login form that re-renders -- a framework
+  /// remounting it, a step-two screen replacing it -- leaves these references
+  /// pointing at detached nodes, and the fill was written into them and
+  /// reported `ok`. No password in the box, no error, nothing to retry from.
+  ///
+  /// Or it can stop being a password box. "The secret only ever reaches an
+  /// `input[type=password]`" is the rule this file is built around, and it was
+  /// established before the wait rather than at the moment of writing. A page
+  /// that flips the box to `type=text` while the phone is asking gets the
+  /// password painted on screen. It could already read the value -- that is
+  /// what autofill is -- but the person standing behind the user could not,
+  /// and neither could a screen recording.
+  function stillWritable(field, types) {
+    return (
+      Boolean(field) &&
+      field.isConnected === true &&
+      types.includes(field.type) &&
+      !field.disabled &&
+      !field.readOnly
+    );
+  }
+
   /// Writes a value the way a page's own scripts expect to see it happen.
   ///
   /// Setting `.value` alone leaves frameworks that track their own state showing
@@ -177,12 +205,21 @@
       return { ok: false, error: response?.error ?? "O cofre não respondeu" };
     }
 
+    // Asked again, because the answer above arrived seconds later.
+    if (!stillWritable(password, ["password"])) {
+      return { ok: false, error: "O campo mudou enquanto o cofre respondia" };
+    }
     setFieldValue(password, response.password, EventCtor);
     if (typeof response.username === "string" && response.username) {
       // The field the user picked, when they picked one: they named it more
       // reliably than the shape of the form ever could.
       const username = focused === password ? usernameFieldFor(password) : focused;
-      if (username) setFieldValue(username, response.username, EventCtor);
+      // Skipped rather than refused. The password is in, which is the thing
+      // that was asked for; a username box that went away in the meantime is
+      // not a reason to report the fill as having failed.
+      if (stillWritable(username, ["text", "email"])) {
+        setFieldValue(username, response.username, EventCtor);
+      }
     }
     return { ok: true };
   }
@@ -229,6 +266,7 @@
     fillableOrigin,
     fillTarget,
     passwordFieldFor,
+    stillWritable,
     performFill,
   };
 })();

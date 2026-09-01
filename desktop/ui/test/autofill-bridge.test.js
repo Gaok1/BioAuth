@@ -29,12 +29,20 @@ class FakeEvent {
 }
 
 /// One input, with just enough of the DOM surface the script touches.
-function input({ type = 'password', disabled = false, readOnly = false } = {}) {
+function input({
+  type = 'password',
+  disabled = false,
+  readOnly = false,
+  isConnected = true,
+} = {}) {
   return {
     tagName: 'INPUT',
     type,
     disabled,
     readOnly,
+    // Real elements always have this; the script reads it after the wait to
+    // find out whether the page still holds the field it was handed.
+    isConnected,
     value: '',
     events: [],
     form: null,
@@ -189,6 +197,80 @@ test('a fill writes the password and fires what a page listens for', async () =>
   // Setting `.value` alone leaves a framework showing an empty field and
   // submitting an empty password.
   assert.deepEqual(password.events, ['input', 'change']);
+});
+
+// The host takes as long as a person takes to reach for their phone. These
+// three mutate the page inside that wait, which is the only place a fill can
+// be checked against a form that is no longer the one it was aimed at.
+
+test('a field that left the page during the wait is not filled', async () => {
+  const { performFill } = boot();
+  const { password } = loginForm();
+  const top = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  top.top = top;
+
+  const result = await performFill({
+    view: top,
+    document: { activeElement: password },
+    EventCtor: FakeEvent,
+    send: async () => {
+      // The login form re-rendered while the phone was asking. The old node is
+      // detached, and writing into it puts the password nowhere at all.
+      password.isConnected = false;
+      return { ok: true, password: 'hunter2', username: 'alice' };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(password.value, '');
+  assert.deepEqual(password.events, [], 'a detached field was written and told nobody');
+});
+
+test('a box that stopped being a password box during the wait is not filled', async () => {
+  const { performFill } = boot();
+  const { password } = loginForm();
+  const top = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  top.top = top;
+
+  const result = await performFill({
+    view: top,
+    document: { activeElement: password },
+    EventCtor: FakeEvent,
+    send: async () => {
+      // "The secret only ever reaches an `input[type=password]`" was true when
+      // the host was asked. A page that flips the type while the phone is
+      // asking gets the password painted on screen -- readable by the page
+      // either way, and now by whoever is looking at it.
+      password.type = 'text';
+      return { ok: true, password: 'hunter2' };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(password.value, '');
+});
+
+test('a username box that went away does not fail the fill', async () => {
+  const { performFill } = boot();
+  const { password, username } = loginForm();
+  const top = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  top.top = top;
+
+  const result = await performFill({
+    view: top,
+    document: { activeElement: password },
+    EventCtor: FakeEvent,
+    send: async () => {
+      username.isConnected = false;
+      return { ok: true, password: 'hunter2', username: 'alice' };
+    },
+  });
+
+  // The password is what was asked for and it is in. A username box that went
+  // away in the meantime is not a reason to call the fill a failure.
+  assert.equal(result.ok, true);
+  assert.equal(password.value, 'hunter2');
+  assert.equal(username.value, '');
 });
 
 test('a cross-origin frame never even asks the host', async () => {
