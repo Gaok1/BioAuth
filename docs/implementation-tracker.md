@@ -39,8 +39,8 @@ para uso diário; **P2** amplia compatibilidade ou conveniência.
 | Passkeys no desktop/web | 🧪 | Extensão, native host e relay existem; a instalação virou script com teste próprio, mas nenhum navegador real leu os manifests |
 | Gestão/backup de passkeys | 🧪 | Tela Android lista/exclui e detecta chaves inválidas/órfãs; passkeys são explicitamente device-bound e ainda não têm backup/sync |
 | File Locker | 🧪 | Formato, engine, wrappers, protocolo, CLI e recuperação existem e passam em teste, inclusive um round-trip real de 4 GiB; falta o telefone físico, disco cheio/kill e revisão externa |
-| Cofre de senhas | 🧪 | Schema, as cinco operações `vault.*`, store no Keystore Android, memória travada, clipboard com prazo e geradores de senha e passphrase existem e passam em teste; faltam o CRUD mobile, o handler que liga os dois lados, export/restore e autofill |
-| Recuperação do cofre/locker | 🧪 | O locker já tem wrapper offline e drill executado pelo binário; o cofre ainda não tem export/wrapper |
+| Cofre de senhas | 🧪 | Schema, as cinco operações `vault.*`, store no Keystore Android, memória travada, clipboard com prazo e geradores de senha e passphrase existem e passam em teste. O CRUD mobile (`VLT-03`), os handlers dos dois lados (`VLT-04`), export/restore (`VLT-05`) e o autofill de navegador e de Android (`VLT-09`, `VLT-10`) também existem — esta linha ainda os listava como pendentes, contradizendo as próprias linhas `VLT-*` abaixo. O que falta é validação em hardware, não código |
+| Recuperação do cofre/locker | 🧪 | O locker tem wrapper offline e drill executado pelo binário. O cofre tem backup cifrado (`VLT-05`): código `BAV1` de 32 bytes do CSPRNG, HKDF-SHA256 e ChaCha20-Poly1305 com o cabeçalho como AAD. Nenhum dos dois teve ciclo export → restore exercido em telefone físico |
 | Distribuição de produção | 🧪 | Pipeline recusa publicar sem assinatura Android e o native host já tem instalador; faltam secrets reais, empacotamento da extensão e smoke test |
 
 **Conclusão:** a fundação de autenticação é substancial. WebAuthn é um protótipo
