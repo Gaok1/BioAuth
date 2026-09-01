@@ -9,6 +9,8 @@ import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/auth/phone_authenticator.dart';
 import 'package:phone_auth/core/mock/fake_phone_authenticator.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
+import 'package:phone_auth/core/permissions/permission_store.dart';
+import 'package:phone_auth/core/protocol/permission_payloads.dart';
 import 'package:phone_auth/core/mock/mock_seed.dart';
 import 'package:phone_auth/domain/audit_entry.dart';
 import 'package:phone_auth/domain/authentication_request.dart';
@@ -18,8 +20,10 @@ import 'package:phone_auth/domain/connection_phase.dart';
 void main() {
   late DateTime now;
   late ProviderContainer container;
+  late _RecordingPermissionStore permissions;
 
   setUp(() {
+    permissions = _RecordingPermissionStore();
     now = DateTime.now().toUtc();
     container = ProviderContainer(
       overrides: [
@@ -30,6 +34,8 @@ void main() {
           const FakePhoneAuthenticator(),
         ),
         pairingStoreProvider.overrideWithValue(InMemoryPairingStore()),
+        // Revocation clears this too now, and the real one wants a binding.
+        permissionStoreProvider.overrideWithValue(permissions),
       ],
     );
     addTearDown(container.dispose);
@@ -271,6 +277,7 @@ void main() {
           const _AuthenticatorWhoseSessionDied(),
         ),
         pairingStoreProvider.overrideWithValue(InMemoryPairingStore()),
+        permissionStoreProvider.overrideWithValue(_RecordingPermissionStore()),
       ],
     );
     addTearDown(failing.dispose);
@@ -535,6 +542,63 @@ void main() {
       isFalse,
     );
   });
+
+  /// A verifier id is generated once on a desktop and then never changes, so
+  /// revoking a computer and pairing it again lands on the same key in the
+  /// permission store. A set left behind carries a revision above zero and a
+  /// freshly paired desktop starts at zero, so the stale set would win the
+  /// first reconciliation -- and someone who revoked a computer to take
+  /// `sudo` away would hand it back by pairing again, without being asked.
+  test('revoking a computer forgets what it may authorize', () async {
+    await permissions.write(
+      'notebook',
+      'notebook-authorization-v1',
+      const PermissionSet(revision: 0, permissions: []).edited(const [
+        Permission(service: 'sudo', action: '*', resource: '*', user: '*'),
+      ]),
+    );
+
+    await container
+        .read(appControllerProvider.notifier)
+        .revokeDevice('notebook');
+
+    expect(permissions.forgotten, ['notebook']);
+    final left = await permissions.read(
+      'notebook',
+      'notebook-authorization-v1',
+    );
+    expect(
+      left.revision,
+      0,
+      reason: 'a revoked computer kept a set that outranks a fresh pairing',
+    );
+  });
+}
+
+/// A permission store that records what it was told to forget.
+class _RecordingPermissionStore implements PermissionStore {
+  final List<String> forgotten = [];
+  final Map<String, PermissionSet> entries = {};
+
+  @override
+  Future<PermissionSet> read(String verifierId, String credentialId) async =>
+      entries['$verifierId $credentialId'] ?? PermissionSet.never;
+
+  @override
+  Future<void> write(
+    String verifierId,
+    String credentialId,
+    PermissionSet set,
+  ) async => entries['$verifierId $credentialId'] = set;
+
+  @override
+  Future<Map<String, PermissionSet>> readAll(String verifierId) async => {};
+
+  @override
+  Future<void> forget(String verifierId) async {
+    forgotten.add(verifierId);
+    entries.removeWhere((key, _) => key.startsWith('$verifierId '));
+  }
 }
 
 /// A core whose session ended between the tap and the signature.

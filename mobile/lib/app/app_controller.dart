@@ -306,6 +306,24 @@ class AppController extends Notifier<AppState> {
     setDevicePhase(deviceId, ConnectionPhase.revoking);
 
     try {
+      // Before the record, and this order is the whole point.
+      //
+      // A verifier id is generated once on the desktop and then never
+      // changes -- `AgentConfig` says so where it is declared -- so revoking
+      // and pairing the same computer again lands on the same key here. A
+      // permission set left behind carries a revision above zero, and a
+      // freshly paired desktop starts at zero, so the stale set would *win*
+      // the first reconciliation. Someone who revoked a computer precisely to
+      // take `sudo` away would have handed it back by pairing again, without
+      // ever being asked.
+      //
+      // Failing here stops the revocation rather than half-doing it. The
+      // other order cannot: if the record went first and this threw, the
+      // pairing would be gone and the grants would still be sitting there.
+      // This way round, a failure after this line leaves the phone with no
+      // local set and the desktop's own copy wins the next sync -- which
+      // restores exactly what was already granted and nothing more.
+      await ref.read(permissionStoreProvider).forget(deviceId);
       await ref.read(pairingStoreProvider).remove(deviceId);
     } on Object {
       // The pairing is still real. Saying otherwise would leave the user

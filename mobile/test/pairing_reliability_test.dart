@@ -12,6 +12,7 @@ import 'package:phone_auth/app/providers.dart';
 import 'package:phone_auth/core/auth/interactive_authorizer.dart';
 import 'package:phone_auth/core/pairing/pairing_record.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
+import 'package:phone_auth/core/permissions/permission_store.dart';
 import 'package:phone_auth/core/protocol/cbor.dart';
 import 'package:phone_auth/core/locker/locker_service.dart';
 import 'package:phone_auth/core/protocol/application_frame.dart';
@@ -266,6 +267,7 @@ void main() {
       overrides: [
         appConfigProvider.overrideWithValue(const AppConfig.production()),
         pairingStoreProvider.overrideWithValue(store),
+        permissionStoreProvider.overrideWithValue(_ForgetfulPermissions()),
       ],
     );
     addTearDown(container.dispose);
@@ -289,6 +291,7 @@ void main() {
       overrides: [
         appConfigProvider.overrideWithValue(const AppConfig.production()),
         pairingStoreProvider.overrideWithValue(_FailingStore(_record)),
+        permissionStoreProvider.overrideWithValue(_ForgetfulPermissions()),
       ],
     );
     addTearDown(container.dispose);
@@ -1325,4 +1328,25 @@ class _StubWebAuthnRelay implements PhoneAuthWebAuthnRelay {
 
   @override
   Future<void> cancel(String requestId) async => cancelled.add(requestId);
+}
+
+/// Revocation clears the permission set too, and the real store wants a
+/// binding these tests do not raise.
+class _ForgetfulPermissions implements PermissionStore {
+  @override
+  Future<PermissionSet> read(String verifierId, String credentialId) async =>
+      PermissionSet.never;
+
+  @override
+  Future<void> write(
+    String verifierId,
+    String credentialId,
+    PermissionSet set,
+  ) async {}
+
+  @override
+  Future<Map<String, PermissionSet>> readAll(String verifierId) async => {};
+
+  @override
+  Future<void> forget(String verifierId) async {}
 }

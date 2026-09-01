@@ -23,6 +23,7 @@ import '../core/bluetooth/ble_transport.dart';
 import '../core/pairing/pairing_record.dart';
 import '../core/pairing/pairing_service.dart';
 import '../core/pairing/pairing_store.dart';
+import '../core/permissions/permission_store.dart';
 import '../domain/connection_phase.dart';
 import '../core/session/paired_session_runner.dart';
 import '../core/session/phone_auth_core.dart';
@@ -36,6 +37,11 @@ import '../core/transport/usb_cable_transport.dart';
 
 final pairingStoreProvider = Provider<PairingStore>(
   (ref) => SharedPreferencesPairingStore(),
+);
+
+/// What each paired computer may authorize, as this phone holds it.
+final permissionStoreProvider = Provider<PermissionStore>(
+  (ref) => SharedPreferencesPermissionStore(),
 );
 
 final securityCapabilitiesProvider = FutureProvider<SecurityCapabilities>(
