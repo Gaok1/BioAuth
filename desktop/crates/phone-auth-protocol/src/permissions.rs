@@ -30,15 +30,29 @@
 //! device that verified a human is the same instinct as the rest of this
 //! product.
 //!
-//! Revisions start at 1 and only ever climb. A side that has never been edited
-//! sends 0, which loses to everything -- that is how a phone paired before this
-//! existed picks up the desktop's set instead of blanking it.
+//! Revisions start at 1 and only ever climb, so a side that has never been
+//! edited sends 0 and loses to any real revision.
+//!
+//! Zero against zero is the exception, and it is the case every pairing alive
+//! today hits on its first sync. The two zeroes do not mean the same thing:
+//! the desktop's set is whatever was granted from the tray over the life of the
+//! pairing, and the phone's is empty because the phone has never had a
+//! permission store. Sent through the tie-break, the phone would win with
+//! nothing and a working pairing would be revoked by the act of syncing it. So
+//! a double zero goes to the desktop, and only then does rule 2 apply.
 
 use crate::cbor::{Reader, Writer};
 use crate::{bytes_equal, check_text, ProtocolError, Result, MAX_APPLICATION_PAYLOAD_BYTES};
 
 /// Exchange permissions and settle on one set.
 pub const OPERATION_SYNC: &str = "permissions.sync";
+
+/// How every field but `service` spells "any value".
+///
+/// Repeated here rather than imported from the verifier, because this crate is
+/// the wire and must not depend on the thing that enforces it. The two are
+/// pinned together by a test on the enforcing side.
+pub const WILDCARD: &str = "*";
 
 /// Schema marker, first field of every payload here.
 pub const PERMISSIONS_SCHEMA: u64 = 1;
@@ -70,12 +84,15 @@ pub struct Permission {
 
 impl Permission {
     pub fn validate(&self) -> Result<()> {
+        // All four required, none of them empty. "Any resource" is spelled
+        // `*` on the enforcing side, and an empty string there is not a
+        // wildcard -- it is a value nothing ever matches. Letting one across
+        // would turn a grant the user wrote into one that silently never
+        // applies, which is a permission system that lies about itself.
         check_text("service", &self.service, MAX_FIELD_UNITS)?;
         check_text("action", &self.action, MAX_FIELD_UNITS)?;
-        // A grant may name no particular resource or no particular user, and
-        // an empty string is how it says so.
-        check_optional("resource", &self.resource, MAX_FIELD_UNITS)?;
-        check_optional("user", &self.user, MAX_FIELD_UNITS)
+        check_text("resource", &self.resource, MAX_FIELD_UNITS)?;
+        check_text("user", &self.user, MAX_FIELD_UNITS)
     }
 
     fn write(&self, writer: &mut Writer) {
@@ -118,6 +135,19 @@ pub enum Winner {
 /// phone calls it with `true` about its own set, the desktop calls it with
 /// `false` about its own. Neither has a second rule of its own to drift from.
 pub fn reconcile(mine: u64, theirs: u64, phone_wins_ties: bool) -> Winner {
+    // Neither side has ever been edited. This is the first sync of a pairing
+    // that predates the feature, and the two zeroes do not mean the same
+    // thing: the desktop's set is whatever was granted from the tray over the
+    // life of the pairing, and the phone's is empty because the phone has
+    // never had a permission store at all. Handing this to the tie-break
+    // would revoke a working pairing on contact.
+    if mine == 0 && theirs == 0 {
+        return if phone_wins_ties {
+            Winner::Theirs
+        } else {
+            Winner::Mine
+        };
+    }
     if mine > theirs {
         return Winner::Mine;
     }
@@ -248,13 +278,6 @@ fn check_size(encoded: usize) -> Result<()> {
     Ok(())
 }
 
-fn check_optional(field: &'static str, value: &str, max: usize) -> Result<()> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    check_text(field, value, max)
-}
-
 /// Shared front of every decode: bounds, shape and schema.
 fn open(payload: &[u8], fields: u64) -> Result<Reader<'_>> {
     if payload.is_empty() || payload.len() > MAX_APPLICATION_PAYLOAD_BYTES {
@@ -291,7 +314,7 @@ mod tests {
         Permission {
             service: service.to_owned(),
             action: action.to_owned(),
-            resource: String::new(),
+            resource: WILDCARD.to_owned(),
             user: "gaok1".to_owned(),
         }
     }
@@ -355,15 +378,28 @@ mod tests {
         assert_eq!(reconcile(6, 6, false), Winner::Theirs);
     }
 
-    /// Zero is what a side that has never been edited sends. It has to lose to
-    /// everything, including to another zero from the phone, so that pairing a
-    /// phone made before this existed adopts the desktop's grants rather than
-    /// clearing them.
+    /// Zero is what a side that has never been edited sends, and it loses to
+    /// any real revision from either seat.
     #[test]
     fn a_side_that_was_never_edited_loses() {
         assert_eq!(reconcile(0, 1, false), Winner::Theirs);
         assert_eq!(reconcile(0, 1, true), Winner::Theirs);
         assert_eq!(reconcile(1, 0, false), Winner::Mine);
+        assert_eq!(reconcile(1, 0, true), Winner::Mine);
+    }
+
+    /// The first sync of a pairing older than this feature, which is every
+    /// pairing that exists today. Both sides send zero, and the tie-break must
+    /// not run: the desktop's zero means "granted from the tray and never
+    /// touched since", the phone's means "has never had a permission store".
+    /// Treating them as equal claims revokes a working pairing on contact --
+    /// the phone answers with its empty set and the desktop stores it.
+    #[test]
+    fn a_first_sync_keeps_the_grants_the_desktop_already_had() {
+        // Asked from the phone's seat about the phone's own empty set.
+        assert_eq!(reconcile(0, 0, true), Winner::Theirs);
+        // Asked from the desktop's seat about the desktop's set.
+        assert_eq!(reconcile(0, 0, false), Winner::Mine);
     }
 
     /// The bound is checked before the allocation, not after it: the count is
@@ -414,13 +450,27 @@ mod tests {
         ));
     }
 
+    /// Every field, not just the obvious one. An empty `resource` reaching the
+    /// enforcing side is not "any resource" -- it is a grant that matches
+    /// nothing, written by a user who believes it matches something.
     #[test]
-    fn a_grant_with_no_service_is_refused() {
-        let response = SyncResponse {
-            revision: 1,
-            permissions: vec![Permission::default()],
-        };
-
-        assert!(response.validate().is_err());
+    fn a_grant_with_an_empty_field_is_refused() {
+        for empty in ["service", "action", "resource", "user"] {
+            let mut permission = grant("sudo", "run");
+            match empty {
+                "service" => permission.service.clear(),
+                "action" => permission.action.clear(),
+                "resource" => permission.resource.clear(),
+                _ => permission.user.clear(),
+            }
+            let response = SyncResponse {
+                revision: 1,
+                permissions: vec![permission],
+            };
+            assert!(
+                response.validate().is_err(),
+                "an empty `{empty}` was accepted"
+            );
+        }
     }
 }
