@@ -90,6 +90,43 @@ void main() {
     expect(controller.locked, isFalse);
     expect(controller.items, hasLength(1));
   });
+
+  /// Locking mid-load must not take the stars with it.
+  ///
+  /// The favourites load is launched with `unawaited` so the vault opens at
+  /// the vault's speed, which puts it outside the generation check that covers
+  /// every other vault operation. It then pruned against the item list — and a
+  /// lock empties that list. Pruning against an empty list is not a no-op:
+  /// every id is absent from it, so every star is dropped and the empty set is
+  /// written to disk.
+  ///
+  /// The window is one platform channel round trip into the preference store,
+  /// with the app one notification away from backgrounding.
+  test('a lock during the favourites load does not erase them', () async {
+    final favourites = _SlowLoading({'banco', 'email'});
+    final controller = VaultController(
+      store: _Store(['banco', 'bar', 'email']),
+      favourites: favourites,
+      copy: (_) async {},
+    );
+    addTearDown(controller.dispose);
+
+    await controller.unlock();
+    await favourites.loading.future;
+
+    controller.lock();
+    favourites.release.complete();
+    // Let whatever the load was going to do, do it.
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      favourites.prunes,
+      0,
+      reason: 'the stars were pruned against a list a lock had just emptied',
+    );
+    expect(favourites.contains('banco'), isTrue);
+    expect(favourites.contains('email'), isTrue);
+  });
 }
 
 /// A `VaultFavourites` that keeps its set in memory, with no platform behind
@@ -128,6 +165,27 @@ class _Fake extends VaultFavourites {
       ...items.where((item) => _ids.contains(item.id)),
       ...items.where((item) => !_ids.contains(item.id)),
     ];
+  }
+}
+
+/// A load the test finishes by hand, to stand something up in the middle of it.
+class _SlowLoading extends _Fake {
+  _SlowLoading(super.ids);
+
+  final loading = Completer<void>();
+  final release = Completer<void>();
+  int prunes = 0;
+
+  @override
+  Future<void> load() async {
+    if (!loading.isCompleted) loading.complete();
+    await release.future;
+  }
+
+  @override
+  Future<void> prune(Iterable<String> livingIds) async {
+    prunes++;
+    return super.prune(livingIds);
   }
 }
 

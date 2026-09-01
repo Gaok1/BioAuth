@@ -195,10 +195,23 @@ class VaultController extends ChangeNotifier {
   });
 
   Future<void> _loadFavourites() async {
+    // This one is launched with `unawaited` from inside an action, so the
+    // generation check in `_run`'s `finally` does not cover it. It carries its
+    // own.
+    final generation = _generation;
     await _favourites.load();
     // Stars for items that are gone would otherwise accumulate forever, and
     // the stored list would slowly become a record of everything ever starred.
     if (_disposed) return;
+    // Asked before the prune and not only before the notify below, because
+    // the prune is the destructive half. A lock empties the list it prunes
+    // against, and pruning against an empty list is not a no-op: every id is
+    // absent from it, so every star is dropped and the empty set is written to
+    // disk. The whole vault's favourites, gone, for leaving the foreground
+    // while the preference store was still answering -- which is a platform
+    // channel round trip on first use, and the app is one notification away
+    // from backgrounding at any moment.
+    if (_generation != generation) return;
     await _favourites.prune(_items.map((item) => item.id));
     if (_disposed || locked) return;
     notifyListeners();
