@@ -1395,14 +1395,6 @@ impl Service {
         }
     }
 
-    /// Puts one stored secret on the clipboard, after the user approves it on
-    /// the phone.
-    ///
-    /// The secret's whole life on this side is inside this function: it arrives
-    /// in a [`FetchResponse`](phone_auth_protocol::vault::FetchResponse) that
-    /// wipes itself on drop, moves into locked pages, and goes to the
-    /// clipboard. It reaches no return value, no event and no audit entry —
-    /// [`VaultCopyResult`] has no field that could carry it.
     /// Generates a password, stores it on the phone, and forgets it.
     ///
     /// The secret exists on this computer for the length of one call and never
@@ -1477,6 +1469,14 @@ impl Service {
         })
     }
 
+    /// Puts one stored secret on the clipboard, after the user approves it on
+    /// the phone.
+    ///
+    /// The secret's whole life on this side is inside this function: it arrives
+    /// in a [`FetchResponse`](phone_auth_protocol::vault::FetchResponse) that
+    /// wipes itself on drop, moves into locked pages, and goes to the
+    /// clipboard. It reaches no return value, no event and no audit entry —
+    /// [`VaultCopyResult`] has no field that could carry it.
     pub fn vault_copy(
         &mut self,
         params: &VaultCopyParams,

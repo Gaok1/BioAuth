@@ -518,7 +518,13 @@ class VaultController extends ChangeNotifier {
         'operation_in_progress' =>
           'Outra operação do cofre está em andamento. Tente de novo em '
               'instantes.',
-        'vault_full' => 'O cofre está cheio.',
+        // Every message around this one names the next thing to do, and this
+        // one named a state. A vault at its ceiling is the one failure here
+        // the user can clear themselves in ten seconds, and "o cofre está
+        // cheio" left them looking for a setting that does not exist.
+        'vault_full' =>
+          'O cofre já guarda o máximo de $maxVaultItems itens. Apague algum '
+              'antes de guardar outro.',
         // The vault operation worked. The item was fetched, the biometric was
         // spent and the plaintext was decrypted -- and then the clipboard
         // refused it. Blaming the vault sends the user to look at the wrong
