@@ -108,6 +108,19 @@ class AgentSupervisor {
   /** Resets the attempt budget once the agent is confirmed up. */
   markHealthy() {
     this.attempts = 0;
+    // And drops a restart that is no longer owed. The `exit` handler queues one
+    // three seconds out, and it fires with a hardcoded `false` for
+    // `alreadyRunning` -- the single question `ensureRunning` exists to be told
+    // the truth about. Three seconds is long enough for a service-managed agent
+    // to take over, and taking over is often *why* the one this process started
+    // exited. Starting a rival to it is the harm this class is written around:
+    // the agent has no single-instance lock, so two of them race over the
+    // endpoint file and the pairing store. Being confirmed up answers the
+    // question, and the answer arrives here.
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 
   /**
