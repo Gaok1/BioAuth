@@ -168,7 +168,20 @@ function verifyAuthenticode(
     child.stdout.on('data', (chunk) => stdout.push(chunk));
     child.stderr.on('data', (chunk) => stderr.push(chunk));
     child.on('error', reject);
-    child.on('exit', (code) => {
+    // `close`, not `exit`. Node documents the difference and it is the one
+    // that matters when the handler reads the child's output: `exit` fires
+    // when the process ends, and says explicitly that the stdio streams may
+    // still be open, while `close` fires once they are not. Reading the buffer
+    // at `exit` is therefore reading whatever had arrived by then.
+    //
+    // Not something observed here -- a 400 KB answer still arrives whole under
+    // `exit` on this machine, which is why the test below is a guard on the
+    // function rather than a reproduction. It is changed because the contract
+    // is the contract, and the failure it allows is a bad one to leave latent:
+    // a truncated JSON document does not parse, so a legitimate update is
+    // refused with "the verifier returned an invalid result", which sends
+    // whoever reads it to look at the verifier.
+    child.on('close', (code) => {
       if (code !== 0) {
         reject(new Error(`Authenticode verification failed: ${Buffer.concat(stderr)}`));
         return;
@@ -344,4 +357,10 @@ module.exports = {
   installerName,
   parseVersion,
   releaseAsset,
+  // Exported to be tested. Every `SecureUpdater` test injects a stand-in for
+  // `verify`, which is right -- they are about the update decision, not about
+  // PowerShell -- but it left the function that actually decides whether a
+  // downloaded installer may run as the one piece of this file no test ever
+  // executed.
+  verifyAuthenticode,
 };

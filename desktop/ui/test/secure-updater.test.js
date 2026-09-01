@@ -12,6 +12,7 @@ const {
   installerName,
   parseVersion,
   releaseAsset,
+  verifyAuthenticode,
 } = require('../src/secure-updater');
 
 function release(version) {
@@ -179,3 +180,48 @@ test('development and unsigned installs never download', async () => {
   );
   assert.equal(fetched, false);
 });
+
+/// The verifier's answer has to arrive whole.
+///
+/// Every test above injects a stand-in for `verify`, which is right -- they are
+/// about the update decision, not about PowerShell. It does mean the function
+/// that actually decides whether a downloaded installer may run was the one
+/// piece of this file no test ever executed.
+///
+/// This is a guard on that function, not a reproduction of a failure: the
+/// answer is 400 KB and arrives whole under the old `exit` handler too, on this
+/// machine. What it pins is the behaviour anybody changing the reading of that
+/// child's output has to keep -- the whole document, not a prefix of it.
+///
+/// Windows-only, because the verifier runs `powershell.exe` by name. The tray
+/// tests otherwise run on Linux in CI, so this is skipped there and runs on the
+/// machine the updater is for.
+test(
+  'the verifier reads the whole of its answer, not a prefix',
+  { skip: process.platform !== 'win32' ? 'needs powershell.exe' : false },
+  async () => {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'phoneauth-verify-'));
+    const script = path.join(sandbox, 'stub.ps1');
+    const filler = 'x'.repeat(400_000);
+    fs.writeFileSync(
+      script,
+      [
+        'param([string]$Path)',
+        '$filler = "x" * 400000',
+        '$answer = [ordered]@{ valid = $true; publicKey = "KEY"; ' +
+          'fileVersion = "1.2.3"; filler = $filler }',
+        '[Console]::Out.Write((ConvertTo-Json -Compress -InputObject $answer))',
+      ].join('\n'),
+      'utf8'
+    );
+
+    const answer = await verifyAuthenticode(path.join(sandbox, 'anything.exe'), script);
+
+    assert.equal(answer.valid, true);
+    assert.equal(answer.publicKey, 'KEY');
+    assert.equal(answer.fileVersion, '1.2.3');
+    assert.equal(answer.filler.length, filler.length, 'the tail of the answer was lost');
+
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  }
+);
