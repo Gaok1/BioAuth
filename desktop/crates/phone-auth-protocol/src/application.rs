@@ -209,7 +209,8 @@ fn valid_operation(value: &str) -> bool {
         .strip_prefix("vault.")
         .or_else(|| value.strip_prefix("locker."))
         .or_else(|| value.strip_prefix("luks."))
-        .or_else(|| value.strip_prefix("ssh."));
+        .or_else(|| value.strip_prefix("ssh."))
+        .or_else(|| value.strip_prefix("permissions."));
     matches!(suffix, Some(suffix) if !suffix.is_empty()
         && value.len() <= 64
         && !suffix.contains("..")
@@ -276,6 +277,33 @@ mod tests {
         frame = fixture();
         frame.expires_at_ms = frame.issued_at_ms;
         assert_eq!(frame.validate(), Err(ProtocolError::ValidityWindow));
+    }
+
+    /// The allow-list is the reason a new namespace is a two-file change, and
+    /// forgetting the second file is silent in a way worth a test: every
+    /// payload round-trips, every unit test on both sides passes, and the
+    /// operation is refused by the envelope before anything looks at it. That
+    /// is exactly how `permissions.sync` behaved the first time it was wired
+    /// end to end.
+    ///
+    /// `mobile/lib/core/protocol/application_frame.dart` carries the same list.
+    #[test]
+    fn every_namespace_with_a_handler_is_on_the_allow_list() {
+        for operation in [
+            "vault.list",
+            "locker.unlock",
+            "luks.enroll",
+            "ssh.sign",
+            crate::permissions::OPERATION_SYNC,
+        ] {
+            let mut frame = fixture();
+            frame.operation = operation.into();
+            assert_eq!(
+                frame.validate(),
+                Ok(()),
+                "`{operation}` has a handler and no way through the envelope"
+            );
+        }
     }
 
     #[test]

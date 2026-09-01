@@ -22,6 +22,8 @@ import '../locker/locker_service.dart';
 import '../luks/luks_service.dart';
 import '../ssh/ssh_service.dart';
 import '../vault/vault_approval.dart';
+import '../permissions/permission_service.dart';
+import '../permissions/permission_store.dart';
 import '../vault/vault_listing.dart';
 import '../vault/vault_service.dart';
 import '../../features/vault/vault_store.dart';
@@ -70,9 +72,11 @@ class PairedSessionService {
     LockerKeyGuardian? lockerGuardian,
     LuksKeyGuardian? luksGuardian,
     WebAuthnRelayHandler? webAuthn,
+    PermissionStore? permissionStore,
     Duration? answerTimeout,
     DateTime Function()? clock,
-  }) : _answerTimeout = answerTimeout ?? pairedSessionAnswerTimeout,
+  }) : _permissionStore = permissionStore ?? SharedPreferencesPermissionStore(),
+       _answerTimeout = answerTimeout ?? pairedSessionAnswerTimeout,
        _webAuthn = webAuthn ?? const WebAuthnRelayHandler(),
        _transport = transport,
        _authorizer = authorizer,
@@ -88,6 +92,7 @@ class PairedSessionService {
   final AuthTransport _transport;
   final BiometricAuthorizer _authorizer;
   final AuthorizationConsent _consent;
+  final PermissionStore _permissionStore;
 
   /// The parts of the vault and ssh services rather than the services.
   ///
@@ -401,6 +406,30 @@ class PairedSessionService {
         return null;
       }
       if (ApplicationFrame.recognizes(frame)) {
+        // Permissions come before the switch below, because they are the one
+        // thing every credential has. Routing them by purpose would mean
+        // deciding which single purpose owns the question of what the others
+        // may do.
+        //
+        // The session is still what bounds it: this settles the permissions of
+        // the credential the session was opened with, and there is no field in
+        // the request that could name another. So a session opened for SSH
+        // reaches the SSH credential's grants and nothing else, which is the
+        // same rule the switch below enforces, arrived at differently.
+        if (PermissionService.serves(ApplicationFrame.decode(frame))) {
+          await outcome.session.send(
+            await _answered(
+              PermissionService(
+                store: _permissionStore,
+                verifierId: record.verifierId,
+                credentialId: record.credentialId,
+                clock: _clock,
+              ).handle(frame, sessionBinding: outcome.session.sessionBinding),
+              until: _deadlineOf(frame),
+            ),
+          );
+          return null;
+        }
         // Which handler serves a frame is decided by the credential this
         // session was opened with, not by the operation name in it. A session
         // opened for the vault cannot reach the SSH key by asking for

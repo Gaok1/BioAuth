@@ -189,6 +189,8 @@ class ApplicationFrame {
       suffix = value.substring(5);
     } else if (value.startsWith('ssh.')) {
       suffix = value.substring(4);
+    } else if (value.startsWith('permissions.')) {
+      suffix = value.substring(12);
     } else {
       return false;
     }
