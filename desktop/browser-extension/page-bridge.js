@@ -296,14 +296,28 @@
     }
   }
 
+  // `method` again, and for the reason it was written. These two shadow
+  // `CredentialsContainer.prototype.create` and `.get`, which are writable and
+  // configurable; defining them as neither made `navigator.credentials.get =
+  // wrapped` a TypeError under strict mode, which is every module. Sites and
+  // passkey libraries wrap these -- that is what this file is doing -- and a
+  // page whose own wrapper threw on assignment lost the script that was
+  // installing it, at document_start, before anything on the page had run.
+  //
+  // Nothing is given away. A page that replaces these is a page that has
+  // decided not to use this bridge, which it could always do by not calling
+  // it; the boundary that matters is the content script and the native host,
+  // and neither is reachable from here.
   Object.defineProperties(credentials, {
     __phoneAuthInstalled: { value: true },
     create: {
+      ...method,
       value: (options = {}) => options.publicKey
         ? relay("create", options)
         : nativeCreate(options),
     },
     get: {
+      ...method,
       value: (options = {}) => options.publicKey && options.mediation !== "conditional"
         ? relay("get", options)
         : nativeGet(options),

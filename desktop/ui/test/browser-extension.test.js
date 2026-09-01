@@ -22,11 +22,24 @@ function page({
 } = {}) {
   const document = new EventTarget();
   document.permissionsPolicy = { allowsFeature: () => permits };
-  const native = {
-    create: async (options) => ({ native: 'create', options }),
-    get: async (options) => ({ native: 'get', options }),
-  };
-  const credentials = { ...native };
+  // On the prototype, where the browser keeps them, and not on the instance.
+  //
+  // More than realism. `Object.defineProperty` over an existing *own* property
+  // keeps every attribute it is not given; over a fresh one the omitted ones
+  // default to false. With `create` and `get` sitting on the object itself,
+  // the bridge's descriptors inherited this harness's writability and a
+  // non-writable definition was indistinguishable from a writable one.
+  class CredentialsContainer {
+    async create(options) {
+      return { native: 'create', options };
+    }
+
+    async get(options) {
+      return { native: 'get', options };
+    }
+  }
+  const credentials = new CredentialsContainer();
+  const native = CredentialsContainer.prototype;
   const window = {};
   // The engine's own answers, which the bridge has to leave standing wherever
   // it does not speak for the capability itself. `getClientCapabilities` and
@@ -235,6 +248,38 @@ test('page bridge handles abort, timeout, iframe policy, and native fallback', a
   const fallback = page();
   assert.equal((await fallback.credentials.create({ password: true })).native, 'create');
   assert.equal((await fallback.credentials.get({ publicKey: {}, mediation: 'conditional' })).native, 'get');
+});
+
+/// The bridge's own lesson, one level up.
+///
+/// `toJSON` on a credential was defined without `writable` once, and
+/// `@github/webauthn-json` assigning over it threw -- after the phone had
+/// signed. `create` and `get` shadow prototype methods that are writable and
+/// configurable, and were defined as neither. A site or a passkey library
+/// wrapping `navigator.credentials.get` -- which is what this very file does --
+/// got a TypeError under strict mode, at document_start, and lost the script
+/// that was doing the wrapping.
+test('a page may wrap the bridge the way the bridge wrapped the browser', () => {
+  const { credentials } = page();
+
+  // The descriptors themselves, because that is the claim. Asserting through
+  // an assignment would depend on whether the code doing it is strict, and
+  // the answer that matters is the browser's, not this file's.
+  for (const name of ['create', 'get']) {
+    const descriptor = Object.getOwnPropertyDescriptor(credentials, name);
+    assert.equal(descriptor.writable, true, `${name} cannot be wrapped`);
+    assert.equal(descriptor.configurable, true, `${name} cannot be replaced`);
+  }
+
+  // And the wrapping works, which is the thing the descriptors are for.
+  const ours = credentials.get;
+  let sawOptions;
+  credentials.get = (options) => {
+    sawOptions = options;
+    return ours(options);
+  };
+  credentials.get({ mediation: 'silent' });
+  assert.deepEqual(sawOptions, { mediation: 'silent' });
 });
 
 test('page bridge answers that a platform authenticator is available', async () => {
