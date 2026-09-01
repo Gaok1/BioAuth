@@ -227,11 +227,39 @@ String totpSecretToBase32(TotpSecret secret) {
 /// Deliberately not offered anywhere in the UI yet. It exists so that the
 /// parser has an inverse to be tested against, which is how a round-trip bug
 /// gets caught before somebody's second factor stops working.
-String encodeTotpSecret(TotpSecret secret, {required String label}) {
+/// Reads whichever of the two stored forms an item holds.
+///
+/// See [storedTotpSecret] for why there are two.
+TotpSecret readTotpSecret(String stored) {
+  final trimmed = stored.trim();
+  return trimmed.toLowerCase().startsWith('otpauth://')
+      ? TotpSecret.fromUri(trimmed)
+      : TotpSecret.parse(trimmed);
+}
+
+/// The form an item stores a seed in.
+///
+/// Bare base32 while the seed uses the six digits and thirty-second window
+/// everything defaults to, which is nearly always, and which keeps an item
+/// added from a QR link byte-identical to one typed by hand — the property a
+/// restore relies on to not see them as two accounts.
+///
+/// A seed that differs is stored as a canonical `otpauth://` URI instead,
+/// because at that point the digits and the window *are* part of the secret.
+/// Dropping them and reading the seed back at six-and-thirty does not fail: it
+/// produces a plausible six-digit code that no issuer will ever accept, every
+/// time, with nothing on screen to suggest the app is the reason. An
+/// authenticator that is confidently wrong is worse than one that refuses.
+String storedTotpSecret(TotpSecret secret) =>
+    secret.digits == totpDigits && secret.period == totpPeriod
+    ? totpSecretToBase32(secret)
+    : encodeTotpSecret(secret);
+
+String encodeTotpSecret(TotpSecret secret, {String label = ''}) {
   return Uri(
     scheme: 'otpauth',
     host: 'totp',
-    path: '/${Uri.encodeComponent(label)}',
+    path: label.isEmpty ? '/' : '/${Uri.encodeComponent(label)}',
     queryParameters: {
       'secret': totpSecretToBase32(secret),
       'digits': '${secret.digits}',

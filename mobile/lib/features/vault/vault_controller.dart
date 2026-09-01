@@ -208,7 +208,7 @@ class VaultController extends ChangeNotifier {
       // The seed itself never reaches the screen. What is shown is the code
       // derived from it, and it keeps deriving while the item is open so the
       // digits on screen are the digits the site will accept.
-      _totpSecret = TotpSecret.parse(fetched.secret);
+      _totpSecret = readTotpSecret(fetched.secret);
       await _tickTotp();
       _totpTicker = Timer.periodic(
         const Duration(seconds: 1),
@@ -260,7 +260,7 @@ class VaultController extends ChangeNotifier {
     // the clipboard would paste something no login field accepts and leave the
     // second factor itself sitting there.
     if (item.kind == VaultItemKind.totp) {
-      final code = await generateTotp(TotpSecret.parse(fetched.secret));
+      final code = await generateTotp(readTotpSecret(fetched.secret));
       await _copy(code.digits);
       return;
     }

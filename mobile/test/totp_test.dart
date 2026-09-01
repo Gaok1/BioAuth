@@ -183,6 +183,59 @@ void main() {
     });
   });
 
+  group('the form a seed is stored in', () {
+    /// The overwhelmingly common case, and the one a restore depends on: an
+    /// ordinary seed stays bare base32, so an item added from a QR link and
+    /// one typed by hand are the same bytes.
+    test('an ordinary seed stays bare base32', () {
+      final stored = storedTotpSecret(TotpSecret.parse('JBSWY3DPEHPK3PXP'));
+
+      expect(stored, 'JBSWY3DPEHPK3PXP');
+      expect(readTotpSecret(stored).digits, totpDigits);
+      expect(readTotpSecret(stored).period, totpPeriod);
+    });
+
+    /// The bug this covers is silent. The digits and the window were parsed
+    /// off the pasted `otpauth://` and then dropped, so an eight-digit or
+    /// sixty-second issuer became an item that generated a perfectly plausible
+    /// six-digit code that nothing would ever accept -- with no error, and
+    /// nothing on screen to suggest the app was the reason.
+    test('digits and window that are not the defaults survive storage', () {
+      final pasted = readTotpSecret(
+        'otpauth://totp/Banco:alice?secret=JBSWY3DPEHPK3PXP&digits=8&period=60',
+      );
+      expect(pasted.digits, 8);
+      expect(pasted.period, const Duration(seconds: 60));
+
+      final reread = readTotpSecret(storedTotpSecret(pasted));
+
+      expect(reread.digits, 8);
+      expect(reread.period, const Duration(seconds: 60));
+      expect(reread.bytes, pasted.bytes);
+    });
+
+    test(
+      'a stored non-default seed still generates its own shape of code',
+      () async {
+        final stored = storedTotpSecret(
+          readTotpSecret(
+            'otpauth://totp/Banco?secret=JBSWY3DPEHPK3PXP&digits=8&period=60',
+          ),
+        );
+
+        final code = await generateTotp(
+          readTotpSecret(stored),
+          at: DateTime.utc(2026, 1, 1),
+        );
+
+        expect(code.digits.length, 8);
+        // The window is sixty seconds, so a code minted on the boundary lasts
+        // sixty -- not the thirty a dropped `period=` would have given it.
+        expect(code.secondsRemaining(DateTime.utc(2026, 1, 1)), 60);
+      },
+    );
+  });
+
   test('a form can tell a seed from a password before the field is left', () {
     expect(looksLikeTotpSecret('JBSWY3DPEHPK3PXP'), isTrue);
     expect(looksLikeTotpSecret('jbsw y3dp ehpk 3pxp'), isTrue);

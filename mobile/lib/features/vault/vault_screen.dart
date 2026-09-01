@@ -546,18 +546,17 @@ class _TotpSubtitle extends StatelessWidget {
   }
 }
 
-/// The base32 seed behind whatever the user pasted.
+/// The seed behind whatever the user pasted, in the form an item stores.
 ///
 /// Accepts a bare seed or a whole `otpauth://totp/...`, because both are what
 /// sites put on screen next to the QR code, and a form that took only one of
 /// them would be a form that rejects half of what people paste.
-String _totpSeed(String typed) {
-  final trimmed = typed.trim();
-  final secret = trimmed.toLowerCase().startsWith('otpauth://')
-      ? TotpSecret.fromUri(trimmed)
-      : TotpSecret.parse(trimmed);
-  // The canonical base32, not what was pasted. An item added from a QR link
-  // and one typed by hand are then the same bytes, and a restore does not see
-  // them as two accounts.
-  return totpSecretToBase32(secret);
-}
+///
+/// Canonical rather than what was pasted, so an item added from a QR link and
+/// one typed by hand are the same bytes and a restore does not see them as two
+/// accounts. [storedTotpSecret] is what decides the canonical form: base32 for
+/// an ordinary seed, and an `otpauth://` URI for one whose digits or window
+/// are not the defaults — those used to be parsed off the pasted URI and then
+/// thrown away here, which turned an eight-digit or sixty-second issuer into
+/// an item that generated confident six-digit codes nothing accepted.
+String _totpSeed(String typed) => storedTotpSecret(readTotpSecret(typed));
