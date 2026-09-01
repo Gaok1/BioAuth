@@ -1,9 +1,19 @@
 import 'dart:typed_data';
 
+/// The chunk header is shared with `ble_framing.rs` on the desktop, and so are
+/// the three bounds below. They are named here for the same reason they are
+/// named there: two decoders that disagree about a limit disagree about which
+/// frames exist.
 class BleFrameCodec {
   BleFrameCodec({this.maxFrameBytes = 8192});
 
   static const headerBytes = 6;
+
+  /// `MAX_CHUNKS` in `ble_framing.rs`.
+  static const maxChunks = 1024;
+
+  /// `MAX_PARTIAL_FRAMES` in `ble_framing.rs`.
+  static const maxPartialFrames = 4;
   final int maxFrameBytes;
   int _nextFrameId = 0;
   final Map<int, _PartialFrame> _partialFrames = {};
@@ -18,7 +28,7 @@ class BleFrameCodec {
     final dataBytes = attPayloadBytes - headerBytes;
     if (dataBytes < 1) throw const FormatException('MTU BLE insuficiente');
     final total = (frame.length + dataBytes - 1) ~/ dataBytes;
-    if (total > 1024) {
+    if (total > maxChunks) {
       throw const FormatException('Frame BLE muito fragmentado');
     }
     final frameId = _nextFrameId++ & 0xffff;
@@ -43,10 +53,22 @@ class BleFrameCodec {
     final frameId = header.getUint16(0);
     final index = header.getUint16(2);
     final total = header.getUint16(4);
-    if (total < 1 || total > 1024 || index >= total) return null;
+    if (total < 1 || total > maxChunks || index >= total) return null;
 
-    if (!_partialFrames.containsKey(frameId) && _partialFrames.length >= 4) {
-      _partialFrames.remove(_partialFrames.keys.first);
+    // Refused, not evicted. `ble_framing.rs` answers a fifth concurrent frame
+    // with an error and keeps the four it is already assembling; this dropped
+    // one of those to make room, and chose `keys.first` — insertion order, so
+    // the oldest, which in an exchange that is making progress is the one
+    // closest to being finished.
+    //
+    // Nothing said so either. The evicted frame's chunks were gone, the peer
+    // went on sending the rest of a frame that could never complete, and the
+    // session waited out its idle timeout. Refusing costs the fifth frame,
+    // which nothing legitimate sends: the desktop puts one frame at a time on
+    // one characteristic.
+    if (!_partialFrames.containsKey(frameId) &&
+        _partialFrames.length >= maxPartialFrames) {
+      return null;
     }
     final partial = _partialFrames.putIfAbsent(
       frameId,

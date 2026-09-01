@@ -30,6 +30,44 @@ void main() {
     expect(decoded, frame);
   });
 
+  /// The desktop's decoder refuses a fifth concurrent frame and keeps the four
+  /// it is assembling. This one dropped one of those to make room, and picked
+  /// the oldest — which in an exchange that is making progress is the one
+  /// closest to being finished. Its chunks went, nothing said so, and the peer
+  /// went on sending the rest of a frame that could never complete.
+  test('a fifth frame is refused rather than evicting one in progress', () {
+    final codec = BleFrameCodec();
+    Uint8List chunk(int frameId, int index) {
+      final bytes = Uint8List(BleFrameCodec.headerBytes + 2);
+      final header = ByteData.sublistView(bytes);
+      header.setUint16(0, frameId);
+      header.setUint16(2, index);
+      header.setUint16(4, 2);
+      bytes[BleFrameCodec.headerBytes] = frameId;
+      bytes[BleFrameCodec.headerBytes + 1] = index;
+      return bytes;
+    }
+
+    // Four frames, each half arrived. The first is the one eviction took.
+    for (
+      var frameId = 1;
+      frameId <= BleFrameCodec.maxPartialFrames;
+      frameId++
+    ) {
+      expect(codec.addChunk(chunk(frameId, 0)), isNull);
+    }
+
+    // One more than the decoder holds.
+    expect(codec.addChunk(chunk(99, 0)), isNull, reason: 'the fifth was taken');
+
+    // And the first frame can still be finished, which is the whole point.
+    expect(
+      codec.addChunk(chunk(1, 1)),
+      Uint8List.fromList([1, 0, 1, 1]),
+      reason: 'a frame in progress was thrown away for one that arrived later',
+    );
+  });
+
   test('rejects oversized frames and malformed chunks', () {
     final codec = BleFrameCodec(maxFrameBytes: 8);
 
