@@ -162,6 +162,12 @@ test('only the focused field is a target', () => {
   assert.equal(fillTarget({ activeElement: { tagName: 'DIV' } }), null);
   assert.equal(fillTarget({ activeElement: input({ disabled: true }) }), null);
   assert.equal(fillTarget({ activeElement: input({ readOnly: true }) }), null);
+
+  // A username box is a field a fill may start from, and half the login forms
+  // on the web spell that one `email`.
+  const email = input({ type: 'email' });
+  assert.equal(fillTarget({ activeElement: email }), email);
+  assert.equal(fillTarget({ activeElement: input({ type: 'checkbox' }) }), null);
 });
 
 test('a fill writes the password and fires what a page listens for', async () => {
@@ -341,4 +347,83 @@ test('a frame with nothing focused does not answer for the page', async () => {
     );
   });
   assert.equal(reply.ok, false, 'no view was given, so it refuses -- but it says so');
+});
+
+/// Clicking the username line is how people use a password manager, and this
+/// script answered it with "Selecione o campo de senha primeiro". The secret
+/// still lands only in an `input[type=password]`; what changed is which field
+/// the user is allowed to have picked.
+test('a fill started from the username box fills both', async () => {
+  const { performFill } = boot();
+  const { username, password } = loginForm();
+  const top = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  top.top = top;
+
+  const result = await performFill({
+    view: top,
+    document: { activeElement: username },
+    EventCtor: FakeEvent,
+    send: async () => ({ ok: true, password: 'hunter2', username: 'alice' }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(password.value, 'hunter2', 'the password went to the password box');
+  assert.equal(username.value, 'alice');
+});
+
+/// A change-password form holds "current", "new" and "confirm". Choosing
+/// between them is the guess this file exists not to make.
+test('a form with several password boxes gets none of them', async () => {
+  const { performFill } = boot();
+  const name = input({ type: 'text' });
+  const current = input();
+  const fresh = input();
+  const confirm = input();
+  const form = { elements: [name, current, fresh, confirm] };
+  for (const field of form.elements) field.form = form;
+  const top = { location: { protocol: 'https:', origin: 'https://bank.example' } };
+  top.top = top;
+
+  let asked = false;
+  const result = await performFill({
+    view: top,
+    document: { activeElement: name },
+    EventCtor: FakeEvent,
+    send: async () => {
+      asked = true;
+      return { ok: true, password: 'hunter2' };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(asked, false, 'the vault was not even asked');
+  assert.deepEqual([current.value, fresh.value, confirm.value], ['', '', '']);
+});
+
+/// A frame keeps its `activeElement` after focus moves to another frame. The
+/// claim used to accept any text input, so a sidebar holding a stale one would
+/// answer for the whole page -- with a refusal, while the frame that actually
+/// held the password box was still working.
+test('a frame whose stale field cannot be filled does not claim the reply', () => {
+  const listeners = [];
+  const bootFrame = (document) => {
+    let listener;
+    boot({ document, window: {}, onMessage: (value) => { listener = value; } });
+    listeners.push(listener);
+    return listener;
+  };
+
+  // A lone text input, in no form: nothing a password could go into.
+  const stale = bootFrame({ activeElement: input({ type: 'text' }) });
+  assert.equal(
+    stale({ type: 'bioauth-autofill-fill' }, {}, () => {}),
+    undefined,
+    'a frame that could not fill must leave the channel to the one that can'
+  );
+
+  // The same input inside a login form is a field a fill can start from, and
+  // that frame does claim.
+  const { username } = loginForm();
+  const real = bootFrame({ activeElement: username });
+  assert.equal(real({ type: 'bioauth-autofill-fill' }, {}, () => {}), true);
 });

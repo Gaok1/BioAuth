@@ -73,17 +73,48 @@
     return origin;
   }
 
-  /// The field a fill would go into, or null.
+  /// The field the user picked, or null.
   ///
   /// The *focused* field, not the first password input on the page. A page can
   /// hold several forms, and guessing between them is how a password ends up in
   /// the "confirm your old password" box of a form that emails it somewhere.
+  ///
+  /// A username box counts, since a fill may start from one -- `email` as well
+  /// as `text`, which is what half the login forms on the web use and what
+  /// [usernameFieldFor] has always accepted on the other side of the pair.
+  /// Where the password itself may land is [passwordFieldFor]'s question.
   function fillTarget(document) {
     const active = document.activeElement;
     if (!active || active.tagName !== "INPUT") return null;
-    if (active.type !== "password" && active.type !== "text") return null;
+    if (!["password", "text", "email"].includes(active.type)) return null;
     if (active.disabled || active.readOnly) return null;
     return active;
+  }
+
+  /// The password box a fill would land in, given the field the user focused.
+  ///
+  /// The focused field itself when it is one. Otherwise the single password box
+  /// in the same form, which is how every password manager behaves when you
+  /// click the username line rather than the password one -- and what this
+  /// script used to answer with "Selecione o campo de senha primeiro".
+  ///
+  /// "Single" is the whole rule. A change-password form holds three of them and
+  /// choosing between them is the guess this file exists not to make, so a form
+  /// like that gets no fill rather than a password in the wrong box. The secret
+  /// still only ever reaches an `input[type=password]`.
+  function passwordFieldFor(field) {
+    if (!field) return null;
+    if (field.type === "password") return field;
+    const form = field.form;
+    if (!form) return null;
+    const passwords = Array.from(form.elements ?? []).filter(
+      (element) =>
+        element.tagName === "INPUT" &&
+        element.type === "password" &&
+        !element.disabled &&
+        !element.readOnly,
+    );
+    return passwords.length === 1 ? passwords[0] : null;
   }
 
   /// The username field paired with a password field, if there is an obvious one.
@@ -132,9 +163,10 @@
     if (!origin) {
       return { ok: false, error: "Só páginas https podem ser preenchidas" };
     }
-    const password = fillTarget(document);
-    if (!password || password.type !== "password") {
-      return { ok: false, error: "Selecione o campo de senha primeiro" };
+    const focused = fillTarget(document);
+    const password = passwordFieldFor(focused);
+    if (!password) {
+      return { ok: false, error: "Selecione o campo de usuário ou de senha primeiro" };
     }
 
     // The host answers with a secret or with nothing. Everything about which
@@ -147,7 +179,9 @@
 
     setFieldValue(password, response.password, EventCtor);
     if (typeof response.username === "string" && response.username) {
-      const username = usernameFieldFor(password);
+      // The field the user picked, when they picked one: they named it more
+      // reliably than the shape of the form ever could.
+      const username = focused === password ? usernameFieldFor(password) : focused;
       if (username) setFieldValue(username, response.username, EventCtor);
     }
     return { ok: true };
@@ -169,7 +203,12 @@
       // the reply while the frame that actually held the field was still
       // working. The claim has to be made synchronously, before the listener
       // returns, which is why the target is looked up twice.
-      if (!fillTarget(document)) return undefined;
+      // The same question the fill will ask, not a looser one. A frame keeps
+      // its `activeElement` after focus moves to another frame, so a page whose
+      // sidebar holds a stale text input used to claim the reply and answer
+      // "select the password field" while the frame holding the real one was
+      // still working.
+      if (!passwordFieldFor(fillTarget(document))) return undefined;
       performFill({
         view: window,
         document,
@@ -189,6 +228,7 @@
     frameIsFillable,
     fillableOrigin,
     fillTarget,
+    passwordFieldFor,
     performFill,
   };
 })();
