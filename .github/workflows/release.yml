@@ -97,6 +97,46 @@ jobs:
             "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/browser-extension/manifest.json | head -1)"
           [ "$fail" = 0 ] || exit 1
 
+          # The sixth thing carrying a version, and the only one no user ever
+          # reads: the build number after the `+`. Android reads it, as
+          # `versionCode`, and it is what decides whether the APK on a release
+          # page can be installed over the one already on the phone. The check
+          # above parses it off and throws it away, so it was the one piece of
+          # release metadata nothing looked at.
+          #
+          # Left behind on a bump it produces a release the phone treats as the
+          # build it already has. Left out entirely it is worse: Flutter
+          # defaults `versionCode` to 1, and 1 is below every build ever
+          # shipped, so Android refuses the install outright and the only way
+          # back onto the phone is to uninstall the app and lose its pairings.
+          #
+          # Measured against the highest already released rather than against
+          # the previous commit, because "went backwards" only means anything
+          # relative to what people actually have installed. This version's own
+          # tags are skipped, so an ordinary push to main -- which re-runs this
+          # on a version already cut -- is not a failure.
+          build=$(sed -n 's/^version: [0-9.]*+\([0-9][0-9]*\)[[:space:]]*$/\1/p' mobile/pubspec.yaml | head -1)
+          if [ -z "$build" ]; then
+            echo "::error::mobile/pubspec.yaml declares no build number after the '+'; the APK would claim versionCode 1"
+            exit 1
+          fi
+
+          highest=0
+          for tag in $(git tag --list 'v*'); do
+            case "$tag" in "v$version"|"v$version"-*) continue ;; esac
+            released=$(git show "$tag:mobile/pubspec.yaml" 2>/dev/null |
+              sed -n 's/^version: [0-9.]*+\([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -1)
+            if [ -n "$released" ] && [ "$released" -gt "$highest" ]; then
+              highest=$released
+            fi
+          done
+
+          if [ "$build" -le "$highest" ]; then
+            echo "::error::mobile/pubspec.yaml build number is $build, and $highest is already released; Android will not take this as an update"
+            exit 1
+          fi
+          echo "build number: $build (highest released: $highest)"
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Decide what to do
