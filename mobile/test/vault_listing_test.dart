@@ -9,6 +9,7 @@
 /// behind it, and the desktop silently skipped one.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -236,6 +237,70 @@ void main() {
     );
   });
 
+  /// `VaultService` calls `forget` after every create, update and delete, and
+  /// says why: the approval sheet's wording comes from this snapshot, so a
+  /// write has to invalidate it or the next request for that item names it
+  /// whatever it was called before.
+  ///
+  /// A read in flight across that write put the pre-write snapshot back when
+  /// it landed, and armed a fresh timer while doing it — so the invalidation
+  /// held for as long as nothing was reading, which is the case it was not
+  /// written for.
+  test(
+    'a read that lands after a write does not put the snapshot back',
+    () async {
+      final held = _HeldStore();
+      final listing = VaultListing(store: held);
+
+      final walking = listing.items(restart: true);
+      // The write arrives while the owner still has a fingerprint prompt open.
+      listing.forget();
+      held.answer(0, ['before-the-write']);
+      // The caller that asked is still served: it asked before the write, and an
+      // answer is what it is owed. What it does not get is to leave it behind.
+      expect((await walking).single.id, 'before-the-write');
+
+      // The next page has to read again. If the landed read had been kept, this
+      // would be served from it and the sheet would still say the old name.
+      final next = listing.items(restart: false);
+      expect(
+        held.reads,
+        2,
+        reason: 'the invalidated snapshot was served again',
+      );
+      held.answer(1, ['after-the-write']);
+      expect((await next).single.id, 'after-the-write');
+    },
+  );
+
+  /// Sessions share one listing, so two pages can be in the air at once — a
+  /// desktop re-dialling after a timeout is the ordinary way. Each read is a
+  /// fingerprint prompt, and a second one seconds after the first, explaining
+  /// nothing, is what this class exists to remove.
+  test('overlapping pages share one read', () async {
+    final held = _HeldStore();
+    final listing = VaultListing(store: held);
+
+    final first = listing.items(restart: true);
+    final second = listing.items(restart: false);
+    final third = listing.items(restart: true);
+    expect(
+      held.reads,
+      1,
+      reason: 'an overlapping page asked for its own unlock',
+    );
+
+    held.answer(0, ['item-0']);
+    for (final answer in [first, second, third]) {
+      expect((await answer).single.id, 'item-0');
+    }
+
+    // And the shared read is not held past its completion: the snapshot serves
+    // the next page, rather than a stale future doing it.
+    await listing.items(restart: false);
+    expect(held.reads, 1);
+  });
+
   test('a cursor pointing outside the vault is refused', () async {
     final repository = _Store(4);
     final service = VaultService(
@@ -255,6 +320,60 @@ void main() {
       expect(answer.kind, ApplicationFrameKind.error, reason: cursor);
     }
   });
+}
+
+/// A store whose reads do not finish until the test says so.
+///
+/// The interleavings below are the ones a phone actually produces: a read is a
+/// Keystore unlock behind a fingerprint prompt, so it is open for as long as
+/// the owner takes to answer, and anything can arrive in that window.
+class _HeldStore extends store.VaultStore {
+  final List<Completer<List<store.VaultItemSummary>>> pending = [];
+  int reads = 0;
+
+  @override
+  Future<List<store.VaultItemSummary>> listAll() {
+    reads++;
+    final completer = Completer<List<store.VaultItemSummary>>();
+    pending.add(completer);
+    return completer.future;
+  }
+
+  void answer(int index, List<String> ids) {
+    pending[index].complete([
+      for (final id in ids)
+        store.VaultItemSummary(
+          id: id,
+          revision: 1,
+          kind: store.VaultItemKind.login,
+          name: id,
+          username: '',
+          uri: '',
+          updatedAt: DateTime.utc(2026),
+        ),
+    ]);
+  }
+
+  @override
+  Future<store.VaultPage> listPage([String? cursor]) =>
+      throw UnimplementedError();
+
+  @override
+  Future<store.VaultSecret> fetch(String id) => throw UnimplementedError();
+
+  @override
+  Future<store.VaultWrite> create(store.VaultItemInput item) =>
+      throw UnimplementedError();
+
+  @override
+  Future<store.VaultWrite> update(
+    store.VaultItemSummary current,
+    store.VaultItemInput item,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<List<store.VaultItemSummary>?> delete(store.VaultItemSummary item) =>
+      throw UnimplementedError();
 }
 
 /// Counts how many times the vault was actually read, which on a real phone is
