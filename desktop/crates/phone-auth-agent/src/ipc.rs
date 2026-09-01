@@ -26,8 +26,7 @@ use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, LuksEnrollParams, RecentParams, Reply,
     SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultCreateParams,
-    VaultFillParams,
-    VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
+    VaultFillParams, VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
 use crate::password::{self, Policy};

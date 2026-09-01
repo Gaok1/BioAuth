@@ -690,16 +690,22 @@ mod tests {
 
     /// Pins the bytes the Dart side has to reproduce. A change here is a
     /// protocol change and must move `mobile/` in the same commit.
-    const CREATE_REQUEST_HEX: &str = concat!(
-        "87",                             // array(7)
-        "01",                             // schema 1
-        "6b", "576f726b73746174696f6e",   // "Workstation"
-        "01",                             // kind: note
-        "6e", "5265636f7665727920636f646573", // "Recovery codes"
-        "60",                             // username: ""
-        "60",                             // uri: ""
-        "69", "313131312d32323232",       // "1111-2222"
-    );
+    /// ```text
+    /// 87                              array(7)
+    /// 01                              schema 1
+    /// 6b 576f726b73746174696f6e       "Workstation"
+    /// 01                              kind: note
+    /// 6e 5265636f7665727920636f646573 "Recovery codes"
+    /// 60                              username: ""
+    /// 60                              uri: ""
+    /// 69 313131312d32323232           "1111-2222"
+    /// ```
+    ///
+    /// One string rather than a `concat!` of labelled pieces: rustfmt splits
+    /// that one across lines by its own rules and the pairing of tag to bytes
+    /// is what carried the meaning. The breakdown lives above instead.
+    const CREATE_REQUEST_HEX: &str =
+        "87016b576f726b73746174696f6e016e5265636f7665727920636f646573606069313131312d32323232";
 
     #[test]
     fn a_fetch_response_pins_its_bytes() {

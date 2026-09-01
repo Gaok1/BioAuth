@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use phone_auth_protocol::vault::{
     CreateRequest, FetchRequest, FetchResponse, ItemKind, ItemSummary, ListRequest, ListResponse,
-    OPERATION_CREATE, OPERATION_FETCH, OPERATION_LIST, WriteResponse,
+    WriteResponse, OPERATION_CREATE, OPERATION_FETCH, OPERATION_LIST,
 };
 use phone_auth_protocol::{
     ApplicationErrorCode, ApplicationFrame, ApplicationFrameKind, PROTOCOL_VERSION,
