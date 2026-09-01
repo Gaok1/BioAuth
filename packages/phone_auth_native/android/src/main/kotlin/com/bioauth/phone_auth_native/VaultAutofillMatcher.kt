@@ -47,7 +47,10 @@ internal object VaultAutofillMatcher {
         val logins = items.filter { it.kind == KIND_LOGIN }
 
         caller.origin?.let { origin ->
-            val host = hostOf(origin) ?: return emptyList()
+            // Two parsers on purpose, and only one of them is lenient. The
+            // caller's origin comes from the platform and is a real origin;
+            // the item's address is whatever a person typed into a field.
+            val host = originHost(origin) ?: return emptyList()
             return logins.filter { hostOf(it.uri) == host }
         }
 
@@ -76,12 +79,40 @@ internal object VaultAutofillMatcher {
      *
      * Written by hand rather than with `android.net.Uri` so it runs in a JVM
      * test, and because the rules wanted here are narrower than a general
-     * parser's: a scheme-less string is not a host, and a port is not part of
-     * one.
+     * parser's: a port is not part of a host, and userinfo is not a host at all.
      */
     fun hostOf(uri: String): String? {
-        if (uri.isEmpty() || uri.startsWith(APP_SCHEME)) return null
-        val afterScheme = uri.substringAfter("://", missingDelimiterValue = "")
+        val value = uri.trim()
+        if (value.isEmpty() || value.startsWith(APP_SCHEME)) return null
+        // The scheme is optional, and that is not a relaxation of the match.
+        // Somebody filling in "endereço" writes `github.com`; `https://` is not
+        // part of what they think they are saying. Requiring it meant an item
+        // saved that way was offered for no site at all -- silently, since a
+        // matcher that finds nothing looks exactly like a vault that holds
+        // nothing. What follows is unchanged, and the comparison at the call
+        // sites is still character-for-character against a verified origin.
+        val afterScheme = if (value.contains("://")) {
+            value.substringAfter("://")
+        } else {
+            value
+        }
+        return authorityHost(afterScheme)
+    }
+
+    /**
+     * The host of an origin the platform reported, or null.
+     *
+     * A scheme-less string is not an origin. This side stays strict because it
+     * decides *who is asking*, and the only reason [hostOf] is not is that it
+     * reads a field a person filled in.
+     */
+    fun originHost(origin: String): String? {
+        val value = origin.trim()
+        if (!value.contains("://")) return null
+        return authorityHost(value.substringAfter("://"))
+    }
+
+    private fun authorityHost(afterScheme: String): String? {
         if (afterScheme.isEmpty()) return null
         val authority = afterScheme
             .substringBefore('/')
@@ -90,7 +121,7 @@ internal object VaultAutofillMatcher {
         // Credentials in a URI are the classic way to make a host read as one
         // thing and resolve as another.
         val host = authority.substringAfterLast('@').substringBefore(':')
-        if (host.isEmpty() || host.contains(' ')) return null
+        if (host.isEmpty() || host.any(Char::isWhitespace)) return null
         return host.lowercase()
     }
 

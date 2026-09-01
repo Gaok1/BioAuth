@@ -2,6 +2,7 @@ package com.bioauth.phone_auth_native
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class VaultAutofillMatcherTest {
@@ -146,9 +147,58 @@ class VaultAutofillMatcherTest {
             "real.example",
             VaultAutofillMatcher.hostOf("https://bank.example@real.example/"),
         )
-        assertEquals(null, VaultAutofillMatcher.hostOf("bank.example"))
         assertEquals(null, VaultAutofillMatcher.hostOf(""))
         assertEquals(null, VaultAutofillMatcher.hostOf("androidapp://com.example"))
+    }
+
+    /**
+     * The address field holds what a person typed, not an origin.
+     *
+     * Requiring `https://` there meant every item saved the way people write
+     * addresses was offered for no site at all -- and a matcher that finds
+     * nothing is indistinguishable from a vault that holds nothing.
+     */
+    @Test
+    fun `an address may be written the way a person writes one`() {
+        for (written in listOf(
+            "bank.example",
+            "https://bank.example",
+            "http://bank.example/login",
+            "  bank.example/login?next=/  ",
+            "bank.example:8443",
+            "BANK.example",
+        )) {
+            assertEquals("bank.example", VaultAutofillMatcher.hostOf(written), written)
+        }
+    }
+
+    /**
+     * Only the item's address is read leniently. The origin says who is
+     * asking, and a scheme-less string is not one.
+     */
+    @Test
+    fun `the origin that decides who is asking is not read leniently`() {
+        assertEquals("bank.example", VaultAutofillMatcher.originHost("https://bank.example/"))
+        assertEquals(null, VaultAutofillMatcher.originHost("bank.example"))
+        assertEquals(null, VaultAutofillMatcher.originHost(""))
+        assertEquals(
+            "real.example",
+            VaultAutofillMatcher.originHost("https://bank.example@real.example/"),
+        )
+    }
+
+    /** Looser on the address is not looser on the match. */
+    @Test
+    fun `a scheme-less address still matches only its own host`() {
+        assertEquals("real.example", VaultAutofillMatcher.hostOf("bank.example@real.example/"))
+        assertNotEquals(
+            VaultAutofillMatcher.hostOf("blog.bank.example"),
+            VaultAutofillMatcher.hostOf("login.bank.example"),
+        )
+        // A field holding a sentence is not an address, and matches nothing
+        // rather than matching loosely.
+        assertEquals(null, VaultAutofillMatcher.hostOf("minha senha do banco"))
+        assertEquals(null, VaultAutofillMatcher.hostOf("https://"))
     }
 
     @Test
