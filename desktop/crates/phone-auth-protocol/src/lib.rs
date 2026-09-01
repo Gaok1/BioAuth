@@ -16,6 +16,7 @@ pub mod encoding;
 mod enrolment;
 pub mod locker;
 pub mod luks;
+pub mod permissions;
 mod request;
 mod response;
 pub mod ssh;
