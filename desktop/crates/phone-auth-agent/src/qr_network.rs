@@ -52,6 +52,25 @@ const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// is minutes.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The most sessions one phone may keep parked at once.
+///
+/// The pool was bounded in time and not in count. Its key is the device id
+/// paired with the credential id from the attach frame, and that second half
+/// is chosen by the phone: the frame is a routing hint that "grants no
+/// authority, and naming a credential this phone does not hold only arranges
+/// for requests it will refuse". Nothing checked it against the credentials
+/// the phone actually has, which is right for routing and means the key space
+/// belongs to the peer. So one paired phone could dial with a different
+/// credential id every time and park a session for each, and every parked
+/// session holds a `SecureChannel` with live keys and an open socket for up to
+/// the idle window. That is the same resource the reaper exists to stop being
+/// held forever, taken all at once instead.
+///
+/// Eight is well past what a phone has. The credentials are one per purpose --
+/// authorization, vault, ssh, a locker, a volume -- and a phone runs one
+/// connection per credential.
+const MAX_SESSIONS_PER_DEVICE: usize = 8;
+
 /// How often the reaper looks, as a fraction of the timeout it enforces.
 ///
 /// A tenth, so a session outlives its window by at most ten percent of it.
@@ -450,6 +469,39 @@ fn answers(session: &ParkedSession) -> bool {
     session.stream.set_nonblocking(false).is_ok() && alive
 }
 
+/// Drops this device's oldest sessions until one more will fit.
+///
+/// Evicted rather than refused, which is the opposite of what the BLE decoder
+/// does with a fifth partial frame -- and for a reason that does not carry
+/// over. There, the thing evicted is a frame halfway through arriving, so
+/// dropping it destroys work in progress. Here every candidate is a session
+/// that is idle by definition, and the one arriving is the one the phone is
+/// opening right now. Refusing it would wedge a phone that legitimately holds
+/// more credentials than the cap, for a whole idle window, every time.
+///
+/// Only ever this device's own sessions, so a phone cannot crowd out another
+/// phone's.
+fn enforce_session_cap(state: &mut State, device_id: &str) {
+    while state
+        .sessions
+        .keys()
+        .filter(|(parked, _)| parked == device_id)
+        .count()
+        >= MAX_SESSIONS_PER_DEVICE
+    {
+        let Some(oldest) = state
+            .sessions
+            .iter()
+            .filter(|((parked, _), _)| parked == device_id)
+            .min_by_key(|(_, session)| session.parked_at)
+            .map(|(key, _)| key.clone())
+        else {
+            return;
+        };
+        state.sessions.remove(&oldest);
+    }
+}
+
 /// Enforces the idle window instead of only consulting it.
 ///
 /// [`discard_stale`] ran on the way past: when another connection arrived, or
@@ -794,10 +846,17 @@ fn serve_connection(mut stream: TcpStream, shared: &Arc<Shared>) -> Result<(), S
     // before the frame existed.
     let credential_id = read_attach(&mut stream, &mut channel)?;
 
+    let key = (outcome.peer_device_id, credential_id);
     let mut state = shared.state.lock().expect("state mutex");
     discard_stale(&mut state, shared.idle_timeout);
+    // Only when this is a key the pool does not already hold. A phone
+    // re-dialling for a credential it already has parked replaces that entry
+    // and grows nothing, which is the ordinary case and must not cost anything.
+    if !state.sessions.contains_key(&key) {
+        enforce_session_cap(&mut state, &key.0);
+    }
     state.sessions.insert(
-        (outcome.peer_device_id, credential_id),
+        key,
         ParkedSession {
             channel,
             stream,

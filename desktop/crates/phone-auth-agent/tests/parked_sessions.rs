@@ -63,6 +63,26 @@ fn dial(
     .expect("the phone connects")
 }
 
+/// Blocks until the desktop has parked the session for one named credential.
+///
+/// `parked` counts, which is the wrong question once the pool has a ceiling:
+/// "at least one is parked" is true from the first dial onwards, so a loop
+/// pacing itself on it does not wait for anything after that.
+fn parked_credential(transport: &QrNetworkTransport, credential_id: &str) {
+    let wanted = Some(credential_id.to_owned());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if transport.parked_credentials(DEVICE).contains(&wanted) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "{credential_id} never parked; held {:?}",
+        transport.parked_credentials(DEVICE)
+    );
+}
+
 /// Blocks until the desktop has parked `count` sessions for `DEVICE`.
 ///
 /// The phone's side of a dial returns as soon as it has written; the desktop
@@ -118,6 +138,46 @@ fn a_credential_with_no_session_is_not_served_by_another_credentials() {
     assert!(
         transport.connect(DEVICE, LOGIN).is_err(),
         "a vault session must not stand in for a login credential"
+    );
+}
+
+/// The pool was bounded in time and not in count.
+///
+/// Its key is the device id and the credential id from the attach frame, and
+/// the second half is the phone's to choose: the frame grants no authority and
+/// is not checked against the credentials the phone holds. So one paired phone
+/// could dial with a different credential id every time and park a session for
+/// each, and each one holds a `SecureChannel` with live keys and an open socket
+/// until the idle window runs out. That is the resource the reaper exists to
+/// stop being held forever, taken all at once instead.
+#[test]
+fn one_phone_cannot_park_more_sessions_than_the_pool_allows() {
+    let phone = IdentityKey::generate();
+    let transport = listening(&phone);
+
+    // Held, so nothing is closed from this side: the sockets going away has to
+    // be the desktop's doing.
+    let mut dialled = Vec::new();
+    for index in 0..24 {
+        let credential = format!("invented-{index}");
+        dialled.push(dial(&transport, &phone, &credential));
+        // One at a time, and waiting for *this* one: the pool has a ceiling, so
+        // a count never rises past it and waiting on one proves nothing after
+        // the first dial.
+        parked_credential(&transport, &credential);
+    }
+
+    let held = transport.parked_credentials(DEVICE);
+    assert!(
+        held.len() <= 8,
+        "one phone parked {} sessions, each with a live socket",
+        held.len()
+    );
+
+    // And what survived is the newest, which is what the phone is using.
+    assert!(
+        held.contains(&Some("invented-23".to_owned())),
+        "the session the phone just opened was not the one kept: {held:?}"
     );
 }
 
