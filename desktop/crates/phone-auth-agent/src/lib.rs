@@ -19,6 +19,7 @@ pub mod locker;
 pub mod luks;
 pub mod password;
 pub mod paths;
+pub mod permissions;
 pub mod private_files;
 pub mod qr_network;
 pub mod secret_memory;

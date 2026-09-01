@@ -125,6 +125,12 @@ pub struct CredentialSummary {
     pub key_kind: String,
     pub purpose: String,
     pub permissions: Vec<PermissionSummary>,
+    /// Which edit of `permissions` this is.
+    ///
+    /// Reported because the phone can edit the same set: a UI that shows the
+    /// grants without it cannot tell "the phone agrees" from "the phone has
+    /// not been asked since you changed this".
+    pub permissions_revision: u64,
     /// Whether this credential may be used for boot-time unlock.
     pub usable_at_boot: bool,
 }
@@ -571,6 +577,30 @@ pub struct SetPermissionsParams {
     pub device_id: String,
     pub credential_id: String,
     pub permissions: Vec<PermissionSummary>,
+}
+
+/// `devices.syncPermissions`: settle one credential's grants with the phone.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPermissionsParams {
+    pub device_id: String,
+    pub credential_id: String,
+}
+
+/// What the settlement produced.
+///
+/// No permission list: the caller reads it back with `devices.list`, which is
+/// the one place that shape is described. Two answers to "what may this phone
+/// do" is two things to keep in step.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPermissionsResult {
+    /// The revision that now stands on both sides.
+    pub revision: u64,
+    /// How many grants stand.
+    pub granted: usize,
+    /// Whether this side's copy moved. False means the phone adopted ours.
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

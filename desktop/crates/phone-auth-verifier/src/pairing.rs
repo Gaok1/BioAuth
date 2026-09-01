@@ -100,6 +100,19 @@ pub struct PairedCredential {
     /// nothing, which is the state a freshly paired credential starts in.
     #[serde(default)]
     pub permissions: Vec<Permission>,
+    /// Which edit of [`Self::permissions`] this is.
+    ///
+    /// The phone can edit the same set, and neither side can see the other
+    /// between sessions, so "which of these two is newer" has to be a number
+    /// rather than a guess. Starts at zero and climbs by one on every local
+    /// edit; a credential stored before this field existed loads as zero,
+    /// which is exactly what it is -- never edited under the new rules.
+    ///
+    /// The reconciliation rule itself lives in
+    /// `phone_auth_protocol::permissions`, so that this side and the phone
+    /// cannot each grow their own.
+    #[serde(default)]
+    pub permissions_revision: u64,
 }
 
 /// A phone this verifier trusts, and the credentials it may present.
@@ -380,6 +393,7 @@ mod tests {
             key_kind: KeyKind::StrongBox,
             purpose: CredentialPurpose::Authorization,
             permissions: vec![Permission::service("sudo")],
+            permissions_revision: 0,
         }
     }
 

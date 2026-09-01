@@ -27,9 +27,9 @@ use crate::api::{
     AuthorizeParams, AuthorizeResult, CredentialSummary, DeviceSummary, Event, LockerLockParams,
     LockerLockResult, LockerRekeyParams, LockerRekeyResult, LockerUnlockParams, LockerUnlockResult,
     LuksEnrollParams, LuksEnrollResult, PairingBootstrap, PermissionSummary, SshSignParams,
-    SshSignResult, StatusPayload, VaultCopyParams, VaultCopyResult, VaultCreateParams,
-    VaultCreateResult, VaultFillParams, VaultFillResult, VaultItem, VaultListParams,
-    VaultListResult, WebAuthnParams, WebAuthnResult,
+    SshSignResult, StatusPayload, SyncPermissionsResult, VaultCopyParams, VaultCopyResult,
+    VaultCreateParams, VaultCreateResult, VaultFillParams, VaultFillResult, VaultItem,
+    VaultListParams, VaultListResult, WebAuthnParams, WebAuthnResult,
 };
 use crate::audit::{AuditEntry, AuditLog, Outcome};
 use crate::clipboard;
@@ -41,6 +41,7 @@ use crate::transport::{Transport, TransportAvailability, TransportRegistry};
 use phone_auth_protocol::ssh;
 
 use crate::password::{self, Policy};
+use crate::permissions::{from_wire, PhonePermissions};
 use crate::ssh_client::PhoneSsh;
 use crate::vault::{self, NewItem, PhoneVault, VaultError};
 use phone_auth_protocol::vault::ItemKind;
@@ -255,6 +256,7 @@ impl Service {
                                 user: permission.user.clone(),
                             })
                             .collect(),
+                        permissions_revision: credential.permissions_revision,
                     })
                     .collect(),
             })
@@ -317,6 +319,11 @@ impl Service {
                 user: permission.user,
             })
             .collect();
+        // Every local edit climbs, so the next sync can tell this set from the
+        // phone's without either side having seen the other. Saturating rather
+        // than wrapping: a counter that rolls over to zero is a set that loses
+        // to everything, and this one is the record of what a person decided.
+        credential.permissions_revision = credential.permissions_revision.saturating_add(1);
 
         self.verifier
             .store_mut()
@@ -324,6 +331,101 @@ impl Service {
             .map_err(|error| ServiceError::new("store-write-failed", error.to_string()))?;
         self.broadcast(Event::DevicesChanged);
         Ok(())
+    }
+
+    /// Reconciles one credential's permissions with the phone's copy.
+    ///
+    /// Both sides can be edited and neither can see the other between
+    /// sessions, so this is not a read or a write but a settlement: the
+    /// desktop offers what it believes, the phone answers with what stands,
+    /// and the answer is stored whole.
+    ///
+    /// Stored whole on purpose. A diff would mean this side deciding what the
+    /// other meant, and getting that wrong leaves a pairing with powers nobody
+    /// granted. A reply that fails to decode is a call that failed, which is a
+    /// state a person can retry from.
+    pub fn sync_permissions(
+        &mut self,
+        device_id: &str,
+        credential_id: &str,
+    ) -> Result<SyncPermissionsResult, ServiceError> {
+        let device = self
+            .verifier
+            .store()
+            .device(device_id)
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::new("unknown-device", format!("no device `{device_id}`"))
+            })?;
+        let credential = device
+            .credential(credential_id)
+            .ok_or_else(|| {
+                ServiceError::new(
+                    "unknown-credential",
+                    format!("no credential `{credential_id}` on `{device_id}`"),
+                )
+            })?
+            .clone();
+
+        let mut session = self
+            .transports
+            .connect(device_id, credential_id)
+            .map_err(|error| ServiceError::new("no-transport", error))?;
+        let device_name = self.device_name(device_id);
+        let development = session.security().is_development;
+
+        let answered = PhonePermissions::new(&mut session, self.config.verifier_name.clone())
+            .sync(credential.permissions_revision, &credential.permissions);
+        let _ = session.close();
+
+        let answered = match answered {
+            Ok(answered) => answered,
+            Err(error) => {
+                let error = vault_error(error);
+                self.record_application(
+                    "permissions",
+                    "sync",
+                    credential_id.to_owned(),
+                    &device_name,
+                    development,
+                    Err(&error),
+                );
+                return Err(error);
+            }
+        };
+
+        let adopted = answered.revision != credential.permissions_revision
+            || answered.permissions.len() != credential.permissions.len();
+        let mut device = device;
+        if let Some(stored) = device
+            .credentials
+            .iter_mut()
+            .find(|stored| stored.credential_id == credential_id)
+        {
+            stored.permissions = answered.permissions.iter().map(from_wire).collect();
+            stored.permissions_revision = answered.revision;
+        }
+        let count = answered.permissions.len();
+
+        self.verifier
+            .store_mut()
+            .insert(device)
+            .map_err(|error| ServiceError::new("store-write-failed", error.to_string()))?;
+        self.record_application(
+            "permissions",
+            "sync",
+            credential_id.to_owned(),
+            &device_name,
+            development,
+            Ok(()),
+        );
+        self.broadcast(Event::DevicesChanged);
+
+        Ok(SyncPermissionsResult {
+            revision: answered.revision,
+            granted: count,
+            changed: adopted,
+        })
     }
 
     /// Puts a pairing code on screen and arms the listener to accept it.
@@ -493,6 +595,7 @@ impl Service {
                 // A freshly paired credential authorizes nothing. The user
                 // grants permissions deliberately, from the tray.
                 permissions: Vec::new(),
+                permissions_revision: 0,
             }],
         };
 
@@ -2227,6 +2330,83 @@ mod pairing_state_tests {
             purpose: phone_auth_protocol::CredentialPurpose::Authorization,
             verification_code: code.into(),
         }
+    }
+
+    fn paired(service: &mut Service) {
+        let device = PairedDevice {
+            device_id: "phone-1".into(),
+            display_name: "Phone".into(),
+            paired_at_ms: 1_700_000_000_000,
+            session_identity_public_key: vec![1; 91],
+            credentials: vec![phone_auth_verifier::PairedCredential {
+                credential_id: "cred-1".into(),
+                algorithm: phone_auth_protocol::PUBLIC_KEY_EC_P256_SPKI.into(),
+                public_key: vec![2; 91],
+                key_kind: phone_auth_verifier::KeyKind::StrongBox,
+                purpose: CredentialPurpose::Authorization,
+                permissions: Vec::new(),
+                permissions_revision: 0,
+            }],
+        };
+        service.verifier.store_mut().insert(device).expect("store");
+    }
+
+    fn revision(service: &Service) -> u64 {
+        service
+            .verifier
+            .store()
+            .device("phone-1")
+            .expect("device")
+            .credential("cred-1")
+            .expect("credential")
+            .permissions_revision
+    }
+
+    fn grant(service: &str) -> PermissionSummary {
+        PermissionSummary {
+            service: service.into(),
+            action: policy::WILDCARD.into(),
+            resource: policy::WILDCARD.into(),
+            user: policy::WILDCARD.into(),
+        }
+    }
+
+    /// The phone can edit the same set, so which of the two copies is newer has
+    /// to be a number rather than a guess, and every local edit has to move it.
+    ///
+    /// A revocation most of all. Taking a grant away leaves a *smaller* set at
+    /// the same revision, so a revocation that did not climb would lose the
+    /// next reconciliation to the phone's older, wider copy -- and the powers
+    /// the user just removed would come back on their own, from the device they
+    /// were removed from.
+    #[test]
+    fn every_local_edit_moves_the_revision_including_taking_one_away() {
+        let mut service = service("permission-revision");
+        paired(&mut service);
+        assert_eq!(revision(&service), 0, "an untouched pairing starts at zero");
+
+        service
+            .set_permissions("phone-1", "cred-1", vec![grant("sudo")])
+            .expect("granting");
+        assert_eq!(revision(&service), 1);
+
+        service
+            .set_permissions("phone-1", "cred-1", Vec::new())
+            .expect("revoking");
+        assert_eq!(
+            revision(&service),
+            2,
+            "a revocation left the revision where the wider set could win it back"
+        );
+        assert!(service
+            .verifier
+            .store()
+            .device("phone-1")
+            .expect("device")
+            .credential("cred-1")
+            .expect("credential")
+            .permissions
+            .is_empty());
     }
 
     /// Polling must not consume: one lost IPC reply used to make the code on

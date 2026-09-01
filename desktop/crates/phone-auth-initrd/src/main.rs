@@ -424,6 +424,7 @@ mod tests {
                 key_kind: kind,
                 purpose,
                 permissions: vec![Permission::service("luks")],
+                permissions_revision: 0,
             }],
         }
     }

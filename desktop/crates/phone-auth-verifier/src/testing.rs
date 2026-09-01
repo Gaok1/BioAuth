@@ -262,6 +262,7 @@ impl SoftwareAuthenticator {
                 key_kind,
                 purpose,
                 permissions,
+                permissions_revision: 0,
             }],
         }
     }

@@ -25,8 +25,8 @@ use phone_auth_verifier::random;
 use crate::api::{
     AuthorizeParams, Call, CancelWebAuthnParams, ConfirmPairingParams, Event, ForgetParams,
     LockerLockParams, LockerRekeyParams, LockerUnlockParams, LuksEnrollParams, RecentParams, Reply,
-    SetPermissionsParams, SshSignParams, VaultCopyParams, VaultCopyResult, VaultCreateParams,
-    VaultFillParams, VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
+    SetPermissionsParams, SshSignParams, SyncPermissionsParams, VaultCopyParams, VaultCopyResult,
+    VaultCreateParams, VaultFillParams, VaultGenerateCopyParams, VaultListParams, WebAuthnParams,
 };
 use crate::clipboard;
 use crate::password::{self, Policy};
@@ -342,6 +342,23 @@ fn dispatch(
                 );
                 match result {
                     Ok(()) => Reply::ok(id, json!({ "updated": true })),
+                    Err(error) => Reply::err(id, error.code, error.message),
+                }
+            }
+            Err(reply) => reply(id),
+        },
+
+        // Settling with the phone, not writing to it. The reply says what
+        // stands afterwards; the grants themselves are read back with
+        // `devices.list`, which is the one place that shape is described.
+        "devices.syncPermissions" => match parse::<SyncPermissionsParams>(call) {
+            Ok(params) => {
+                let result = service
+                    .lock()
+                    .expect("service mutex")
+                    .sync_permissions(&params.device_id, &params.credential_id);
+                match result {
+                    Ok(result) => Reply::ok(id, json!(result)),
                     Err(error) => Reply::err(id, error.code, error.message),
                 }
             }
