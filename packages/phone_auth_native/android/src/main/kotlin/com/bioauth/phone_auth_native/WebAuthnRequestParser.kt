@@ -156,7 +156,14 @@ internal object WebAuthnRequestParser {
         }
 
     fun decode(value: String, field: String): ByteArray {
-        require(value.isNotEmpty() && value.length <= 4096) { "$field is invalid" }
+        // Says the limit and the length, not just that something was wrong.
+        // A relying party whose field does not fit is a ceremony that fails
+        // for a reason nobody can see from the outside, and the one time a
+        // bound here turned a real site away it was found in seconds only
+        // because the message happened to carry its numbers.
+        require(value.isNotEmpty() && value.length <= MAX_ENCODED_CHARS) {
+            "$field must be 1..$MAX_ENCODED_CHARS base64url characters, not ${value.length}"
+        }
         require(value.length % 4 != 1 && value.all { it in BASE64URL }) {
             "$field is not base64url"
         }
@@ -178,8 +185,28 @@ internal object WebAuthnRequestParser {
         return output
     }
 
-    private fun challenge(encoded: String): ByteArray =
-        decode(encoded, "challenge").also { require(it.size in 16..1024) { "challenge must contain 16..1024 bytes" } }
+    /**
+     * The relying party's challenge, bounded only where this side has standing
+     * to bound it.
+     *
+     * The floor was sixteen bytes, and it turned Google's sign-in away. That
+     * number comes from the specification's advice **to relying parties** --
+     * challenges SHOULD be at least sixteen bytes -- and it is advice about
+     * the risk the relying party is taking with its own ceremony. An
+     * authenticator enforcing it does not make that party safer; it refuses to
+     * sign, and what the person sees is a passkey that does not work on a site
+     * where it plainly should. No browser enforces it either.
+     *
+     * Registration on the same site succeeded throughout, which is what made
+     * this so hard to read from the outside: only the assertion challenge was
+     * out of range, so the passkey could be created and never used.
+     *
+     * There is still a ceiling, and it is the one every base64url field here
+     * already has: [decode] refuses anything over four thousand characters
+     * before it allocates. A second bound on top of it was reachable only by
+     * inputs the first had already turned away, so it decided nothing.
+     */
+    private fun challenge(encoded: String): ByteArray = decode(encoded, "challenge")
 
     private fun credentialIds(array: JSONArray?): List<ByteArray> {
         if (array == null) return emptyList()
@@ -233,6 +260,10 @@ internal object WebAuthnRequestParser {
         require(get(name) is Boolean) { "$name is invalid" }
         return getBoolean(name)
     }
+
+
+    /** The one ceiling every base64url field here shares. */
+    private const val MAX_ENCODED_CHARS = 4096
 
     private const val BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     private val ATTACHMENT_VALUES = setOf("platform", "cross-platform")

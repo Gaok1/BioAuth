@@ -31,6 +31,32 @@ internal class WebAuthnRequestParserTest {
     }
 
     @Test
+    fun acceptsAChallengeTheRelyingPartySizedItself() {
+        // Sixteen bytes was a floor taken from advice the specification gives
+        // to *relying parties* about their own ceremonies. Enforced here it
+        // made no relying party safer and turned Google's sign-in away: the
+        // audit log read "challenge must contain 16..1024 bytes", and because
+        // only the assertion was out of range, the passkey could be registered
+        // on the same site and then never used.
+        val short = WebAuthnRequestParser.request(
+            """{"rpId":"example.org","challenge":"${b64(ByteArray(8) { it.toByte() })}"}""",
+        )
+        assertContentEquals(ByteArray(8) { it.toByte() }, short.challenge)
+
+        // There is still a ceiling, and it is the one every base64url field
+        // shares rather than a second one layered over it.
+        val huge = assertFailsWith<IllegalArgumentException> {
+            WebAuthnRequestParser.request(
+                """{"rpId":"example.org","challenge":"${b64(ByteArray(4096))}"}""",
+            )
+        }
+        // The message carries the limit and the length. That is not a nicety:
+        // the bound this test exists for was found in seconds only because the
+        // rejection happened to name its numbers in the audit log.
+        assertTrue(huge.message!!.contains("4096"), huge.message!!)
+    }
+
+    @Test
     fun rejectsUnsupportedAlgorithmsAndMalformedRpIds() {
         val challenge = b64(ByteArray(32))
         val base = """{
@@ -67,16 +93,18 @@ internal class WebAuthnRequestParserTest {
     }
 
     @Test
-    fun rejectsShortChallengesAndOversizedUserHandles() {
+    fun rejectsOversizedUserHandles() {
         val template = """{
           "rp":{"id":"example.org","name":"Example"},
           "user":{"id":"%s","name":"alice"},
           "challenge":"%s",
           "pubKeyCredParams":[{"type":"public-key","alg":-7}]
         }"""
-        assertFailsWith<IllegalArgumentException> {
-            WebAuthnRequestParser.creation(template.format("AQ", b64(ByteArray(15))))
-        }
+        // A fifteen-byte challenge used to be refused here too. It is not this
+        // side's call -- see `acceptsAChallengeTheRelyingPartySizedItself`.
+        // The user handle is different: sixty-four bytes is the limit the
+        // specification puts on the relying party, and a longer one is a
+        // request that cannot be served rather than one we disapprove of.
         assertFailsWith<IllegalArgumentException> {
             WebAuthnRequestParser.creation(template.format(b64(ByteArray(65)), b64(ByteArray(32))))
         }
