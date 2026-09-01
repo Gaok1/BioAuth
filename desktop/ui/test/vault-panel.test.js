@@ -30,6 +30,13 @@ class FakeElement {
     this.value = '';
     this.listeners = new Map();
     this.classList = { toggle: () => {} };
+    // Recorded rather than ignored: sending the cursor back to the field that
+    // has to be filled in is behaviour worth being able to assert.
+    this.focused = false;
+  }
+
+  focus() {
+    this.focused = true;
   }
 
   appendChild(child) {
@@ -150,6 +157,77 @@ async function openVault(harness) {
     .flatMap((row) => row.children)
     .filter((node) => node.dataset && node.dataset.copy);
 }
+
+test('storing a login sends no secret and is given none back', async () => {
+  // The direction that puts a password on the phone. The security property is
+  // the same one the copy tests defend from the other side: nothing about the
+  // secret is on this side of the call. The panel sends a name, a user and an
+  // address; the agent generates, sends and forgets. A panel that started
+  // sending a `secret` field, or rendering one from the reply, is the moment
+  // that stops being true.
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.create') {
+        return { itemId: 'item-9', revision: 1, length: 20 };
+      }
+      return { items: [item], deviceName: 'Pixel' };
+    },
+  });
+
+  harness.element('vault-new-name').value = 'Banco';
+  harness.element('vault-new-username').value = 'alice';
+  harness.element('vault-new-uri').value = 'https://banco.example.com';
+  await harness.element('vault-store').emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const created = harness.calls.find((entry) => entry.method === 'vault.create');
+  assert.equal(created.params.name, 'Banco');
+  assert.equal(created.params.username, 'alice');
+  assert.equal(created.params.uri, 'https://banco.example.com');
+  // The property this test exists for: the call has three fields and none of
+  // them is the password. Asserted on the keys rather than on one name, so a
+  // field added later has to be looked at.
+  assert.deepEqual(Object.keys(created.params).sort(), ['name', 'uri', 'username']);
+  assert.match(harness.element('vault-note').textContent, /20 caracteres/);
+  // Written, so the list this panel is holding is behind by exactly the item
+  // the person just made -- and it is the one they will want to copy.
+  assert.ok(harness.calls.some((entry) => entry.method === 'vault.list'));
+  assert.equal(harness.element('vault-new-name').value, '');
+});
+
+test('a store that fails keeps what was typed', async () => {
+  // Clearing the fields on the way out would lose the person's typing every
+  // time the phone declined or the write failed -- which is precisely when
+  // they are about to try again.
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.create') throw new Error('recusado no telefone');
+      return { items: [], deviceName: 'Pixel' };
+    },
+  });
+
+  harness.element('vault-new-name').value = 'Banco';
+  await harness.element('vault-store').emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.match(harness.element('vault-note').textContent, /recusado no telefone/);
+  assert.equal(harness.element('vault-new-name').value, 'Banco');
+  assert.equal(harness.element('vault-store').disabled, false);
+});
+
+test('an unnamed item never reaches the phone', async () => {
+  // The name is what the approval sheet is worded from, because the item does
+  // not exist on the phone yet. Sending a blank one costs a prompt on the
+  // person's phone to be told something this side already knew.
+  const harness = boot({ call: async () => ({ items: [], deviceName: 'Pixel' }) });
+
+  await harness.element('vault-store').emit('click');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.calls.some((entry) => entry.method === 'vault.create'), false);
+  assert.match(harness.element('vault-note').textContent, /nome/i);
+  assert.equal(harness.element('vault-new-name').focused, true);
+});
 
 test('a copy names the revision of the row on screen', async () => {
   const harness = boot({

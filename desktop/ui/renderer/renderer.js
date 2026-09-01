@@ -538,6 +538,50 @@ el('vault-generate').addEventListener('click', async (event) => {
   }
 });
 
+// The other direction from `vault.copy`: a password made here and kept there.
+//
+// Nothing about the secret is on this side of the call. The renderer sends the
+// name, the user and the address; the agent generates, sends to the phone and
+// forgets, and the reply says how long the password was rather than what it
+// was. So this handler cannot show it, and that is deliberate rather than an
+// omission -- the place to read it back is the phone, or the Copy button on
+// the list above, both of which the phone approves.
+el('vault-store').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const name = el('vault-new-name').value.trim();
+  // Checked here as well as in the agent. Reaching the phone to be told the
+  // name was blank costs a prompt on the person's phone for nothing.
+  if (!name) {
+    vaultNote('Dê um nome ao item antes de guardar.', 'bad');
+    el('vault-new-name').focus();
+    return;
+  }
+  button.disabled = true;
+  vaultNote(`Aprove no telefone: ${name}.`);
+  try {
+    const result = await api.call('vault.create', {
+      name,
+      username: el('vault-new-username').value.trim(),
+      uri: el('vault-new-uri').value.trim(),
+    });
+    // The fields are cleared only once the phone has actually stored it.
+    // Emptying them on the way out would lose what the person typed whenever
+    // the write failed or they declined.
+    for (const field of ['vault-new-name', 'vault-new-username', 'vault-new-uri']) {
+      el(field).value = '';
+    }
+    // The listing this panel holds is now behind by one item, and it is the
+    // one the person just made: refreshing is what lets them copy it.
+    vaultItems = null;
+    await loadVault();
+    vaultNote(`"${name}" guardado com senha de ${result.length} caracteres.`);
+  } catch (error) {
+    vaultNote(error.message, 'bad');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // Listing is deferred until the panel is actually opened: a tray that dials
 // the phone every time it starts would wake the device for nothing.
 for (const tab of document.querySelectorAll('.tab')) {

@@ -127,6 +127,28 @@
           </p>
           <button id="vault-generate" class="button">Gerar e copiar</button>
         </div>
+
+        <div class="card">
+          <p class="label">Guardar no telefone</p>
+          <p class="muted">
+            A senha é gerada dentro do agente e vai direto para o telefone, que
+            pede sua aprovação antes de gravar. Ela não aparece nesta janela e
+            não fica neste computador — nem para mostrar a você.
+          </p>
+          <label class="label" for="vault-new-name">Nome</label>
+          <input id="vault-new-name" class="search" type="text" autocomplete="off" />
+          <label class="label" for="vault-new-username">Usuário</label>
+          <input id="vault-new-username" class="search" type="text" autocomplete="off" />
+          <label class="label" for="vault-new-uri">Endereço</label>
+          <input
+            id="vault-new-uri"
+            class="search"
+            type="url"
+            placeholder="https://exemplo.com"
+            autocomplete="off"
+          />
+          <button id="vault-store" class="button">Gerar e guardar</button>
+        </div>
       </section>
 
       <section id="panel-transports" class="panel" hidden>
