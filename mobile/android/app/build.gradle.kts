@@ -38,7 +38,22 @@ android {
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
-        versionCode = flutter.versionCode
+        // `pubspec.yaml`'s build number, unless a build says otherwise with
+        // `-PbioauthVersionCode=<n>`.
+        //
+        // Android decides whether an APK may replace the one already
+        // installed by comparing these, and the number sat at 7 through every
+        // build this project ever produced -- local and CI alike. Replacing an
+        // app with something carrying the same version is not an upgrade, and
+        // the package installer says so as "App not installed", which reads
+        // like a broken file rather than a number nobody moved. Uninstalling
+        // first is not a workaround here: it takes the Keystore keys with it,
+        // and those are the passkeys and the vault.
+        //
+        // The override exists so a build meant for a phone that already has
+        // one can outrank it without editing a tracked file first.
+        versionCode = (project.findProperty("bioauthVersionCode") as String?)?.toIntOrNull()
+            ?: flutter.versionCode
         versionName = flutter.versionName
     }
 
