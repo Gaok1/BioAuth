@@ -63,7 +63,7 @@ pub struct ServiceError {
 }
 
 impl ServiceError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -1679,6 +1679,24 @@ impl Service {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         self.record_application("locker", action, resource, device_name, development, result);
+    }
+
+    /// Records a password generated straight to the clipboard.
+    ///
+    /// The one vault operation with nothing on the other end of it: no item, no
+    /// phone, no approval sheet, no second factor. That is exactly why it
+    /// belongs in the log. Every other route a secret takes to this machine's
+    /// clipboard is written down, and this one -- one click and a password is
+    /// on it -- was the only one that left no trace, so a log read back
+    /// afterwards said the clipboard had never held anything.
+    ///
+    /// Nothing about the password is passed in, and there is nothing worth
+    /// passing: the resource is empty for the same reason a listing's is, and
+    /// the length stays out because it is a fact about the secret. There is no
+    /// device either, since no phone took part; `development` is false because
+    /// no pairing was trusted to make this happen, not because one was checked.
+    pub fn record_generated_copy(&mut self, result: Result<(), &ServiceError>) {
+        self.record_vault("", "generate", "", false, result);
     }
 
     /// Records that a vault operation happened.

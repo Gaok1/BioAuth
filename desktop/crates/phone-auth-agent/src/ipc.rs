@@ -32,7 +32,7 @@ use crate::clipboard;
 use crate::password::{self, Policy};
 use crate::paths::Paths;
 use crate::secret_memory::SecretBuffer;
-use crate::service::Service;
+use crate::service::{Service, ServiceError};
 
 static WEBAUTHN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
@@ -512,7 +512,7 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         // is nothing stored yet. The clipboard path below is the same one
         // `vault.copy` uses for a fetched secret.
         "vault.generate-copy" => match parse::<VaultGenerateCopyParams>(call) {
-            Ok(params) => vault_generate_copy(id, &params),
+            Ok(params) => vault_generate_copy(id, &params, service),
             Err(reply) => reply(id),
         },
 
@@ -538,7 +538,25 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
 /// The generated password lives in a `Zeroizing<String>` for exactly as long as
 /// it takes to copy it into locked pages, and both are wiped when this function
 /// returns. What goes back to the caller describes the copy.
-fn vault_generate_copy(id: u64, params: &VaultGenerateCopyParams) -> Reply {
+///
+/// The service is here only to be told what happened. Every other way a secret
+/// reaches this clipboard writes an audit entry, and this path -- the only one
+/// with no item, no phone and no approval -- wrote none, which made a click
+/// that puts a password on the clipboard the least traceable thing the agent
+/// does. The lock is taken after the copy, never around it: the copy retries
+/// for the better part of a second when another process holds the clipboard,
+/// and holding the service mutex through that stalls every other caller.
+fn vault_generate_copy(
+    id: u64,
+    params: &VaultGenerateCopyParams,
+    service: &Arc<Mutex<Service>>,
+) -> Reply {
+    let record = |result: Result<(), &ServiceError>| {
+        service
+            .lock()
+            .expect("service mutex")
+            .record_generated_copy(result);
+    };
     let defaults = Policy::default();
     let policy = Policy {
         length: params.length.unwrap_or(defaults.length),
@@ -550,7 +568,11 @@ fn vault_generate_copy(id: u64, params: &VaultGenerateCopyParams) -> Reply {
 
     let generated = match password::generate(policy) {
         Ok(generated) => generated,
-        Err(error) => return Reply::err(id, "bad-params", error.to_string()),
+        Err(error) => {
+            let error = ServiceError::new("bad-params", error.to_string());
+            record(Err(&error));
+            return Reply::err(id, error.code, error.message);
+        }
     };
     let secret = SecretBuffer::from_slice(generated.as_bytes());
     drop(generated);
@@ -560,22 +582,26 @@ fn vault_generate_copy(id: u64, params: &VaultGenerateCopyParams) -> Reply {
         .map_or(clipboard::DEFAULT_TTL, Duration::from_millis);
 
     match clipboard::copy_secret(&secret, ttl) {
-        Ok(outcome) => to_reply(
-            id,
-            &VaultCopyResult {
-                length: secret.len(),
-                clears_at_ms: outcome.clears_at_ms,
-                history_excluded: outcome.history_excluded,
-                cloud_excluded: outcome.cloud_excluded,
-                memory_locked: secret.is_locked(),
-            },
-        ),
+        Ok(outcome) => {
+            record(Ok(()));
+            to_reply(
+                id,
+                &VaultCopyResult {
+                    length: secret.len(),
+                    clears_at_ms: outcome.clears_at_ms,
+                    history_excluded: outcome.history_excluded,
+                    cloud_excluded: outcome.cloud_excluded,
+                    memory_locked: secret.is_locked(),
+                },
+            )
+        }
         // Mapped exactly as `vault.copy` maps it. A timeout outside the
         // accepted range is the caller's mistake, and calling it
         // `clipboard-unavailable` here and `bad-params` there would leave two
         // adjacent methods disagreeing about the same failure.
         Err(error) => {
             let error = crate::service::clipboard_error(error);
+            record(Err(&error));
             Reply::err(id, error.code, error.message)
         }
     }
@@ -934,6 +960,25 @@ mod concurrent_client_tests {
             "the generated password crossed the IPC boundary"
         );
 
+        // The same clipboard, written to by the same code, from the one method
+        // that asks nobody's permission first. It has to leave a trace, and the
+        // trace has to be as empty of the password as the reply is.
+        let log = client
+            .call("audit.recent", json!({ "limit": 10 }))
+            .expect("audit.recent");
+        let entries = log["entries"].as_array().expect("entries").clone();
+        let generated = entries
+            .iter()
+            .find(|entry| entry["service"] == "vault" && entry["action"] == "generate")
+            .expect("the generated copy was not written down");
+        assert_eq!(generated["outcome"], "granted");
+        assert_eq!(generated["resource"], "", "there is no item to name");
+        let serialised = serde_json::to_string(&entries).expect("serialise log");
+        assert!(
+            !serialised.contains(&copied),
+            "the audit log wrote down the generated password"
+        );
+
         crate::clipboard::clear_now().expect("clear");
     }
 
@@ -950,6 +995,21 @@ mod concurrent_client_tests {
         );
 
         assert!(refused.is_err(), "an empty alphabet must be refused");
+
+        // Recorded on the way out as well. A log that holds only the copies
+        // that worked cannot answer "did anything try", which is the question
+        // it is read for.
+        let log = client
+            .call("audit.recent", json!({ "limit": 10 }))
+            .expect("audit.recent");
+        let generated = log["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .find(|entry| entry["service"] == "vault" && entry["action"] == "generate")
+            .cloned()
+            .expect("the refusal was not written down");
+        assert_eq!(generated["outcome"], "failed");
     }
 
     /// With no phone paired there is no vault, and both methods have to say so.
