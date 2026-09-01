@@ -9,7 +9,7 @@
 //! assertion only covers the fields somebody thought to assert, and the failure
 //! this guards against is a field nobody thought about at all.
 
-use phone_auth_agent::api::VaultCopyResult;
+use phone_auth_agent::api::{VaultCopyResult, VaultCreateParams, VaultCreateResult};
 use phone_auth_agent::audit::{AuditEntry, Outcome};
 use phone_auth_agent::password::{
     generate, generate_passphrase, passphrase_capacity, Policy, EFF_LONGEST_WORD, EFF_WORD_COUNT,
@@ -97,6 +97,60 @@ fn a_copy_result_cannot_carry_the_secret_it_describes() {
     );
     // Length is the one thing about the secret that does travel, and that is
     // deliberate — the UI says how much was copied. Nothing else may.
+    assert!(json.contains(&CANARY.len().to_string()));
+}
+
+/// The other direction, and the reason `vault.create` is allowed to be on the
+/// tray's list at all.
+///
+/// A password created on the desktop is generated inside the agent and sent to
+/// the phone. The claim the design rests on is that the renderer can ask for
+/// one and still never be able to see it, which is two statements about types:
+/// there is no field for a secret in the call, and none in the reply. Both were
+/// only ever said in a comment.
+///
+/// The request is checked by feeding the canary to every field that exists and
+/// asking whether a `VaultCreateParams` will hold it — anything that survives
+/// the round trip is a field a renderer could put a password in.
+#[test]
+fn a_create_cannot_be_told_a_secret_or_be_told_one_back() {
+    let asking = serde_json::json!({
+        "name": CANARY,
+        "username": CANARY,
+        "uri": CANARY,
+        "credentialId": CANARY,
+        "length": 24,
+        "symbols": true,
+        // The field this test exists to keep from being added. `serde` ignores
+        // what it does not know, so today this vanishes; the day somebody adds
+        // it, the assertion below starts failing.
+        "secret": CANARY,
+        "password": CANARY,
+    });
+    let params: VaultCreateParams = serde_json::from_value(asking).expect("parse");
+
+    // The fields that do exist are the ones the phone's approval sheet is
+    // worded from, and the user is the one who typed them.
+    assert_eq!(params.name, CANARY);
+    let carried = format!("{params:?}");
+    let occurrences = carried.matches(CANARY).count();
+    assert_eq!(
+        occurrences, 4,
+        "a create request grew a field beyond name, username, uri and          credentialId: {carried}"
+    );
+
+    let told = VaultCreateResult {
+        item_id: "item-abc123".into(),
+        revision: 1,
+        length: CANARY.len(),
+    };
+    let json = serde_json::to_string(&told).expect("serialise");
+    assert!(
+        !json.contains(CANARY),
+        "the create result serialised something it should not hold: {json}"
+    );
+    // Same one thing that travels after a copy, for the same reason: the tray
+    // says how long the password it made is, and nothing else about it.
     assert!(json.contains(&CANARY.len().to_string()));
 }
 

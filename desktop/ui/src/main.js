@@ -16,35 +16,7 @@ const { AgentSupervisor } = require('./agent-supervisor');
 const { endpointFile } = require('./paths');
 const { SecureUpdater } = require('./secure-updater');
 const { allowsNavigation, externalTarget } = require('./window-guards');
-
-/** Methods the renderer may invoke. Anything not listed is refused. */
-const ALLOWED_METHODS = new Set([
-  'status',
-  'devices.list',
-  'devices.forget',
-  'devices.setPermissions',
-  'pair.begin',
-  'pair.cancel',
-  'pair.pending',
-  'pair.confirm',
-  'audit.recent',
-  // The vault panel. `vault.copy` mutates nothing and reveals nothing to this
-  // process: the secret goes from the phone into locked pages in the agent and
-  // then to the clipboard, and the reply describes the copy without carrying
-  // it. Unlike `authorize`, a copy is exactly the kind of thing a person means
-  // to start by clicking, and the phone still shows what was asked before it
-  // releases anything.
-  'vault.list',
-  'vault.copy',
-  'vault.generate-copy',
-  // The other direction, and the one the rule about never storing a password
-  // here makes easy to allow: `vault.create` generates the secret inside the
-  // agent and sends it to the phone. There is no field for one in the call and
-  // none in the reply, so a renderer can ask for a login to be created and
-  // still never be able to see it. The phone raises its own approval sheet,
-  // worded from the request.
-  'vault.create',
-]);
+const { ALLOWED_METHODS } = require('./agent-methods');
 
 /**
  * Renders a pairing code.
