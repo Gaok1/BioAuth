@@ -216,7 +216,28 @@ class AppController extends Notifier<AppState> {
           : ConnectionPhase.denied;
       _finish(request, phase, outcome, DateTime.now().toUtc());
     } on Object {
-      _setRequestPhase(requestId, ConnectionPhase.error);
+      // The card goes too, not only its phase. Both ways this throws mean the
+      // session carrying the request is gone -- `authorize` refuses one whose
+      // consent has already been settled, and a session that ends mid-gesture
+      // fails the outcome from `abandon`. `abandon` deliberately leaves the
+      // card alone in that case, on the grounds that a request past consent is
+      // "the core's to finish", and this is where the core finishes it. It did
+      // not: it repainted the card as "Erro" and left it listed, answerable
+      // only by another error, exactly the accumulation `withdraw` exists to
+      // stop. The audit says expired for the same reason `withdraw` does --
+      // the session ended without an answer -- while the phase keeps saying
+      // error, because that is what happened.
+      final request = _requestById(requestId);
+      if (request == null) {
+        _setRequestPhase(requestId, ConnectionPhase.error);
+        return;
+      }
+      _finish(
+        request,
+        ConnectionPhase.error,
+        AuditOutcome.expired,
+        DateTime.now().toUtc(),
+      );
     }
   }
 

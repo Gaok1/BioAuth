@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app_controller.dart';
 import 'package:phone_auth/app/config.dart';
 import 'package:phone_auth/app/providers.dart';
+import 'package:phone_auth/core/auth/phone_authenticator.dart';
 import 'package:phone_auth/core/mock/fake_phone_authenticator.dart';
 import 'package:phone_auth/core/pairing/pairing_store.dart';
 import 'package:phone_auth/core/mock/mock_seed.dart';
@@ -254,6 +255,40 @@ void main() {
     expect(state.auditEntries.first.outcome, AuditOutcome.expired);
   });
 
+  test('a session that dies mid-gesture takes its card with it', () async {
+    // `abandon` leaves the card alone once a request is past consent, on the
+    // grounds that it is "the core's to finish". Finishing it is what this
+    // path did not do: it repainted the card as "Erro" and left it listed,
+    // where the only thing another tap could produce was the same error. Every
+    // desktop that died in the middle of a gesture added one, which is the
+    // accumulation `withdraw` was written to stop from the other direction.
+    final failing = ProviderContainer(
+      overrides: [
+        appConfigProvider.overrideWithValue(
+          AppConfig.development(buildMockSeed(now)),
+        ),
+        phoneAuthenticatorProvider.overrideWithValue(
+          const _AuthenticatorWhoseSessionDied(),
+        ),
+        pairingStoreProvider.overrideWithValue(InMemoryPairingStore()),
+      ],
+    );
+    addTearDown(failing.dispose);
+
+    await failing
+        .read(appControllerProvider.notifier)
+        .approve('mock-request-1', at: now);
+
+    final state = failing.read(appControllerProvider);
+    expect(
+      state.requests.where((request) => request.id == 'mock-request-1'),
+      isEmpty,
+      reason: 'the card cannot stay listed answering only with an error',
+    );
+    expect(state.requestPhases['mock-request-1'], ConnectionPhase.error);
+    expect(state.auditEntries.single.outcome, AuditOutcome.expired);
+  });
+
   test('a request from a blocked desktop is refused, not dropped', () async {
     final controller = container.read(appControllerProvider.notifier);
     final authorizer = container.read(interactiveAuthorizerProvider);
@@ -500,6 +535,23 @@ void main() {
       isFalse,
     );
   });
+}
+
+/// A core whose session ended between the tap and the signature.
+///
+/// Both real ways `authorize` throws look like this from here: a consent
+/// already settled, and an outcome failed by `abandon`.
+class _AuthenticatorWhoseSessionDied implements PhoneAuthenticator {
+  const _AuthenticatorWhoseSessionDied();
+
+  @override
+  Future<AuthorizationResult> authorize(
+    AuthenticationRequest request, {
+    required void Function(ConnectionPhase phase) onPhase,
+  }) => Future.error(StateError('Esta solicitação não está mais conectada'));
+
+  @override
+  void cancel(String requestId) {}
 }
 
 const _properties = TransportSecurityProperties(
