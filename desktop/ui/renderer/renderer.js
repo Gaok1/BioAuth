@@ -472,6 +472,27 @@ function hostOf(uri) {
   }
 }
 
+/// What the OS did and did not do with the entry, in the words a person reads.
+///
+/// Shared by both ways a password reaches the clipboard, because it is the same
+/// clipboard and the same reply type. `vault.generate-copy` read only the
+/// countdown out of it, so a password generated here could be sitting in the
+/// `Win+V` history, or synced to a Microsoft account and off this machine
+/// entirely, while the panel said nothing -- the same three failures the stored
+/// copy has spelled out in capitals all along.
+function clipboardNote(result, opening) {
+  const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
+  const warnings = [];
+  if (!result.memoryLocked) warnings.push('a senha pode ter chegado ao pagefile');
+  if (!result.historyExcluded) warnings.push('o histórico da área de transferência pode ter guardado uma cópia');
+  if (!result.cloudExcluded) warnings.push('a área de transferência pode ter sincronizado com a nuvem');
+
+  return (
+    `${opening} A área de transferência se limpa em ${seconds}s.` +
+    (warnings.length ? ` ATENÇÃO — ${warnings.join('; ')}.` : '')
+  );
+}
+
 async function copyItem(item, button) {
   button.disabled = true;
   button.textContent = 'no telefone…';
@@ -484,16 +505,7 @@ async function copyItem(item, button) {
       itemId: item.id,
       expectedRevision: item.revision,
     });
-    const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
-    const warnings = [];
-    if (!result.memoryLocked) warnings.push('a senha pode ter chegado ao pagefile');
-    if (!result.historyExcluded) warnings.push('o histórico da área de transferência pode ter guardado uma cópia');
-    if (!result.cloudExcluded) warnings.push('a área de transferência pode ter sincronizado com a nuvem');
-
-    vaultNote(
-      `Copiado. A área de transferência se limpa em ${seconds}s.` +
-        (warnings.length ? ` ATENÇÃO — ${warnings.join('; ')}.` : '')
-    );
+    vaultNote(clipboardNote(result, 'Copiado.'));
     button.textContent = 'copiado';
   } catch (error) {
     // A refusal on the phone, a stale revision and a missing item all arrive
@@ -527,9 +539,8 @@ el('vault-generate').addEventListener('click', async (event) => {
   button.disabled = true;
   try {
     const result = await api.call('vault.generate-copy', {});
-    const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
     vaultNote(
-      `Senha de ${result.length} caracteres copiada. Some da área de transferência em ${seconds}s.`
+      clipboardNote(result, `Senha de ${result.length} caracteres copiada.`)
     );
   } catch (error) {
     vaultNote(error.message, 'bad');

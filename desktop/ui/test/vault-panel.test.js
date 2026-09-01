@@ -318,6 +318,57 @@ test('a clipboard the OS would not protect is reported, not hidden', async () =>
   assert.match(note, /hist[óo]rico/);
 });
 
+/// The same clipboard, the same reply type, and for a while only one of the
+/// two paths read the honest half of it.
+///
+/// "Gerar e copiar" is the quicker way to make a password and the one with no
+/// item behind it to fall back on, so a copy of it sitting in `Win+V` history
+/// -- or synced to a Microsoft account, off this machine entirely -- is the
+/// case the user most needs told about.
+test('a generated password reports the same clipboard warnings as a stored one', async () => {
+  const harness = boot({
+    call: async (method) => {
+      if (method === 'vault.list') {
+        return { items: [item], deviceName: 'Pixel', development: false };
+      }
+      assert.equal(method, 'vault.generate-copy');
+      return {
+        length: 20,
+        clearsAtMs: Date.now() + 45000,
+        historyExcluded: false,
+        cloudExcluded: false,
+        memoryLocked: true,
+      };
+    },
+  });
+
+  await harness.element('vault-generate').emit('click');
+
+  const note = harness.element('vault-note').textContent;
+  assert.match(note, /20 caracteres/);
+  assert.match(note, /limpa em \d+s/);
+  assert.match(note, /hist[óo]rico/);
+  assert.match(note, /nuvem/);
+});
+
+test('a clean generated copy says only what it did', async () => {
+  const harness = boot({
+    call: async () => ({
+      length: 20,
+      clearsAtMs: Date.now() + 45000,
+      historyExcluded: true,
+      cloudExcluded: true,
+      memoryLocked: true,
+    }),
+  });
+
+  await harness.element('vault-generate').emit('click');
+
+  const note = harness.element('vault-note').textContent;
+  assert.match(note, /limpa em \d+s/);
+  assert.doesNotMatch(note, /ATEN/, 'nothing failed, so nothing is warned about');
+});
+
 test('a refusal from the phone is shown as it arrived, not guessed at', async () => {
   const harness = boot({
     call: async (method) => {
