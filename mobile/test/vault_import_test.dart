@@ -42,6 +42,60 @@ void main() {
       expect(preview.items.last.secret, '31-14-15');
     });
 
+    /// The same two rules the CSV path already followed, on the path that did
+    /// not. A name padded with spaces is what a restore compares to decide
+    /// whether two rows are one account, so the same login exported as JSON
+    /// and as CSV used to arrive as two entries.
+    test('a JSON export is tidied the same way a CSV one is', () async {
+      final preview = await parseVaultImport(
+        bytes(
+          export([
+            {
+              'type': 1,
+              'name': '  Banco  ',
+              'login': {
+                'username': '  alice  ',
+                'password': '  hunter2  ',
+                'uris': [
+                  {'uri': '  https://banco.example.com  '},
+                ],
+              },
+            },
+          ]),
+        ),
+      );
+
+      expect(preview.rejections, isEmpty);
+      expect(preview.items.single.name, 'Banco');
+      expect(preview.items.single.username, 'alice');
+      expect(preview.items.single.uri, 'https://banco.example.com');
+      // The one value that is not ours to tidy, on this path as on the other.
+      expect(preview.items.single.secret, '  hunter2  ');
+    });
+
+    /// And the other half: whitespace is not a password here either. This used
+    /// to be stored, so the vault held an entry that reveals nothing and logs
+    /// in nowhere, with no line number anywhere saying which row it came from.
+    test('a password of only spaces is no password here either', () async {
+      final preview = await parseVaultImport(
+        bytes(
+          export([
+            {
+              'type': 1,
+              'name': 'Banco',
+              'login': {'username': 'alice', 'password': '   '},
+            },
+            {'type': 2, 'name': 'Nota', 'notes': ' \t '},
+          ]),
+        ),
+      );
+
+      expect(preview.items, isEmpty);
+      expect(preview.rejections, hasLength(2));
+      expect(preview.rejections.first.reason, contains('sem senha'));
+      expect(preview.rejections.last.reason, contains('sem senha'));
+    });
+
     /// There is nothing here that could ask for the Bitwarden password, so an
     /// encrypted export has to say what to do rather than fail as bad JSON.
     test('an encrypted export says what to do about it', () async {

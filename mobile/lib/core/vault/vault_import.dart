@@ -140,7 +140,12 @@ VaultImportPreview _parseBitwardenJson(String text) {
       continue;
     }
 
-    final name = _string(raw['name']);
+    // Trimmed here for the same reason the CSV path trims: a stray space
+    // around a name is an artefact of whatever produced the file, and the name
+    // is what a restore compares to decide whether two rows are one account.
+    // The two importers used to disagree about that, so the same login brought
+    // in from a JSON export and from a CSV export was two entries.
+    final name = _string(raw['name']).trim();
     // Bitwarden's type 1 is a login and 2 a secure note. Cards, identities and
     // SSH keys have no home in this schema (VLT-15), so they are reported
     // rather than flattened into notes that lose their structure.
@@ -149,8 +154,10 @@ VaultImportPreview _parseBitwardenJson(String text) {
     final (kind, username, uri, secret) = switch (type) {
       1 when login is Map<String, Object?> => (
         VaultItemKind.login,
-        _string(login['username']),
-        _firstUri(login['uris']),
+        _string(login['username']).trim(),
+        _firstUri(login['uris']).trim(),
+        // Not the password. That one is stored exactly as it was exported,
+        // on both paths, because a space at either end of it is part of it.
         _string(login['password']),
       ),
       2 => (VaultItemKind.note, '', '', _string(raw['notes'])),
@@ -383,7 +390,12 @@ VaultImportRejection? _validate({
 }) {
   final problem = switch (true) {
     _ when name.isEmpty => 'sem nome',
-    _ when secret.isEmpty => 'sem senha nem conteúdo',
+    // Asked of the trimmed value while the item keeps the untrimmed one.
+    // Whitespace is not content: a CSV cell holding three spaces and a JSON
+    // string holding three spaces are the same empty item, and only the CSV
+    // path used to say so. The other stored it as a password, so the user
+    // ended up with a vault entry that reveals nothing and logs in nowhere.
+    _ when secret.trim().isEmpty => 'sem senha nem conteúdo',
     _ when name.length > _maxName => 'nome longo demais',
     _ when username.length > _maxUsername => 'usuário longo demais',
     _ when uri.length > _maxUri => 'endereço longo demais',
