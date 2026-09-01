@@ -203,6 +203,35 @@ fn handle_connection(
     token: &str,
     first_call_window: Duration,
 ) -> io::Result<()> {
+    // Wrapped so that every way out of the loop below -- EOF, a bad line, a
+    // wrong token, an IO error -- takes this connection's subscriptions with
+    // it. A subscription outliving its socket keeps the pump thread blocked on
+    // the channel, holding the socket, until some unrelated event happens to
+    // be raised.
+    let mut subscriptions = Vec::new();
+    let result = serve_connection(
+        stream,
+        &service,
+        token,
+        first_call_window,
+        &mut subscriptions,
+    );
+    if !subscriptions.is_empty() {
+        service
+            .lock()
+            .expect("service mutex")
+            .unsubscribe(&subscriptions);
+    }
+    result
+}
+
+fn serve_connection(
+    stream: TcpStream,
+    service: &Arc<Mutex<Service>>,
+    token: &str,
+    first_call_window: Duration,
+    subscriptions: &mut Vec<u64>,
+) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     // Set on the handle the read actually uses, not on the one `writer` holds.
     // They are two descriptors for one socket and Windows does not carry the
@@ -269,12 +298,17 @@ fn handle_connection(
             trusted = true;
         }
 
-        let reply = dispatch(&call, &service, &writer);
+        let reply = dispatch(&call, service, &writer, subscriptions);
         write_line(&writer, &reply)?;
     }
 }
 
-fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpStream>>) -> Reply {
+fn dispatch(
+    call: &Call,
+    service: &Arc<Mutex<Service>>,
+    writer: &Arc<Mutex<TcpStream>>,
+    subscriptions: &mut Vec<u64>,
+) -> Reply {
     let id = call.id;
     match call.method.as_str() {
         "status" => {
@@ -565,7 +599,8 @@ fn dispatch(call: &Call, service: &Arc<Mutex<Service>>, writer: &Arc<Mutex<TcpSt
         },
 
         "subscribe" => {
-            let receiver = service.lock().expect("service mutex").subscribe();
+            let (subscription, receiver) = service.lock().expect("service mutex").subscribe();
+            subscriptions.push(subscription);
             let writer = Arc::clone(writer);
             thread::spawn(move || {
                 for event in receiver {
@@ -891,14 +926,40 @@ mod concurrent_client_tests {
 
         drop(leaving);
 
-        // The pump only notices the closed socket when it tries to write, so
-        // the drop alone proves nothing: it takes a broadcast to prune.
         wait_until("the departed client to be pruned", || {
-            broadcast(&service);
             subscriber_count(&service) == 1
         });
 
         assert!(staying.call("status", json!({})).is_ok());
+    }
+
+    /// The pump thread parks on `for event in receiver` and only notices the
+    /// closed socket when it next tries to write. Nothing here writes: no
+    /// device pairs, nothing is revoked, no event is raised at all. So the
+    /// subscription used to sit in the service, the thread stayed blocked, and
+    /// the socket it held stayed open -- for as long as the agent ran without
+    /// anything happening, which on a machine where the phone is elsewhere is
+    /// the ordinary case. Open the tray a few times and the agent has a
+    /// handful of threads waiting to write to sockets nobody is reading.
+    ///
+    /// The connection thread is the one that finds out: its `read_line`
+    /// returns EOF the moment the client goes. Taking the subscription back
+    /// there drops the sender, which ends the `for` loop, which ends the pump.
+    #[test]
+    fn a_departed_subscriber_is_reclaimed_without_waiting_for_an_event() {
+        let (service, paths) = start_agent("subscriber-leak");
+        let mut client = AgentClient::connect(&paths).expect("connects");
+
+        client.call("subscribe", json!({})).expect("subscribes");
+        wait_until("the subscription to register", || {
+            subscriber_count(&service) == 1
+        });
+
+        drop(client);
+
+        wait_until("the subscription to be reclaimed", || {
+            subscriber_count(&service) == 0
+        });
     }
 
     /// A wrong token must not merely fail the call: the connection is with

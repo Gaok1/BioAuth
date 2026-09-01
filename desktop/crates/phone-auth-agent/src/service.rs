@@ -92,7 +92,8 @@ pub struct Service {
     held_proposal: Mutex<Option<crate::qr_network::PairingProposal>>,
     audit: AuditLog,
     development_mode: bool,
-    subscribers: Vec<Sender<Event>>,
+    subscribers: Vec<(u64, Sender<Event>)>,
+    next_subscriber_id: u64,
 }
 
 impl Service {
@@ -127,6 +128,7 @@ impl Service {
             audit,
             development_mode,
             subscribers: Vec::new(),
+            next_subscriber_id: 0,
             config,
             paths,
         };
@@ -163,17 +165,33 @@ impl Service {
         &self.paths
     }
 
-    /// Registers a client for event pushes.
-    pub fn subscribe(&mut self) -> Receiver<Event> {
+    /// Registers a client for event pushes, and names the registration.
+    ///
+    /// The id is what lets a connection take its own subscription back when it
+    /// ends. Without one the only way a subscriber left was a broadcast
+    /// failing to reach it, so a client that hung up kept its entry, and the
+    /// thread pumping events to it stayed blocked on the channel holding that
+    /// socket open, until something somewhere raised an event.
+    pub fn subscribe(&mut self) -> (u64, Receiver<Event>) {
         let (sender, receiver) = mpsc::channel();
-        self.subscribers.push(sender);
-        receiver
+        let id = self.next_subscriber_id;
+        self.next_subscriber_id += 1;
+        self.subscribers.push((id, sender));
+        (id, receiver)
+    }
+
+    /// Drops these registrations, whether or not anything is being broadcast.
+    ///
+    /// Dropping the sender ends the `for event in receiver` in the pump thread,
+    /// which is what closes the socket and reclaims the thread.
+    pub fn unsubscribe(&mut self, ids: &[u64]) {
+        self.subscribers.retain(|(id, _)| !ids.contains(id));
     }
 
     /// Sends an event to every live subscriber, dropping closed ones.
     fn broadcast(&mut self, event: Event) {
         self.subscribers
-            .retain(|subscriber| subscriber.send(event.clone()).is_ok());
+            .retain(|(_, subscriber)| subscriber.send(event.clone()).is_ok());
     }
 
     #[cfg(test)]
@@ -2358,8 +2376,8 @@ mod subscriber_tests {
     #[test]
     fn broadcasting_drops_subscribers_that_went_away() {
         let mut service = service("subscriber-prune");
-        let live = service.subscribe();
-        let gone = service.subscribe();
+        let (_, live) = service.subscribe();
+        let (_, gone) = service.subscribe();
         assert_eq!(service.subscriber_count_for_test(), 2);
 
         drop(gone);
@@ -2374,8 +2392,8 @@ mod subscriber_tests {
     #[test]
     fn every_live_subscriber_receives_the_event() {
         let mut service = service("subscriber-fanout");
-        let first = service.subscribe();
-        let second = service.subscribe();
+        let (_, first) = service.subscribe();
+        let (_, second) = service.subscribe();
 
         service.broadcast_for_test(Event::RequestFinished {
             request_id: "request-1".into(),
