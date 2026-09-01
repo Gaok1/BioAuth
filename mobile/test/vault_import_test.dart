@@ -125,6 +125,37 @@ void main() {
       expect(preview.items.single.secret, 'hunter2');
     });
 
+    /// A password is not text to tidy. One that begins or ends with a space is
+    /// a password, and an importer that strips it hands back something that no
+    /// longer logs in -- right after the user migrated away from the manager
+    /// that still had the original. The name and the username are still
+    /// trimmed, because a stray space there is a spreadsheet artefact.
+    test('a secret keeps the spaces it was exported with', () async {
+      final preview = await parseVaultImport(
+        bytes(
+          'name,username,password\n'
+          '"  Banco  ","  alice  ","  hunter2  "\n',
+        ),
+      );
+
+      expect(preview.rejections, isEmpty);
+      expect(preview.items.single.name, 'Banco');
+      expect(preview.items.single.username, 'alice');
+      expect(preview.items.single.secret, '  hunter2  ');
+    });
+
+    /// The other half of it: whether a cell counts as holding a secret is
+    /// still asked of the trimmed value, so a column of spaces is still an
+    /// empty one and is still refused rather than stored as a password.
+    test('a password cell holding only spaces is still no password', () async {
+      final preview = await parseVaultImport(
+        bytes('name,username,password\nBanco,alice,"   "\n'),
+      );
+
+      expect(preview.items, isEmpty);
+      expect(preview.rejections.single.reason, contains('sem senha'));
+    });
+
     test('reads the plain column names other managers use', () async {
       final preview = await parseVaultImport(
         bytes(

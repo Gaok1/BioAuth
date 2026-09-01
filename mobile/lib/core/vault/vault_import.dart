@@ -296,10 +296,27 @@ VaultImportPreview _parseCsv(String text) {
   for (var index = 1; index < rows.length; index++) {
     final row = index + 1;
     final cells = rows[index];
+    // Trimmed, for matching a name and for deciding whether a cell holds
+    // anything at all.
     String at(String field) {
       final column = header[field];
       if (column == null || column >= cells.length) return '';
       return cells[column].toString().trim();
+    }
+
+    // Untrimmed, for the one value that is not ours to tidy. A password may
+    // legitimately begin or end with a space, and a manager that exports one
+    // is not making a mistake. Trimming it here returned a password that no
+    // longer works -- silently, and at the exact moment the user has just
+    // migrated away from the product that still held the original. The same
+    // care is already taken one function up, where `dynamicTyping` is off so
+    // that "0123" does not become the number 123; this is the other half of
+    // it. Bitwarden's JSON path never trimmed the secret, so this is also the
+    // two importers finally agreeing about the same password.
+    String verbatim(String field) {
+      final column = header[field];
+      if (column == null || column >= cells.length) return '';
+      return cells[column].toString();
     }
 
     final name = at('name');
@@ -314,12 +331,23 @@ VaultImportPreview _parseCsv(String text) {
     // as rejections would bury the real ones.
     if (name.isEmpty && password.isEmpty && notes.isEmpty) continue;
 
+    // Whether there *is* a secret stays a question about the trimmed cell -- a
+    // cell holding three spaces is an empty one, and is rejected as such, the
+    // same as before. Only once it counts as present is the cell stored as it
+    // was written.
+    final present = isNote ? notes.isNotEmpty : password.isNotEmpty;
+    final secret = !present
+        ? ''
+        : isNote
+        ? verbatim('notes')
+        : verbatim('secret');
+
     final rejection = _validate(
       row: row,
       name: name,
       username: isNote ? '' : at('username'),
       uri: isNote ? '' : at('uri'),
-      secret: isNote ? notes : password,
+      secret: secret,
     );
     if (rejection != null) {
       rejections.add(rejection);
@@ -332,7 +360,7 @@ VaultImportPreview _parseCsv(String text) {
         name: name,
         username: isNote ? '' : at('username'),
         uri: isNote ? '' : at('uri'),
-        secret: isNote ? notes : password,
+        secret: secret,
       ),
     );
   }
