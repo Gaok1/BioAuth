@@ -22,6 +22,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/protocol/application_frame.dart';
 import 'package:phone_auth/core/protocol/vault_payloads.dart' as wire;
 
+import 'support/property_config.dart';
+
 typedef Decoder = void Function(Uint8List bytes);
 
 void main() {
@@ -85,9 +87,11 @@ void main() {
 
   test('no wire decoder throws anything but FormatException', () {
     // Seeded, so a failure is a failure somebody else can reproduce from the
-    // name of this test alone.
-    final random = Random(20260901);
-    for (var round = 0; round < 4096; round++) {
+    // name of this test alone -- and overridable, so the one sequence this
+    // seed walks is not the only sequence anybody ever tries. See
+    // `support/property_config.dart`.
+    final random = propertyRandom(20260901);
+    for (var round = 0; round < propertyRounds(4096); round++) {
       final bytes = Uint8List.fromList(
         List.generate(random.nextInt(128), (_) => random.nextInt(256)),
       );
@@ -101,8 +105,8 @@ void main() {
   test(
     'no wire decoder throws anything but FormatException on CBOR-ish bytes',
     () {
-      final random = Random(20260902);
-      for (var round = 0; round < 4096; round++) {
+      final random = propertyRandom(20260902);
+      for (var round = 0; round < propertyRounds(4096); round++) {
         final bytes = plausible(random);
         for (final entry in decoders.entries) {
           onlyFormatExceptions(entry.key, entry.value, bytes);

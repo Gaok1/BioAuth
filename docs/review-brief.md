@@ -94,11 +94,17 @@ cd desktop && cargo test --workspace
 cd desktop && PROPTEST_CASES=65536 cargo test -p phone-auth-protocol --test decoder_properties
 cd desktop && PROPTEST_CASES=4096 cargo test -p phone-auth-locker --test container_properties
 cd mobile && flutter test
+cd mobile && PROPERTY_SEED=12345 PROPERTY_ROUNDS=20000 flutter test test/wire_decoder_properties_test.dart test/vault_import_properties_test.dart
 cd desktop/ui && npm test
 ```
 
 The property suites take their case count from the environment, so a reviewer
 can turn them up far past what CI runs and see whether anything falls out.
+
+The two hand-rolled Dart ones take a seed as well, because they are not
+proptest and do not draw one: left alone they walk the same sequence of inputs
+on every run, which is one sequence covered thoroughly and everything else not
+at all. Sweeping seeds is the part of the Rust suites they were missing.
 
 That second line is the one worth running, and it did not work until recently.
 Several of those strategies build a value, encode it and keep only the ones

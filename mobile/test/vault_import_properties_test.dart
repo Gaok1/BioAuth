@@ -19,11 +19,12 @@
 library;
 
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/vault/vault_import.dart';
+
+import 'support/property_config.dart';
 
 /// The store's own limits, restated here on purpose. If they drift apart this
 /// file fails, which is the point: the parser promises what the store demands.
@@ -36,7 +37,12 @@ Uint8List bytes(String text) => Uint8List.fromList(utf8.encode(text));
 
 /// Fixed seed: a property test that fails only sometimes is a property test
 /// nobody trusts. A counterexample found here is reproducible from the seed.
-final _random = Random(0x5eed);
+///
+/// Fixed, not immovable. One seed walks one sequence of inputs, and walked
+/// only that one on every run since this file was written; see
+/// `support/property_config.dart` for how to sweep others without changing
+/// what an ordinary `flutter test` does.
+final _random = propertyRandom(0x5eed);
 
 String _fuzzText(int maxLength) {
   // Quotes, separators, backslashes, newlines, accented letters and a NUL:
@@ -62,7 +68,7 @@ void main() {
   test(
     'arbitrary bytes never escape as anything but an import failure',
     () async {
-      for (var attempt = 0; attempt < 400; attempt++) {
+      for (var attempt = 0; attempt < propertyRounds(400); attempt++) {
         final input = Uint8List.fromList(
           List.generate(_random.nextInt(256), (_) => _random.nextInt(256)),
         );
@@ -80,7 +86,7 @@ void main() {
   test(
     'arbitrary text never escapes as anything but an import failure',
     () async {
-      for (var attempt = 0; attempt < 400; attempt++) {
+      for (var attempt = 0; attempt < propertyRounds(400); attempt++) {
         try {
           await parseVaultImport(bytes(_fuzzText(300)));
         } on VaultImportException {
@@ -97,7 +103,7 @@ void main() {
   test(
     'plausible CSV never escapes, and never emits an unstorable item',
     () async {
-      for (var attempt = 0; attempt < 400; attempt++) {
+      for (var attempt = 0; attempt < propertyRounds(400); attempt++) {
         final rows = StringBuffer('name,username,password,url,notes\n');
         for (var row = 0; row < _random.nextInt(6); row++) {
           rows.writeln(
@@ -137,7 +143,7 @@ void main() {
   test(
     'plausible Bitwarden JSON never escapes, and never emits an unstorable item',
     () async {
-      for (var attempt = 0; attempt < 300; attempt++) {
+      for (var attempt = 0; attempt < propertyRounds(300); attempt++) {
         final items = List.generate(_random.nextInt(5), (_) {
           // Types outside 1 and 2 exercise the rejection path; a missing
           // `login` object on a type 1 exercises the other one.
