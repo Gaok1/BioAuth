@@ -22,9 +22,23 @@ import io.flutter.plugin.common.MethodChannel
  * -- and a callback arriving after its own deadline is exactly the case that
  * would do it.
  *
+ * "Once" has to hold across threads, which is why the claim on the pending
+ * result is taken under a lock. The two racers are the two ends of that
+ * sentence: Android delivers a GATT callback on a binder thread, and the
+ * deadline runs on the main looper. Reading the field, finding it set and
+ * clearing it was three steps, so both could find it set and both could reply
+ * -- the very crash this settles once to avoid, reachable precisely when a
+ * slow link answers as its deadline fires. Without the lock a binder thread
+ * was also free never to observe the main thread's clear at all, and settle
+ * something already reported as timed out.
+ *
+ * The result is handed to `reply` outside the lock: nothing here should hold
+ * one while calling into Flutter.
+ *
  * The deadline is scheduled through the owner's handler rather than a timer of
  * its own, so it runs where that handler runs: the main looper, for the
- * controller that owns these.
+ * controller that owns these. `Handler.postDelayed` and `removeCallbacks` are
+ * themselves safe to call from either thread.
  */
 internal class PendingGattOp(
     private val errorCode: String,
@@ -33,6 +47,7 @@ internal class PendingGattOp(
     private val unschedule: (Runnable) -> Unit,
     private val onExpired: () -> Unit = {},
 ) {
+    private val lock = Any()
     private var pending: MethodChannel.Result? = null
 
     private val expiry = Runnable {
@@ -42,12 +57,14 @@ internal class PendingGattOp(
     }
 
     val isActive: Boolean
-        get() = pending != null
+        get() = synchronized(lock) { pending != null }
 
     /** Takes ownership of [result]. False if one is already in flight. */
     fun arm(result: MethodChannel.Result): Boolean {
-        if (pending != null) return false
-        pending = result
+        synchronized(lock) {
+            if (pending != null) return false
+            pending = result
+        }
         schedule(expiry, timeoutMs)
         return true
     }
@@ -70,8 +87,12 @@ internal class PendingGattOp(
         settle { it.error(code, message, null) }
 
     private fun take(): MethodChannel.Result? {
-        val result = pending ?: return null
-        pending = null
+        val result: MethodChannel.Result?
+        synchronized(lock) {
+            result = pending
+            pending = null
+        }
+        if (result == null) return null
         unschedule(expiry)
         return result
     }

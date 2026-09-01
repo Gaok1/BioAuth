@@ -39,8 +39,23 @@ internal class BleController(
     private val main = Handler(Looper.getMainLooper())
     private var scanSink: EventChannel.EventSink? = null
     private var eventSink: EventChannel.EventSink? = null
+    // Written from the GATT callback thread and read from the main one, so
+    // both need a happens-before edge of their own; `closeGatt` runs on either.
+    @Volatile
     private var gatt: BluetoothGatt? = null
+
+    @Volatile
     private var requestCharacteristic: BluetoothGattCharacteristic? = null
+
+    // Claimed and released under [connectLock], for the reason spelled out in
+    // [PendingGattOp]: connecting is settled from four places across two
+    // threads -- the deadline on the main looper, and the connection-state,
+    // service-discovery and descriptor-write callbacks on a binder thread --
+    // and reading the field, finding it set and clearing it was three steps.
+    // Two of them arriving together replied twice to one `MethodChannel`
+    // request, which throws, and the deadline firing as the link finally
+    // answers is exactly when they arrive together.
+    private val connectLock = Any()
     private var pendingConnect: MethodChannel.Result? = null
 
     // Both carry a deadline. Only connecting had one, and it is the operations
@@ -67,10 +82,15 @@ internal class BleController(
     private var expectedRequestCharacteristic: UUID? = null
     private var expectedResponseCharacteristic: UUID? = null
     private val connectTimeout = Runnable {
-        if (pendingConnect != null) {
-            failConnect("BLE connection timed out")
-            closeGatt(emitDisconnected = true)
-        }
+        // Only tears the link down if this deadline is what actually claimed
+        // the reply. Asking whether one was pending and then failing it was
+        // two steps, and a connection completing in between them left this
+        // closing a GATT that had just come up -- `removeCallbacks` cannot
+        // recall a runnable that is already running, and the callback that
+        // completed it runs on a binder thread.
+        val result = takeConnect() ?: return@Runnable
+        main.post { result.error("connection_failed", "BLE connection timed out", null) }
+        closeGatt(emitDisconnected = true)
     }
 
     init {
@@ -167,7 +187,10 @@ internal class BleController(
             return
         }
 
-        pendingConnect = result
+        if (!armConnect(result)) {
+            result.error("operation_in_progress", "A BLE connection is already active", null)
+            return
+        }
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         if (gatt == null) {
             failConnect("Unable to start BLE connection")
@@ -291,7 +314,10 @@ internal class BleController(
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
                 if (descriptor.uuid != CLIENT_CONFIGURATION) return
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    finishResult(pendingConnect) { pendingConnect = null }
+                    takeConnect()?.let { result ->
+                        main.removeCallbacks(connectTimeout)
+                        main.post { result.success(null) }
+                    }
                 } else {
                     failConnect("Unable to enable BLE notifications")
                 }
@@ -341,26 +367,33 @@ internal class BleController(
             }
         }
 
+    /** Claims the connect reply, or false when one is already in flight. */
+    private fun armConnect(result: MethodChannel.Result): Boolean =
+        synchronized(connectLock) {
+            if (pendingConnect != null) return false
+            pendingConnect = result
+            true
+        }
+
+    /** The connect reply, to exactly one caller. */
+    private fun takeConnect(): MethodChannel.Result? =
+        synchronized(connectLock) {
+            val result = pendingConnect
+            pendingConnect = null
+            result
+        }
+
     private fun failConnect(message: String) {
-        val result = pendingConnect ?: return
-        pendingConnect = null
+        val result = takeConnect() ?: return
         main.removeCallbacks(connectTimeout)
         main.post { result.error("connection_failed", message, null) }
     }
 
-    private fun finishResult(result: MethodChannel.Result?, clear: () -> Unit) {
-        if (result == null) return
-        clear()
-        main.removeCallbacks(connectTimeout)
-        main.post { result.success(null) }
-    }
-
     private fun closeGatt(emitDisconnected: Boolean) {
         main.removeCallbacks(connectTimeout)
-        pendingConnect?.let {
-            main.post { it.error("disconnected", "BLE disconnected", null) }
+        takeConnect()?.let { result ->
+            main.post { result.error("disconnected", "BLE disconnected", null) }
         }
-        pendingConnect = null
         val current = gatt
         gatt = null
         requestCharacteristic = null

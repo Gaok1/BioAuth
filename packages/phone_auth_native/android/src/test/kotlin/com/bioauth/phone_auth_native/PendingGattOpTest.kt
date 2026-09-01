@@ -145,4 +145,43 @@ internal class PendingGattOpTest {
         verify(result).error("disconnected", "BLE disconnected", null)
         assertFalse(handler.isArmed)
     }
+
+    @Test
+    fun twoThreadsSettlingTogetherStillSettleOnce() {
+        // The real pairing: Android delivers the GATT callback on a binder
+        // thread while the deadline runs on the main looper, and the moment
+        // they collide is a slow link answering just as its time runs out.
+        // Finding the field set and then clearing it was three steps, so both
+        // could find it set, both could reply, and replying twice to one
+        // `MethodChannel` request throws. Run enough times to catch a window
+        // that is only a few instructions wide.
+        val threads = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            repeat(2000) {
+                val operation = PendingGattOp(
+                    errorCode = "write_failed",
+                    timeoutMs = 1,
+                    schedule = { _, _ -> },
+                    unschedule = { },
+                )
+                val settled = java.util.concurrent.atomic.AtomicInteger()
+                operation.arm(mock(MethodChannel.Result::class.java))
+
+                val gate = java.util.concurrent.CountDownLatch(1)
+                val done = java.util.concurrent.CountDownLatch(2)
+                repeat(2) {
+                    threads.execute {
+                        gate.await()
+                        if (operation.settle { settled.incrementAndGet() }) Unit
+                        done.countDown()
+                    }
+                }
+                gate.countDown()
+                assertTrue(done.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals(1, settled.get())
+            }
+        } finally {
+            threads.shutdownNow()
+        }
+    }
 }
