@@ -98,6 +98,17 @@ internal object VaultStoreData {
 
     fun create(items: List<VaultItem>, input: VaultItemInput, nowMs: Long, id: String = UUID.randomUUID().toString()): Pair<List<VaultItem>, VaultItem> {
         validateText("id", id, 64, allowEmpty = false)
+        // The same ceiling a restore is held to, and for the same reason. Only
+        // `restore` checked it, so the ordinary way items arrive -- one at a
+        // time, from the phone or from a desktop asking -- could walk straight
+        // past it. What waits on the other side is not a slow vault: the Dart
+        // reader refuses a listing longer than this and the screen shows its
+        // generic failure, so the vault simply stops opening. A backup taken
+        // past the line will not restore either, which is the worst version of
+        // it: a vault you built and cannot put back.
+        if (items.size >= MAX_ITEMS) {
+            throw VaultStoreFailure("vault_full", "The vault holds as many items as it can")
+        }
         if (items.any { it.id == id }) throw VaultStoreFailure("id_conflict", "Vault item id already exists")
         val created = input.item(id, revision = 1, nowMs)
         return (items + created) to created

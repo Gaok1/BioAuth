@@ -231,6 +231,27 @@ class VaultStoreTest {
         assertEquals(7, restored.single().updatedAtMs)
     }
 
+    /**
+     * The ceiling is about what the vault can still open, not about where the
+     * items came from, so the one-at-a-time path has to honour it too.
+     */
+    @Test
+    fun `a create past the ceiling is refused the way a restore is`() {
+        val full = List(VaultStoreData.MAX_ITEMS) {
+            VaultItem("id-$it", 1, 0, "n$it", "", "", "s", 1)
+        }
+
+        val failure = assertFailsWith<VaultStoreFailure> {
+            VaultStoreData.create(full, input(secret = "s"), nowMs = 1)
+        }
+        assertEquals("vault_full", failure.code)
+
+        // One below it still takes an item, or the vault would be short of the
+        // number it says it holds.
+        val (grown, _) = VaultStoreData.create(full.dropLast(1), input(secret = "s"), nowMs = 1)
+        assertEquals(VaultStoreData.MAX_ITEMS, grown.size)
+    }
+
     @Test
     fun `a restore that would overflow the vault is refused whole`() {
         val incoming = List(VaultStoreData.MAX_ITEMS + 1) { input(secret = "s").copy(name = "n$it") }
