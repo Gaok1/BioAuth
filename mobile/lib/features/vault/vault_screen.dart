@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/vault/totp.dart';
+import '../../l10n/app_strings.dart';
 import 'vault_backup_screen.dart';
 import 'vault_controller.dart';
 import 'vault_store.dart';
@@ -20,6 +21,9 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
       widget.controller ?? VaultController();
   bool _shielded = false;
 
+  /// The screen builds in several pieces and each of them needs the words.
+  AppStrings get _strings => AppStrings.of(context);
+
   @override
   void initState() {
     super.initState();
@@ -33,8 +37,8 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
   /// `inactive` means the app lost focus while staying on screen: the
   /// biometric prompt, the notification shade, a permission dialog. Raising
   /// the biometric prompt *is* how the vault unlocks, so locking here meant
-  /// tapping "Desbloquear" locked the vault, and the user authenticated their
-  /// way back to "O cofre está bloqueado". Same for revealing an item. The
+  /// tapping unlock locked the vault, and the user authenticated their way
+  /// back to a locked vault. Same for revealing an item. The
   /// contents are still covered, because iOS takes its app-switcher snapshot
   /// during `inactive` — but covering and forgetting are not the same act.
   ///
@@ -79,8 +83,8 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
   /// `IndexedStack` in [HomeShell] it always is: every tab, from launch,
   /// whether or not the vault had ever been opened. Under an active media
   /// projection -- a screen recording, a cast, `scrcpy` or any other mirror --
-  /// that blacked out the entire app permanently, Dispositivos and Ajustes
-  /// along with it, with nothing on screen to say why.
+  /// that blacked out the entire app permanently, every other tab along with
+  /// it, with nothing on screen to say why.
   ///
   /// Tied to the lock instead, which is when secrets are actually on screen. A
   /// locked vault hides nothing worth hiding.
@@ -98,21 +102,21 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
           ? const ColoredBox(color: Colors.black, child: SizedBox.expand())
           : Scaffold(
               appBar: AppBar(
-                title: const Text('Cofre'),
+                title: Text(_strings.tabVault),
                 actions: [
                   if (!controller.locked) ...[
                     IconButton(
-                      tooltip: 'Atualizar cofre',
+                      tooltip: _strings.vaultRefresh,
                       onPressed: controller.busy ? null : controller.refresh,
                       icon: const Icon(Icons.refresh),
                     ),
                     IconButton(
-                      tooltip: 'Backup do cofre',
+                      tooltip: _strings.vaultBackup,
                       onPressed: _backup,
                       icon: const Icon(Icons.backup_outlined),
                     ),
                     IconButton(
-                      tooltip: 'Bloquear cofre',
+                      tooltip: _strings.vaultLock,
                       onPressed: controller.lock,
                       icon: const Icon(Icons.lock_outline),
                     ),
@@ -122,7 +126,7 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
               floatingActionButton: controller.locked
                   ? null
                   : FloatingActionButton(
-                      tooltip: 'Novo item',
+                      tooltip: _strings.vaultNewItem,
                       onPressed: () => _edit(),
                       child: const Icon(Icons.add),
                     ),
@@ -158,12 +162,10 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
         children: [
           const Icon(Icons.lock, size: 56),
           const SizedBox(height: 16),
-          const Text(
-            'O cofre está bloqueado',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Text(
+            _strings.vaultLocked,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 8),
-          const Text('Use sua biometria para abrir os itens deste aparelho.'),
           const SizedBox(height: 20),
           // Hidden once the failure is one no unlock can fix. Leaving the
           // button there invites the user to keep tapping something that
@@ -172,28 +174,23 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
             FilledButton.icon(
               onPressed: controller.busy ? null : controller.unlock,
               icon: const Icon(Icons.fingerprint),
-              label: const Text('Desbloquear'),
+              label: Text(_strings.vaultUnlock),
             ),
-          if (controller.error case final message?) ...[
+          if (controller.failure case final failure?) ...[
             const SizedBox(height: 12),
             Text(
-              message,
+              _strings.vaultFailure(failure),
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
           if (controller.canDiscard) ...[
             const SizedBox(height: 20),
-            const Text(
-              'Descartar apaga o cofre deste telefone e começa vazio. Só faça '
-              'isso se você tiver um backup — ou se aceitar perder o que '
-              'estava aqui, já que ninguém mais consegue abrir.',
-              textAlign: TextAlign.center,
-            ),
+            Text(_strings.vaultDiscardNote, textAlign: TextAlign.center),
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: controller.busy ? null : _discard,
               icon: const Icon(Icons.delete_forever_outlined),
-              label: const Text('Descartar e começar de novo'),
+              label: Text(_strings.vaultDiscardAndRestart),
             ),
           ],
         ],
@@ -212,22 +209,16 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
         // nothing back that a backup could not restore -- which is the whole
         // reason it is safe to press.
         scrollable: true,
-        title: const Text('Descartar o cofre?'),
-        content: const Text(
-          'Todos os itens guardados neste telefone são apagados, junto com a '
-          'chave. Isso não tem volta.\n\n'
-          'O conteúdo já está inacessível — descartar não perde nada que '
-          'ainda desse para recuperar aqui, mas também não recupera nada. Se '
-          'você tem um backup, poderá restaurá-lo depois.',
-        ),
+        title: Text(_strings.vaultDiscardTitle),
+        content: Text(_strings.vaultDiscardBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancelar'),
+            child: Text(_strings.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Descartar'),
+            child: Text(_strings.vaultDiscard),
           ),
         ],
       ),
@@ -248,13 +239,16 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
         child: TextField(
           onChanged: controller.search,
           textInputAction: TextInputAction.search,
-          decoration: const InputDecoration(
-            hintText: 'Buscar nome, usuário ou endereço',
-            prefixIcon: Icon(Icons.search),
-            border: OutlineInputBorder(
+          decoration: InputDecoration(
+            hintText: _strings.vaultSearchHint,
+            prefixIcon: const Icon(Icons.search),
+            border: const OutlineInputBorder(
               borderRadius: BorderRadius.all(Radius.circular(28)),
             ),
-            contentPadding: EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 14,
+              horizontal: 16,
+            ),
           ),
         ),
       ),
@@ -268,24 +262,19 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
             children: [
               const Icon(Icons.sync_problem_outlined, size: 20),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Um computador gravou no cofre desde que ele foi '
-                  'aberto.',
-                ),
-              ),
+              Expanded(child: Text(_strings.vaultStale)),
               TextButton(
                 onPressed: controller.busy ? null : controller.refresh,
-                child: const Text('Atualizar'),
+                child: Text(_strings.vaultRefreshAction),
               ),
             ],
           ),
         ),
-      if (controller.error case final message?)
+      if (controller.failure case final failure?)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
-            message,
+            _strings.vaultFailure(failure),
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ),
@@ -304,7 +293,7 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 8),
-              Expanded(child: Text(message)),
+              Expanded(child: Text(_strings.vaultNotice(message))),
             ],
           ),
         ),
@@ -316,9 +305,8 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
                   padding: const EdgeInsets.all(24),
                   child: Text(
                     controller.isEmpty
-                        ? 'O cofre está vazio. Toque em + para guardar o '
-                              'primeiro item.'
-                        : 'Nenhum item corresponde à busca.',
+                        ? _strings.vaultEmpty
+                        : _strings.vaultNoMatch,
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -350,8 +338,8 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
         children: [
           IconButton(
             tooltip: secret == null && code == null
-                ? 'Revelar com biometria'
-                : 'Ocultar',
+                ? _strings.vaultReveal
+                : _strings.vaultHide,
             onPressed: controller.busy
                 ? null
                 : secret == null && code == null
@@ -365,15 +353,15 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             tooltip: controller.isFavourite(item.id)
-                ? 'Tirar dos favoritos'
-                : 'Marcar como favorito',
+                ? _strings.vaultUnfavourite
+                : _strings.vaultFavourite,
             onPressed: () => controller.toggleFavourite(item.id),
             icon: Icon(
               controller.isFavourite(item.id) ? Icons.star : Icons.star_border,
             ),
           ),
           IconButton(
-            tooltip: 'Copiar com biometria',
+            tooltip: _strings.vaultCopy,
             onPressed: controller.busy ? null : () => controller.copy(item),
             icon: const Icon(Icons.copy),
           ),
@@ -382,9 +370,15 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
               if (action == _ItemAction.edit) _edit(item);
               if (action == _ItemAction.delete) _delete(item);
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: _ItemAction.edit, child: Text('Editar')),
-              PopupMenuItem(value: _ItemAction.delete, child: Text('Excluir')),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: _ItemAction.edit,
+                child: Text(_strings.vaultEdit),
+              ),
+              PopupMenuItem(
+                value: _ItemAction.delete,
+                child: Text(_strings.vaultDelete),
+              ),
             ],
           ),
         ],
@@ -419,16 +413,16 @@ class _VaultScreenState extends State<VaultScreen> with WidgetsBindingObserver {
       builder: (context) => AlertDialog(
         // The name is the user's, so its length is not ours to assume.
         scrollable: true,
-        title: const Text('Excluir item?'),
-        content: Text('“${item.name}” será removido do cofre.'),
+        title: Text(_strings.vaultDeleteTitle),
+        content: Text(_strings.vaultDeleteBody(item.name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(_strings.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Excluir'),
+            child: Text(_strings.vaultDelete),
           ),
         ],
       ),
@@ -466,115 +460,122 @@ class _VaultItemDialogState extends State<_VaultItemDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.current == null ? 'Novo item' : 'Editar item'),
-    content: Form(
-      key: _form,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<VaultItemKind>(
-              initialValue: _kind,
-              decoration: const InputDecoration(labelText: 'Tipo'),
-              items: const [
-                DropdownMenuItem(
-                  value: VaultItemKind.login,
-                  child: Text('Login'),
-                ),
-                DropdownMenuItem(
-                  value: VaultItemKind.note,
-                  child: Text('Nota segura'),
-                ),
-                DropdownMenuItem(
-                  value: VaultItemKind.totp,
-                  child: Text('Código TOTP'),
-                ),
-              ],
-              onChanged: (value) => setState(() => _kind = value!),
-            ),
-            TextFormField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Nome'),
-              maxLength: 255,
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'Informe um nome'
-                  : null,
-            ),
-            TextFormField(
-              controller: _username,
-              decoration: const InputDecoration(labelText: 'Usuário'),
-              maxLength: 255,
-            ),
-            TextFormField(
-              controller: _uri,
-              decoration: const InputDecoration(labelText: 'Endereço'),
-              maxLength: 1024,
-            ),
-            TextFormField(
-              controller: _secret,
-              decoration: InputDecoration(
-                labelText: switch ((_kind, widget.current)) {
-                  (VaultItemKind.totp, _) => 'Chave TOTP ou otpauth://',
-                  (_, null) => 'Segredo',
-                  _ => 'Novo segredo',
-                },
-                helperText: _kind == VaultItemKind.totp
-                    ? 'Cole a chave que o site mostrou, ou o link do QR code.'
+  Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
+    return AlertDialog(
+      title: Text(
+        widget.current == null ? strings.vaultNewItem : strings.vaultEditItem,
+      ),
+      content: Form(
+        key: _form,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<VaultItemKind>(
+                initialValue: _kind,
+                decoration: InputDecoration(labelText: strings.vaultKind),
+                items: [
+                  DropdownMenuItem(
+                    value: VaultItemKind.login,
+                    child: Text(strings.vaultKindLogin),
+                  ),
+                  DropdownMenuItem(
+                    value: VaultItemKind.note,
+                    child: Text(strings.vaultKindNote),
+                  ),
+                  DropdownMenuItem(
+                    value: VaultItemKind.totp,
+                    child: Text(strings.vaultKindTotp),
+                  ),
+                ],
+                onChanged: (value) => setState(() => _kind = value!),
+              ),
+              TextFormField(
+                controller: _name,
+                decoration: InputDecoration(labelText: strings.vaultName),
+                maxLength: 255,
+                validator: (value) => value == null || value.trim().isEmpty
+                    ? strings.vaultNameRequired
                     : null,
               ),
-              // A TOTP seed is pasted from another screen and read back to
-              // check it, so hiding it while it is being entered only makes a
-              // typo harder to find. It is hidden everywhere afterwards.
-              obscureText: _kind != VaultItemKind.totp,
-              maxLength: 4096,
-              // Rejected here rather than at save time. A seed that will not
-              // parse becomes an item that shows an error instead of a code,
-              // and by then the user has left the form that could fix it.
-              validator: (value) {
-                if (value == null || value.isEmpty) return 'Informe o segredo';
-                if (_kind != VaultItemKind.totp) return null;
-                try {
-                  _totpSeed(value);
-                  return null;
-                } on TotpException catch (failure) {
-                  return failure.message;
-                }
-              },
-            ),
-          ],
+              TextFormField(
+                controller: _username,
+                decoration: InputDecoration(labelText: strings.requestUser),
+                maxLength: 255,
+              ),
+              TextFormField(
+                controller: _uri,
+                decoration: InputDecoration(labelText: strings.vaultAddress),
+                maxLength: 1024,
+              ),
+              TextFormField(
+                controller: _secret,
+                decoration: InputDecoration(
+                  labelText: switch ((_kind, widget.current)) {
+                    (VaultItemKind.totp, _) => strings.vaultTotpKey,
+                    (_, null) => strings.vaultSecret,
+                    _ => strings.vaultNewSecret,
+                  },
+                  helperText: _kind == VaultItemKind.totp
+                      ? strings.vaultTotpHint
+                      : null,
+                ),
+                // A TOTP seed is pasted from another screen and read back to
+                // check it, so hiding it while it is being entered only makes
+                // a typo harder to find. It is hidden everywhere afterwards.
+                obscureText: _kind != VaultItemKind.totp,
+                maxLength: 4096,
+                // Rejected here rather than at save time. A seed that will not
+                // parse becomes an item that shows an error instead of a code,
+                // and by then the user has left the form that could fix it.
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return strings.vaultSecretRequired;
+                  }
+                  if (_kind != VaultItemKind.totp) return null;
+                  try {
+                    _totpSeed(value);
+                    return null;
+                  } on TotpException catch (failure) {
+                    return strings.totpProblem(failure.problem);
+                  }
+                },
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Cancelar'),
-      ),
-      FilledButton(
-        onPressed: () {
-          if (!_form.currentState!.validate()) return;
-          Navigator.pop(
-            context,
-            VaultItemInput(
-              kind: _kind,
-              name: _name.text.trim(),
-              username: _username.text,
-              uri: _uri.text,
-              // A TOTP item stores the seed, never the `otpauth://` URI it may
-              // have been pasted as. That URI also carries a label and an
-              // issuer, and keeping them would give the item two names that
-              // eventually disagree.
-              secret: _kind == VaultItemKind.totp
-                  ? _totpSeed(_secret.text)
-                  : _secret.text,
-            ),
-          );
-        },
-        child: const Text('Salvar'),
-      ),
-    ],
-  );
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(strings.cancel),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!_form.currentState!.validate()) return;
+            Navigator.pop(
+              context,
+              VaultItemInput(
+                kind: _kind,
+                name: _name.text.trim(),
+                username: _username.text,
+                uri: _uri.text,
+                // A TOTP item stores the seed, never the `otpauth://` URI it
+                // may have been pasted as. That URI also carries a label and
+                // an issuer, and keeping them would give the item two names
+                // that eventually disagree.
+                secret: _kind == VaultItemKind.totp
+                    ? _totpSeed(_secret.text)
+                    : _secret.text,
+              ),
+            );
+          },
+          child: Text(strings.save),
+        ),
+      ],
+    );
+  }
 }
 
 /// The six digits and the seconds they have left.

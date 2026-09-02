@@ -203,7 +203,7 @@ void main() {
     unawaited(approval.confirm(request).then((value) => answer = value));
     await tester.pumpAndSettle();
     expect(approval.pendingRequestIds, contains('request-1'));
-    expect(find.text('Recusar'), findsOneWidget, reason: 'the sheet is up');
+    expect(find.text('Refuse'), findsOneWidget, reason: 'the sheet is up');
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
@@ -231,7 +231,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
-    expect(find.text('Recusar'), findsNothing);
+    expect(find.text('Refuse'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);

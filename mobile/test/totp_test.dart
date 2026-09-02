@@ -390,8 +390,7 @@ void main() {
       expect(copied, isNot(_seed));
       // The one item whose stored value and copied value are different things,
       // so it is the one the confirmation has to be explicit about.
-      expect(controller.notice, contains('Código'));
-      expect(controller.notice, contains('não a semente'));
+      expect(controller.notice, isA<VaultCodeCopied>());
     });
 
     /// A seed that will not parse is a stored item that is wrong. Saying so
@@ -407,7 +406,7 @@ void main() {
       await controller.reveal(_totpItem());
 
       expect(controller.totpFor('one'), isNull);
-      expect(controller.error, contains('TOTP'));
+      expect(controller.failure, isA<VaultSeedFailure>());
     });
 
     /// There is one revealed code for the whole vault, and whichever item is

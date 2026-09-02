@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
+
 class RecoveryScreen extends StatelessWidget {
   const RecoveryScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Recuperação')),
+      appBar: AppBar(title: Text(strings.recoveryTitle)),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -17,21 +20,16 @@ class RecoveryScreen extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           Text(
-            'Perdeu o telefone?',
+            strings.recoveryLostPhone,
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Remova este telefone em cada computador pareado. Um novo aparelho '
-            'deve criar sua própria chave e ser pareado novamente.',
-          ),
+          Text(strings.recoveryBody),
           const SizedBox(height: 20),
-          const Card(
+          Card(
             child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Chaves privadas não são exportadas nem incluídas em backup.',
-              ),
+              padding: const EdgeInsets.all(16),
+              child: Text(strings.recoveryKeysNotExported),
             ),
           ),
         ],

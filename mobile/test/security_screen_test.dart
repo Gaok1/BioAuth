@@ -31,7 +31,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('StrongBox'), findsOneWidget);
-    expect(find.text('BIOMETRIC_STRONG disponível'), findsOneWidget);
-    expect(find.text('Serviço persistente ativo'), findsOneWidget);
+    expect(find.text('Available'), findsOneWidget);
+    expect(find.text('Running'), findsOneWidget);
   });
 }

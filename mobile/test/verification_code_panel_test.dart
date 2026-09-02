@@ -10,6 +10,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/core/protocol/enrolment.dart';
+import 'package:phone_auth/l10n/app_strings_en.dart';
 import 'package:phone_auth/shared/verification_code_panel.dart';
 
 void main() {
@@ -46,7 +47,9 @@ void main() {
       await pump(tester, purpose: purpose);
 
       expect(
-        find.textContaining('Esta credencial'),
+        find.textContaining(
+          const EnglishStrings().credentialPurposeNote(purpose),
+        ),
         findsOneWidget,
         reason: '$purpose says nothing about itself',
       );
@@ -58,9 +61,9 @@ void main() {
   testWidgets('an SSH pairing says it signs server logins', (tester) async {
     await pump(tester, purpose: CredentialPurpose.ssh);
 
-    expect(find.textContaining('logins SSH'), findsOneWidget);
+    expect(find.textContaining('SSH logins'), findsOneWidget);
     // And that approving the pairing is not approving the logins themselves.
-    expect(find.textContaining('digital'), findsOneWidget);
+    expect(find.textContaining('fingerprint'), findsOneWidget);
   });
 
   for (final brightness in Brightness.values) {

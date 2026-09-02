@@ -16,7 +16,7 @@ class PairingState {
     this.verificationCode,
     this.verifierId,
     this.purpose,
-    this.message,
+    this.problem,
   });
 
   const PairingState.idle() : this(stage: PairingStage.idle);
@@ -32,7 +32,9 @@ class PairingState {
   /// is the other half of the decision, and it is the half the user cannot
   /// work out from the screen otherwise.
   final CredentialPurpose? purpose;
-  final String? message;
+
+  /// Why the attempt failed, for [PairingStage.failed] only.
+  final PairingProblem? problem;
 
   bool get isBusy => stage == PairingStage.connecting;
 }
@@ -77,9 +79,9 @@ class PairingController extends Notifier<PairingState> {
         purpose: session.proposed.purpose,
       );
     } on PairingException catch (error) {
-      if (attemptId == _attemptId) _fail(error.message);
+      if (attemptId == _attemptId) _fail(error.problem);
     } on Object catch (error) {
-      if (attemptId == _attemptId) _fail(_readable(error));
+      if (attemptId == _attemptId) _fail(_problemOf(error));
     }
   }
 
@@ -103,10 +105,9 @@ class PairingController extends Notifier<PairingState> {
       state = PairingState(
         stage: PairingStage.paired,
         verifierId: session.proposed.verifierId,
-        message: 'Pareado com ${session.proposed.verifierId}.',
       );
     } on Object catch (error) {
-      if (attemptId == _attemptId) _fail(_readable(error));
+      if (attemptId == _attemptId) _fail(_problemOf(error));
     }
   }
 
@@ -128,25 +129,23 @@ class PairingController extends Notifier<PairingState> {
     }
   }
 
-  void _fail(String message) {
+  void _fail(PairingProblem problem) {
     _pending = null;
-    state = PairingState(stage: PairingStage.failed, message: message);
+    state = PairingState(stage: PairingStage.failed, problem: problem);
   }
 
-  /// Turns a socket or handshake failure into something worth reading.
+  /// Sorts a socket or handshake failure into one of the reasons the screen
+  /// can name.
   ///
   /// Deliberately vague about *which* check failed: the spec requires a
   /// signature mismatch not to report what did not match.
-  static String _readable(Object error) {
+  static PairingProblem _problemOf(Object error) {
     final text = error.toString();
     if (text.contains('SocketException') ||
         text.contains('Connection refused')) {
-      return 'Não foi possível conectar ao computador. '
-          'Confira se ele está na mesma rede.';
+      return PairingProblem.unreachable;
     }
-    if (text.contains('TimeoutException')) {
-      return 'O computador não respondeu a tempo.';
-    }
-    return 'O pareamento falhou. Gere um novo código no computador.';
+    if (text.contains('TimeoutException')) return PairingProblem.timedOut;
+    return PairingProblem.failed;
   }
 }

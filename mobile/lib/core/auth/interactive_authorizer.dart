@@ -67,9 +67,7 @@ class InteractiveAuthorizer
     if (consent == null) {
       // The session that carried this request is gone: it timed out, or the
       // desktop hung up. Nothing to sign against.
-      return Future.error(
-        StateError('Esta solicitação não está mais conectada'),
-      );
+      return Future.error(StateError('this request is no longer connected'));
     }
     // Created here rather than in [confirm], because this is the first moment
     // anyone waits on it. Creating it when the sheet went up meant a request

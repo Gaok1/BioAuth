@@ -76,7 +76,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Desbloquear'));
+      await tester.tap(find.text('Unlock'));
       await tester.pumpAndSettle();
 
       await checkGuidelines(tester);
@@ -99,7 +99,7 @@ void main() {
 
     for (final expected in [
       'Meu computador de trabalho', // which computer claims to be asking
-      'Copiar a senha de', // what it wants to do
+      'Copy the password of', // what it wants to do
       'Banco Exemplo', // which item
       'alice', // which account
       'banco.example.com', // where it belongs
@@ -113,7 +113,7 @@ void main() {
 
     // And the consequence, which is the part a user has no other way to know:
     // approving moves the password somewhere the phone stops controlling.
-    expect(find.textContaining('área de transferência'), findsWidgets);
+    expect(find.textContaining('clipboard'), findsWidgets);
   });
 
   /// Refusing must be reachable, not a dismiss gesture somebody has to guess.
@@ -122,8 +122,8 @@ void main() {
   testWidgets('the approval sheet has a labelled refusal', (tester) async {
     await pumpApprovalSheet(tester);
 
-    expect(find.widgetWithText(TextButton, 'Recusar'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Aprovar cópia'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Refuse'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Approve copy'), findsOneWidget);
   });
 
   /// Both buttons are reachable from the keyboard, in the order they read. A

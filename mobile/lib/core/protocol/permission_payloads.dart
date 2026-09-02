@@ -91,7 +91,7 @@ class Permission {
 
   static Permission _read(CborReader reader) {
     if (reader.array() != 4) {
-      throw const FormatException('Estrutura de permissão inesperada');
+      throw const FormatException('unexpected permission structure');
     }
     return Permission(
       service: reader.text(),
@@ -166,11 +166,11 @@ class PermissionSyncRequest {
 
   Uint8List encode() {
     if (verifierName.isEmpty || verifierName.length > _maxNameUnits) {
-      throw const FormatException('verifierName inválido');
+      throw const FormatException('invalid verifierName');
     }
     _checkSet(permissions);
     if (revision < 0) {
-      throw const FormatException('revision inválida');
+      throw const FormatException('invalid revision');
     }
     final writer = CborWriter()
       ..array(4)
@@ -191,9 +191,7 @@ class PermissionSyncRequest {
           throw const FormatException('Estrutura de payload inesperada');
         }
         if (reader.uint() != permissionsSchema) {
-          throw const FormatException(
-            'Versão de schema de permissões não suportada',
-          );
+          throw const FormatException('unsupported permission schema version');
         }
         final decoded = PermissionSyncRequest(
           verifierName: reader.text(),
@@ -224,7 +222,7 @@ class PermissionSyncResponse {
   Uint8List encode() {
     _checkSet(permissions);
     if (revision < 0) {
-      throw const FormatException('revision inválida');
+      throw const FormatException('invalid revision');
     }
     final writer = CborWriter()
       ..array(3)
@@ -244,9 +242,7 @@ class PermissionSyncResponse {
           throw const FormatException('Estrutura de payload inesperada');
         }
         if (reader.uint() != permissionsSchema) {
-          throw const FormatException(
-            'Versão de schema de permissões não suportada',
-          );
+          throw const FormatException('unsupported permission schema version');
         }
         final decoded = PermissionSyncResponse(
           revision: reader.uint(),
@@ -263,7 +259,7 @@ List<Permission> _readSet(CborReader reader) {
   // Conferido antes de alocar: o comprimento é escolhido pelo outro lado, e
   // reservar espaço por ele é a negação de serviço inteira.
   if (count > maxPermissions) {
-    throw const FormatException('Conjunto de permissões grande demais');
+    throw const FormatException('permission set too large');
   }
   final permissions = <Permission>[];
   for (var index = 0; index < count; index++) {
@@ -274,11 +270,11 @@ List<Permission> _readSet(CborReader reader) {
 
 void _checkSet(List<Permission> permissions) {
   if (permissions.length > maxPermissions) {
-    throw const FormatException('Conjunto de permissões grande demais');
+    throw const FormatException('permission set too large');
   }
   for (final permission in permissions) {
     if (!permission.isValid) {
-      throw FormatException('Permissão inválida: $permission');
+      throw FormatException('invalid permission: $permission');
     }
   }
 }
@@ -288,18 +284,18 @@ void _checkCanonical(Uint8List reencoded, Uint8List payload) {
   // bytes com o mesmo significado seriam duas requisições que uma aprovação
   // cobre.
   if (reencoded.length != payload.length) {
-    throw const FormatException('Payload não canônico');
+    throw const FormatException('non-canonical payload');
   }
   for (var index = 0; index < reencoded.length; index++) {
     if (reencoded[index] != payload[index]) {
-      throw const FormatException('Payload não canônico');
+      throw const FormatException('non-canonical payload');
     }
   }
 }
 
 T _decode<T>(Uint8List payload, T Function() read) {
   if (payload.isEmpty || payload.length > _maxPayloadBytes) {
-    throw const FormatException('Payload de permissões com tamanho inválido');
+    throw const FormatException('invalid permission payload length');
   }
   try {
     return read();

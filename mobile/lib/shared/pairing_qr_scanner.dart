@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../core/transport/pairing_bootstrap.dart';
+import '../l10n/app_strings.dart';
 
 /// The camera view that reads a pairing code.
 ///
@@ -44,8 +45,9 @@ class _PairingQRScannerState extends State<PairingQRScanner> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = AppStrings.of(context);
     return Semantics(
-      label: 'Leitor de QR Code para pareamento',
+      label: strings.scannerLabel,
       child: AspectRatio(
         aspectRatio: 1,
         child: ClipRRect(
@@ -59,10 +61,10 @@ class _PairingQRScannerState extends State<PairingQRScanner> {
                 errorBuilder: (context, error) => _ScannerUnavailable(
                   message: switch (error.errorCode) {
                     MobileScannerErrorCode.permissionDenied =>
-                      'Permita o acesso à câmera para escanear o código.',
+                      strings.scannerPermissionDenied,
                     MobileScannerErrorCode.unsupported =>
-                      'Este dispositivo não tem uma câmera compatível.',
-                    _ => 'A câmera não pôde ser aberta.',
+                      strings.scannerUnsupported,
+                    _ => strings.scannerUnavailable,
                   },
                 ),
               ),

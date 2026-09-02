@@ -35,19 +35,19 @@ void main() {
     // out the entire app under any screen recording or mirror, from the first
     // frame, forever. A locked vault has nothing on screen to hide.
     expect(find.byType(SensitiveContent), findsNothing);
-    expect(find.text('O cofre está bloqueado'), findsOneWidget);
-    await tester.tap(find.text('Desbloquear'));
+    expect(find.text('The vault is locked'), findsOneWidget);
+    await tester.tap(find.text('Unlock'));
     await tester.pumpAndSettle();
     expect(find.text('Example'), findsOneWidget);
     expect(find.byType(SensitiveContent), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'missing');
     await tester.pump();
-    expect(find.text('Nenhum item corresponde à busca.'), findsOneWidget);
+    expect(find.text('No item matches the search.'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'example');
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Revelar com biometria'));
+    await tester.tap(find.byTooltip('Reveal'));
     await tester.pumpAndSettle();
     expect(find.text('hunter2'), findsOneWidget);
     expect(store.fetches, 1);
@@ -77,7 +77,7 @@ void main() {
       MaterialApp(home: VaultScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Desbloquear'));
+    await tester.tap(find.text('Unlock'));
     await tester.pumpAndSettle();
 
     // Both states used to say "Nenhum item encontrado.", and to somebody
@@ -85,10 +85,10 @@ void main() {
     // which is exactly what an empty screen behind a fingerprint looks like.
     // The way out of it is the button this sentence points at.
     expect(
-      find.text('O cofre está vazio. Toque em + para guardar o primeiro item.'),
+      find.text('The vault is empty. Tap + to store an item.'),
       findsOneWidget,
     );
-    expect(find.byTooltip('Novo item'), findsOneWidget);
+    expect(find.byTooltip('New item'), findsOneWidget);
   });
 
   testWidgets('leaving the foreground locks the vault', (tester) async {
@@ -98,7 +98,7 @@ void main() {
       MaterialApp(home: VaultScreen(controller: controller)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Desbloquear'));
+    await tester.tap(find.text('Unlock'));
     await tester.pumpAndSettle();
     expect(find.text('Example'), findsOneWidget);
 
@@ -118,7 +118,7 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(find.text('O cofre está bloqueado'), findsOneWidget);
+    expect(find.text('The vault is locked'), findsOneWidget);
     // And the window is recordable again on the way out, not only on the way
     // in: a registration that is never given back is the same permanent
     // blackout by a slower route.

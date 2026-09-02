@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_controller.dart';
+import '../../l10n/app_strings.dart';
 import '../../shared/audit_entry_tile.dart';
 import '../../shared/page_heading.dart';
 
@@ -10,6 +11,7 @@ class HistoryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     final entries = ref.watch(
       appControllerProvider.select((state) => state.auditEntries),
     );
@@ -22,15 +24,12 @@ class HistoryScreen extends ConsumerWidget {
       itemCount: entries.isEmpty ? 2 : entries.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) {
-          return const PageHeading(
-            title: 'Histórico',
-            subtitle: 'Decisões registradas somente neste aparelho',
-          );
+          return PageHeading(title: strings.historyTitle);
         }
         if (entries.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text('Nenhuma atividade registrada.')),
+          return Padding(
+            padding: const EdgeInsets.all(24),
+            child: Center(child: Text(strings.historyEmpty)),
           );
         }
         return AuditEntryTile(entry: entries[index - 1]);

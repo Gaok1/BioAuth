@@ -57,7 +57,7 @@ class ApplicationIdempotency {
           .where((entry) => entry.value.completed)
           .firstOrNull;
       if (completed == null) {
-        throw StateError('Muitas operações de aplicação em andamento');
+        throw StateError('too many application operations in flight');
       }
       _entries.remove(completed.key);
     }

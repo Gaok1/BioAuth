@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/protocol/enrolment.dart';
+import '../l10n/app_strings.dart';
 
 /// The six digits the user compares against the desktop's screen.
 ///
@@ -28,6 +29,7 @@ class VerificationCodePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = AppStrings.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
@@ -38,13 +40,13 @@ class VerificationCodePanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Confira o código em $verifierId',
+              strings.verificationCheckOn(verifierId),
               textAlign: TextAlign.center,
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 20),
             Semantics(
-              label: 'Código de verificação ${code.split('').join(' ')}',
+              label: strings.verificationCodeSpoken(code.split('').join(' ')),
               child: Text(
                 // Grouped for reading aloud; the code itself is six digits.
                 '${code.substring(0, 3)} ${code.substring(3)}',
@@ -59,8 +61,7 @@ class VerificationCodePanel extends StatelessWidget {
             _PurposeNote(purpose: purpose),
             const SizedBox(height: 16),
             Text(
-              'Só confirme se o computador mostrar exatamente estes seis '
-              'dígitos. Se forem diferentes, alguém está no meio da conexão.',
+              strings.verificationWarning,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium,
             ),
@@ -70,14 +71,14 @@ class VerificationCodePanel extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton(
                     onPressed: onReject,
-                    child: const Text('São diferentes'),
+                    child: Text(strings.verificationDiffer),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
                     onPressed: onConfirm,
-                    child: const Text('Conferem'),
+                    child: Text(strings.verificationMatch),
                   ),
                 ),
               ],
@@ -105,33 +106,15 @@ class _PurposeNote extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final (icon, text) = switch (purpose) {
-      CredentialPurpose.authorization => (
-        Icons.lock_outline,
-        'Esta credencial aprova logins e ações no computador, como `sudo`.',
-      ),
-      CredentialPurpose.diskUnlock => (
-        Icons.storage,
-        'Esta credencial destrava o disco deste computador ao ligar.',
-      ),
-      CredentialPurpose.webAuthn => (
-        Icons.password,
-        'Esta credencial responde por chaves de acesso em sites.',
-      ),
-      CredentialPurpose.vault => (
-        Icons.vpn_key_outlined,
-        'Esta credencial libera senhas do seu cofre para este computador.',
-      ),
-      CredentialPurpose.fileLocker => (
-        Icons.folder_outlined,
-        'Esta credencial abre arquivos trancados neste computador.',
-      ),
-      CredentialPurpose.ssh => (
-        Icons.terminal,
-        'Esta credencial assina logins SSH em servidores. Cada login continua '
-            'pedindo sua digital.',
-      ),
+    final icon = switch (purpose) {
+      CredentialPurpose.authorization => Icons.lock_outline,
+      CredentialPurpose.diskUnlock => Icons.storage,
+      CredentialPurpose.webAuthn => Icons.password,
+      CredentialPurpose.vault => Icons.vpn_key_outlined,
+      CredentialPurpose.fileLocker => Icons.folder_outlined,
+      CredentialPurpose.ssh => Icons.terminal,
     };
+    final text = AppStrings.of(context).credentialPurposeNote(purpose);
 
     return Container(
       padding: const EdgeInsets.all(12),

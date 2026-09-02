@@ -250,9 +250,9 @@ class PairedSessionService {
     void Function()? onEstablished,
     void Function(String requestId)? onRequestRaised,
   }) async {
-    if (_stopped) throw StateError('Serviço de sessões encerrado');
+    if (_stopped) throw StateError('session service stopped');
     if (_closed.contains(record.verifierId)) {
-      throw StateError('Dispositivo revogado');
+      throw StateError('device revoked');
     }
     final outcome = await _transport.connect(
       TransportPeer(
@@ -263,9 +263,7 @@ class PairedSessionService {
     );
     if (_stopped || _closed.contains(record.verifierId)) {
       await outcome.session.close();
-      throw StateError(
-        _stopped ? 'Serviço de sessões encerrado' : 'Dispositivo revogado',
-      );
+      throw StateError(_stopped ? 'session service stopped' : 'device revoked');
     }
     if (outcome.wasPairing) {
       // The transport reported first contact for a device that is already
@@ -308,7 +306,7 @@ class PairedSessionService {
       // `finally`, which is what closes the session.
       if (_stopped || _closed.contains(record.verifierId)) {
         throw StateError(
-          _stopped ? 'Serviço de sessões encerrado' : 'Dispositivo revogado',
+          _stopped ? 'session service stopped' : 'device revoked',
         );
       }
       _active[_key(record)] = outcome.session;

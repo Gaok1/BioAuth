@@ -42,15 +42,17 @@ class PermissionController extends ChangeNotifier {
   /// Lista fechada porque o lado que aplica compara `service` exatamente
   /// contra um vocabulário pequeno — não há coringa para ele, de propósito,
   /// já que um serviço coringa é conceder tudo.
-  static const grantable = <String, String>{
-    'sudo': 'sudo',
-    'login': 'login',
-    'vault': 'cofre',
-    'locker': 'arquivos',
-    'ssh': 'ssh',
-    'luks': 'disco',
-    'webauthn': 'passkeys',
-  };
+  /// The services a person can hand out from here, in the order they are
+  /// listed. The words for them live in the language packs.
+  static const grantable = <String>[
+    'sudo',
+    'login',
+    'vault',
+    'locker',
+    'ssh',
+    'luks',
+    'webauthn',
+  ];
 
   final PairingStore _pairings;
   final PermissionStore _permissions;
@@ -59,11 +61,11 @@ class PermissionController extends ChangeNotifier {
   List<CredentialPermissions> _credentials = const [];
   bool _loading = true;
   bool _disposed = false;
-  String? _failure;
+  bool _saveFailed = false;
 
   List<CredentialPermissions> get credentials => _credentials;
   bool get loading => _loading;
-  String? get failure => _failure;
+  bool get saveFailed => _saveFailed;
 
   Future<void> load() async {
     final records = await _pairings.load();
@@ -118,14 +120,14 @@ class PermissionController extends ChangeNotifier {
 
     try {
       await _permissions.write(verifierId, credentialId, next);
-    } on Object catch (error) {
+    } on Object {
       if (_disposed) return;
-      _failure = 'Não foi possível salvar: $error';
+      _saveFailed = true;
       notifyListeners();
       return;
     }
     if (_disposed) return;
-    _failure = null;
+    _saveFailed = false;
     _credentials = List.unmodifiable([
       for (var position = 0; position < _credentials.length; position++)
         if (position == index)

@@ -14,6 +14,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../../core/ssh/ssh_service.dart';
+import '../../l10n/app_strings.dart';
 
 /// Shows the sheet and resolves to what the user chose.
 ///
@@ -65,12 +66,13 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final strings = AppStrings.of(context);
     final named = widget.request.destination.isNotEmpty;
 
     // Scrolls, because the sheet is sized by its contents and its contents are
     // sized by the system font and by names the computer chose. Past a certain
     // height a `Column` does not shrink -- it puts its last children below the
-    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
+    // bottom edge, and here those are approve and refuse. A request that
     // can be neither approved nor refused looks, from the computer, like a
     // phone that stopped answering.
     return SingleChildScrollView(
@@ -96,7 +98,7 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Entrar por SSH',
+                  strings.sshTitle,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -106,20 +108,23 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
           ),
           const SizedBox(height: 18),
 
-          _Field(label: 'Computador', value: widget.request.verifierName),
           _Field(
-            label: 'Entrar como',
+            label: strings.sshComputer,
+            value: widget.request.verifierName,
+          ),
+          _Field(
+            label: strings.sshSignInAs,
             value: widget.request.user,
             emphasis: true,
           ),
           _Field(
-            label: 'Servidor',
+            label: strings.sshServer,
             // The fingerprint, not a hostname: it is what the client can prove
             // and what `ssh` itself prints when it asks about an unknown host,
             // so the two can be compared.
             value: named
                 ? widget.request.destination
-                : 'não informado por este computador',
+                : strings.sshServerUnnamed,
             emphasis: named,
           ),
 
@@ -143,13 +148,7 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    named
-                        ? 'Aprovar abre uma sessão nesse servidor. Ela continua '
-                              'aberta enquanto o terminal estiver aberto — não é '
-                              'uma permissão que acaba agora.'
-                        : 'Este computador não disse para qual servidor está '
-                              'entrando. Só aprove se você acabou de rodar um '
-                              '`ssh` e sabe para onde.',
+                    named ? strings.sshSessionLasts : strings.sshNoServerNamed,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: named ? null : colors.onErrorContainer,
                     ),
@@ -162,12 +161,12 @@ class _SshApprovalSheetState extends State<_SshApprovalSheet> {
 
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Aprovar login'),
+            child: Text(strings.sshApprove),
           ),
           const SizedBox(height: 8),
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Recusar'),
+            child: Text(strings.refuse),
           ),
         ],
       ),

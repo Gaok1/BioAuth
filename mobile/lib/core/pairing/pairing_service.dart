@@ -19,13 +19,27 @@ import '../transport/secure_session_establisher.dart';
 import 'pairing_record.dart';
 import 'pairing_store.dart';
 
-class PairingException implements Exception {
-  const PairingException(this.message);
+/// Why a pairing attempt did not start.
+///
+/// A reason rather than a sentence: the screen is what turns this into words,
+/// in whichever language the interface is running.
+enum PairingProblem {
+  notAPairingCode,
+  codeExpired,
+  noAddress,
+  notPairing,
+  unreachable,
+  timedOut,
+  failed,
+}
 
-  final String message;
+class PairingException implements Exception {
+  const PairingException(this.problem);
+
+  final PairingProblem problem;
 
   @override
-  String toString() => message;
+  String toString() => 'PairingException(${problem.name})';
 }
 
 /// A completed handshake awaiting the user's comparison of the two codes.
@@ -202,23 +216,16 @@ class PairingService {
     final PairingBootstrap bootstrap;
     try {
       bootstrap = PairingBootstrap.parse(scannedUri.trim());
-    } on BootstrapException catch (error) {
-      throw PairingException(
-        'Este QR não é um código de pareamento: '
-        '${error.message}',
-      );
+    } on BootstrapException {
+      throw const PairingException(PairingProblem.notAPairingCode);
     }
 
     final now = _clock().toUtc();
     if (bootstrap.isExpiredAt(now.millisecondsSinceEpoch)) {
-      throw const PairingException(
-        'Este código expirou. Gere um novo no computador.',
-      );
+      throw const PairingException(PairingProblem.codeExpired);
     }
     if (bootstrap.endpoint.isEmpty) {
-      throw const PairingException(
-        'Este código não traz um endereço para conectar.',
-      );
+      throw const PairingException(PairingProblem.noAddress);
     }
 
     final outcome = await _transport.connect(
@@ -230,7 +237,7 @@ class PairingService {
     );
     if (!outcome.wasPairing) {
       await outcome.session.close();
-      throw const PairingException('O computador não estava em pareamento.');
+      throw const PairingException(PairingProblem.notPairing);
     }
 
     late final ({Uint8List publicKey, String algorithm, KeyKind keyKind})

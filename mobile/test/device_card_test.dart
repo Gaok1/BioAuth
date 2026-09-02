@@ -25,17 +25,17 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Opções do dispositivo'));
+    await tester.tap(find.byTooltip('Device options'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Revogar dispositivo'));
+    await tester.tap(find.text('Revoke device'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Revogar este computador?'), findsOneWidget);
-    expect(find.textContaining('chave pública'), findsOneWidget);
-    expect(find.textContaining('também nele'), findsOneWidget);
+    expect(find.text('Revoke this computer?'), findsOneWidget);
+    expect(find.textContaining('public key'), findsOneWidget);
+    expect(find.textContaining('unpair there too'), findsOneWidget);
     expect(revoked, isFalse);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Revogar'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
     await tester.pumpAndSettle();
     expect(revoked, isTrue);
   });

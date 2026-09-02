@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/app_controller.dart';
 import '../../domain/authentication_request.dart';
 import '../../domain/connection_phase.dart';
+import '../../l10n/app_strings.dart';
 import '../../shared/connection_status.dart';
 
 class AuthenticationRequestScreen extends ConsumerWidget {
@@ -13,6 +14,7 @@ class AuthenticationRequestScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     final state = ref.watch(appControllerProvider);
     final request = state.requests
         .where((candidate) => candidate.id == requestId)
@@ -21,10 +23,10 @@ class AuthenticationRequestScreen extends ConsumerWidget {
 
     if (request == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Solicitação de acesso')),
+        appBar: AppBar(title: Text(strings.requestTitle)),
         body: Center(
           child: phase == null
-              ? const Text('Solicitação indisponível')
+              ? Text(strings.requestUnavailable)
               : ConnectionStatus(phase: phase),
         ),
       );
@@ -34,26 +36,26 @@ class AuthenticationRequestScreen extends ConsumerWidget {
         phase == ConnectionPhase.awaitingBiometric ||
         phase == ConnectionPhase.signing;
     return Scaffold(
-      appBar: AppBar(title: const Text('Solicitação de acesso')),
+      appBar: AppBar(title: Text(strings.requestTitle)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
             _RequestHeader(request: request),
             const SizedBox(height: 18),
-            _ContextRow(label: 'Origem', value: request.origin),
-            _ContextRow(label: 'Serviço', value: request.service),
-            _ContextRow(label: 'Ação', value: request.action),
-            _ContextRow(label: 'Destino', value: request.resource),
-            _ContextRow(label: 'Usuário', value: request.user),
+            _ContextRow(label: strings.requestOrigin, value: request.origin),
+            _ContextRow(label: strings.requestService, value: request.service),
+            _ContextRow(label: strings.requestAction, value: request.action),
+            _ContextRow(label: strings.requestTarget, value: request.resource),
+            _ContextRow(label: strings.requestUser, value: request.user),
             _ContextRow(
-              label: 'Horário',
+              label: strings.requestTime,
               value: _formatTimestamp(request.requestedAt),
             ),
             if (request.duplicateCount > 1) ...[
               const SizedBox(height: 12),
               Text(
-                '${request.duplicateCount} solicitações idênticas foram agrupadas.',
+                strings.requestGrouped(request.duplicateCount),
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.error,
                   fontWeight: FontWeight.w600,
@@ -79,7 +81,7 @@ class AuthenticationRequestScreen extends ConsumerWidget {
                                 .deny(requestId);
                             Navigator.of(context).pop();
                           },
-                    child: const Text('Negar'),
+                    child: Text(strings.requestDeny),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -93,7 +95,7 @@ class AuthenticationRequestScreen extends ConsumerWidget {
                                 .approve(requestId);
                             if (context.mounted) Navigator.of(context).pop();
                           },
-                    child: const Text('Autorizar'),
+                    child: Text(strings.requestApprove),
                   ),
                 ),
               ],
@@ -134,7 +136,6 @@ class _RequestHeader extends StatelessWidget {
                   request.deviceName,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                const Text('Confira os detalhes antes de autorizar'),
               ],
             ),
           ),

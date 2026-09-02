@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_controller.dart';
 import '../../app/app_state.dart';
+import '../../l10n/app_strings.dart';
 import '../../shared/authentication_request_card.dart';
 import '../../shared/device_card.dart';
 import '../../shared/page_heading.dart';
@@ -14,19 +15,15 @@ class DevicesScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     final state = ref.watch(appControllerProvider);
     return CustomScrollView(
       slivers: [
-        const SliverToBoxAdapter(
-          child: PageHeading(
-            title: 'Phone Auth',
-            subtitle: 'Aprovações locais e seguras',
-          ),
-        ),
+        SliverToBoxAdapter(child: PageHeading(title: strings.appTitle)),
         if (state.securityWarning case final warning?)
           SliverToBoxAdapter(child: _SecurityWarningCard(warning: warning)),
         if (state.requests.isNotEmpty) ...[
-          const SliverToBoxAdapter(child: _SectionTitle('Solicitações')),
+          SliverToBoxAdapter(child: _SectionTitle(strings.devicesRequests)),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             sliver: SliverList.separated(
@@ -47,15 +44,15 @@ class DevicesScreen extends ConsumerWidget {
             ),
           ),
         ],
-        const SliverToBoxAdapter(child: _SectionTitle('Dispositivos')),
+        SliverToBoxAdapter(child: _SectionTitle(strings.devicesPaired)),
         if (state.devices.isEmpty)
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Card(
                 child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text('Nenhum dispositivo pareado.'),
+                  padding: const EdgeInsets.all(24),
+                  child: Text(strings.devicesEmpty),
                 ),
               ),
             ),
@@ -73,10 +70,10 @@ class DevicesScreen extends ConsumerWidget {
                   onRevoke: () => ref
                       .read(appControllerProvider.notifier)
                       .revokeDevice(device.id),
-                  // Onde se decide o que este computador pode pedir. A mesma
-                  // lista existe do outro lado e as duas se acertam sozinhas,
-                  // então é indiferente onde se edita -- que é o ponto de ter
-                  // esta tela aqui e não só lá.
+                  // Where this computer's permissions are edited. The desktop
+                  // holds the same list and the two reconcile, so either side
+                  // is as good a place to edit as the other -- which is the
+                  // point of this screen existing here at all.
                   onPermissions: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => PermissionScreen(
@@ -101,6 +98,7 @@ class _SecurityWarningCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
       child: Card(
@@ -111,13 +109,16 @@ class _SecurityWarningCard extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Possível tentativa maliciosa',
+                strings.devicesFloodTitle,
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
               Text(
-                '${warning.deviceName} enviou ${warning.requestCount} '
-                'solicitações em ${warning.window.inSeconds} segundos.',
+                strings.devicesFloodBody(
+                  warning.deviceName,
+                  warning.requestCount,
+                  warning.window.inSeconds,
+                ),
               ),
               const SizedBox(height: 12),
               FilledButton.tonalIcon(
@@ -125,7 +126,7 @@ class _SecurityWarningCard extends ConsumerWidget {
                     .read(appControllerProvider.notifier)
                     .blockDevice(warning.deviceId),
                 icon: const Icon(Icons.block),
-                label: const Text('Bloquear dispositivo por 15 min'),
+                label: Text(strings.devicesBlockForFifteenMinutes),
               ),
             ],
           ),

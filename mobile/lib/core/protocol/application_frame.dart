@@ -24,16 +24,16 @@ enum ApplicationErrorCode {
     try {
       final reader = CborReader(payload);
       if (reader.array() != 2 || reader.uint() != 1) {
-        throw const FormatException('Erro de aplicação inválido');
+        throw const FormatException('invalid application error');
       }
       final value = reader.uint();
       if (value >= values.length) {
-        throw const FormatException('Erro de aplicação inválido');
+        throw const FormatException('invalid application error');
       }
       reader.finish();
       final decoded = values[value];
       if (!_sameBytes(payload, decoded.encode())) {
-        throw const FormatException('Erro de aplicação não canônico');
+        throw const FormatException('non-canonical application error');
       }
       return decoded;
     } on CborException catch (error) {
@@ -86,24 +86,24 @@ class ApplicationFrame {
 
   void validate() {
     if (protocolVersion != 1) {
-      throw const FormatException('Versão de frame não suportada');
+      throw const FormatException('unsupported frame version');
     }
     if (requestId.trim().isEmpty || requestId.length > 64) {
-      throw const FormatException('requestId inválido');
+      throw const FormatException('invalid requestId');
     }
     if (!_validOperation(operation)) {
-      throw const FormatException('Operação de aplicação inválida');
+      throw const FormatException('invalid application operation');
     }
     if (sessionBinding.length != 32) {
-      throw const FormatException('Session binding inválido');
+      throw const FormatException('invalid session binding');
     }
     if (payload.length > maxApplicationPayloadBytes) {
-      throw const FormatException('Payload de aplicação grande demais');
+      throw const FormatException('application payload too large');
     }
     final validity =
         expiresAt.millisecondsSinceEpoch - issuedAt.millisecondsSinceEpoch;
     if (validity <= 0 || validity > _maxValidityMs) {
-      throw const FormatException('Validade de frame inválida');
+      throw const FormatException('invalid frame validity');
     }
   }
 
@@ -140,7 +140,7 @@ class ApplicationFrame {
 
   static ApplicationFrame decode(Uint8List frame) {
     if (frame.isEmpty || frame.length > _maxFrameBytes) {
-      throw const FormatException('Tamanho de frame inválido');
+      throw const FormatException('invalid frame length');
     }
     try {
       final reader = CborReader(frame);
@@ -150,7 +150,7 @@ class ApplicationFrame {
       final version = reader.uint();
       final kindIndex = reader.uint();
       if (kindIndex >= ApplicationFrameKind.values.length) {
-        throw const FormatException('Tipo de frame inválido');
+        throw const FormatException('invalid frame type');
       }
       final decoded = ApplicationFrame(
         protocolVersion: version,
@@ -171,7 +171,7 @@ class ApplicationFrame {
       reader.finish();
       decoded.validate();
       if (!_bytesEqual(frame, decoded.encode())) {
-        throw const FormatException('Frame CBOR não canônico');
+        throw const FormatException('non-canonical CBOR frame');
       }
       return decoded;
     } on CborException catch (error) {

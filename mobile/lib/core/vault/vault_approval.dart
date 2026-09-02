@@ -16,15 +16,7 @@ import 'dart:async';
 
 enum VaultOperation { read, create, update, delete }
 
-extension VaultOperationLabel on VaultOperation {
-  /// What the user is being asked to allow, in the words of the thing itself.
-  String get label => switch (this) {
-    VaultOperation.read => 'Copiar a senha de',
-    VaultOperation.create => 'Guardar um item novo:',
-    VaultOperation.update => 'Alterar',
-    VaultOperation.delete => 'Apagar',
-  };
-
+extension VaultOperationRelease on VaultOperation {
   /// Whether the operation hands a secret to the computer that asked.
   ///
   /// A write is destructive but reveals nothing; a read is the only one that

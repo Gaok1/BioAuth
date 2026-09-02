@@ -29,7 +29,7 @@ class AuthenticationRequest {
       if (value is! String ||
           value.trim().isEmpty ||
           value.length > maxLength) {
-        throw FormatException('Campo inválido: $key');
+        throw FormatException('invalid field: $key');
       }
       return value.trim();
     }
@@ -38,7 +38,7 @@ class AuthenticationRequest {
       final value = json[key];
       final parsed = value is String ? DateTime.tryParse(value) : null;
       if (parsed == null || !parsed.isUtc) {
-        throw FormatException('Data UTC inválida: $key');
+        throw FormatException('invalid UTC date: $key');
       }
       return parsed;
     }
@@ -50,7 +50,7 @@ class AuthenticationRequest {
         if (decoded.length != length) throw const FormatException();
         return decoded;
       } on FormatException {
-        throw FormatException('$key deve conter $length bytes em base64url');
+        throw FormatException('$key must be $length base64url bytes');
       }
     }
 
@@ -119,7 +119,7 @@ class AuthenticationRequest {
 
   void _validate() {
     if (protocolVersion != 1) {
-      throw const FormatException('Versão de protocolo não suportada');
+      throw const FormatException('unsupported protocol version');
     }
     final fields = <String, (String, int)>{
       'requestId': (requestId, 64),
@@ -135,19 +135,19 @@ class AuthenticationRequest {
     for (final entry in fields.entries) {
       if (entry.value.$1.trim().isEmpty ||
           entry.value.$1.length > entry.value.$2) {
-        throw FormatException('Campo inválido: ${entry.key}');
+        throw FormatException('invalid field: ${entry.key}');
       }
     }
     if (challenge.length != 32 || sessionBinding.length != 32) {
       throw const FormatException(
-        'Challenge e session binding devem conter 32 bytes',
+        'challenge and session binding must be 32 bytes',
       );
     }
     if (!issuedAt.isUtc ||
         !expiresAt.isUtc ||
         !expiresAt.isAfter(issuedAt) ||
         expiresAt.difference(issuedAt) > const Duration(minutes: 2)) {
-      throw const FormatException('Janela de validade inválida');
+      throw const FormatException('invalid validity window');
     }
   }
 }

@@ -47,6 +47,8 @@ class PairedSessionRunner {
     SshSigner? sshSigner,
     LockerKeyGuardian? lockerGuardian,
     Duration? answerTimeout,
+    String sshPromptTitle = defaultSshPromptTitle,
+    String sshPromptDetail = defaultSshPromptDetail,
     this.onStatus,
     DateTime Function()? clock,
   }) : _service = PairedSessionService(
@@ -58,7 +60,12 @@ class PairedSessionRunner {
          // The real key by default. A test passes its own; nothing else has
          // reason to, and forgetting to pass one must not silently produce a
          // runner that cannot sign.
-         sshSigner: sshSigner ?? const NativeSshSigner(),
+         sshSigner:
+             sshSigner ??
+             NativeSshSigner(
+               promptTitle: sshPromptTitle,
+               promptDetail: sshPromptDetail,
+             ),
          lockerGuardian: lockerGuardian,
          answerTimeout: answerTimeout,
          clock: clock,
@@ -136,7 +143,7 @@ class PairedSessionRunner {
     _loops.clear();
     await _service.stop();
     for (final requestId in _consent.pendingRequestIds.toList()) {
-      _consent.abandon(requestId, StateError('Conexão encerrada'));
+      _consent.abandon(requestId, StateError('connection closed'));
     }
     _vaultApproval?.abandonAll();
     _sshApproval?.abandonAll();
@@ -190,7 +197,7 @@ class PairedSessionRunner {
     // lasts -- and a tap on it then raises the Keystore prompt and decrypts
     // the secret for a desktop the user has just revoked. Nothing would reach
     // that desktop, but the fingerprint was still spent approving it.
-    _withdraw(orphaned, StateError('Dispositivo revogado'));
+    _withdraw(orphaned, StateError('device revoked'));
   }
 
   /// Records one credential's status and reports its computer's.

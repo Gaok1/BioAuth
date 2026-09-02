@@ -63,7 +63,7 @@ class PermissionService {
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
         request.isExpiredAt(_clock().toUtc())) {
-      throw const FormatException('Frame de permissões fora desta sessão');
+      throw const FormatException('permission frame from another session');
     }
 
     final PermissionSyncRequest decoded;

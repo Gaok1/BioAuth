@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
+import 'package:phone_auth/l10n/app_strings_en.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -220,8 +221,8 @@ void main() {
 
       await controller.copy(controller.items.single);
 
-      expect(controller.notice, contains('Example'));
-      expect(controller.error, isNull);
+      expect((controller.notice! as VaultPasswordCopied).itemName, 'Example');
+      expect(controller.failure, isNull);
     });
 
     test('a refused copy leaves the error and no notice', () async {
@@ -239,12 +240,12 @@ void main() {
         isNull,
         reason: 'nothing reached the clipboard, so nothing may say it did',
       );
-      expect(controller.error, isNotNull);
+      expect(controller.failure, isNotNull);
     });
 
     /// The vault operation worked: the item was fetched, the biometric was
     /// spent, the plaintext was decrypted -- and the clipboard refused it.
-    /// "Não foi possível concluir a operação do cofre" points at the vault,
+    /// The generic "could not finish the vault operation" points at the vault,
     /// which is the one part that did its job.
     test(
       'a clipboard that refuses is named, not blamed on the vault',
@@ -259,10 +260,14 @@ void main() {
 
           await controller.copy(controller.items.single);
 
-          expect(controller.error, contains('copiad'), reason: code);
           expect(
-            controller.error,
-            isNot(contains('operação do cofre')),
+            (controller.failure! as VaultStoreFailure).code,
+            code,
+            reason: code,
+          );
+          expect(
+            const EnglishStrings().vaultFailure(controller.failure!),
+            contains('copied'),
             reason: code,
           );
           expect(controller.notice, isNull, reason: code);

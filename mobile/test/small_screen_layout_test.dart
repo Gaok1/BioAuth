@@ -95,7 +95,7 @@ void main() {
         addTearDown(controller.dispose);
         await pump(tester, VaultScreen(controller: controller), size, scale);
 
-        await reach(tester, find.text('Desbloquear'));
+        await reach(tester, find.text('Unlock'));
         expect(
           find.text('Conta do banco com um nome comprido'),
           findsOneWidget,
@@ -114,28 +114,28 @@ void main() {
 
         // The tallest this screen ever gets: the failure, the warning about
         // what discarding costs, and two buttons under it.
-        await reach(tester, find.text('Desbloquear'));
-        await reach(tester, find.text('Descartar e começar de novo'));
-        expect(find.text('Descartar o cofre?'), findsOneWidget);
+        await reach(tester, find.text('Unlock'));
+        await reach(tester, find.text('Discard and start over'));
+        expect(find.text('Discard the vault?'), findsOneWidget);
       });
 
       testWidgets('a vault request can be refused on $where', (tester) async {
         await pump(tester, const _Opener(_Sheet.vault), size, scale);
         await reach(tester, find.text('abrir'));
-        await reach(tester, find.text('Recusar'));
-        expect(find.text('Recusar'), findsNothing);
+        await reach(tester, find.text('Refuse'));
+        expect(find.text('Refuse'), findsNothing);
       });
 
       testWidgets('an ssh request can be refused on $where', (tester) async {
         await pump(tester, const _Opener(_Sheet.ssh), size, scale);
         await reach(tester, find.text('abrir'));
-        await reach(tester, find.text('Recusar'));
-        expect(find.text('Recusar'), findsNothing);
+        await reach(tester, find.text('Refuse'));
+        expect(find.text('Refuse'), findsNothing);
       });
 
       testWidgets('onboarding can be finished on $where', (tester) async {
         await pump(tester, const OnboardingScreen(), size, scale);
-        await tester.ensureVisible(find.text('Começar'));
+        await tester.ensureVisible(find.text('Start'));
       });
     }
   }

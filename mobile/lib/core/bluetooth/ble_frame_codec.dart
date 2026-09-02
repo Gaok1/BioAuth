@@ -23,7 +23,7 @@ class BleFrameCodec {
     required int attPayloadBytes,
   }) sync* {
     if (frame.isEmpty || frame.length > maxFrameBytes) {
-      throw const FormatException('Tamanho de frame BLE inválido');
+      throw const FormatException('invalid BLE frame length');
     }
     final dataBytes = attPayloadBytes - headerBytes;
     if (dataBytes < 1) throw const FormatException('MTU BLE insuficiente');

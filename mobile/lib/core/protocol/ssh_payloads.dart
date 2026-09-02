@@ -51,13 +51,13 @@ class SshSignRequest {
 
   Uint8List encode() {
     if (verifierName.isEmpty || verifierName.length > 64) {
-      throw const FormatException('verifierName inválido');
+      throw const FormatException('invalid verifierName');
     }
     if (destination.length > 128) {
-      throw const FormatException('destination inválido');
+      throw const FormatException('invalid destination');
     }
     if (data.isEmpty || data.length > maxSshSignDataBytes) {
-      throw const FormatException('data inválido');
+      throw const FormatException('invalid data');
     }
     return (CborWriter()
           ..array(4)
@@ -74,7 +74,7 @@ class SshSignRequest {
       throw const FormatException('Estrutura de payload inesperada');
     }
     if (reader.uint() != sshSchema) {
-      throw const FormatException('Versão de schema ssh não suportada');
+      throw const FormatException('unsupported ssh schema version');
     }
     final decoded = SshSignRequest(
       verifierName: reader.text(),
@@ -87,11 +87,11 @@ class SshSignRequest {
     // covers.
     final reencoded = decoded.encode();
     if (reencoded.length != payload.length) {
-      throw const FormatException('Payload não canônico');
+      throw const FormatException('non-canonical payload');
     }
     for (var index = 0; index < reencoded.length; index++) {
       if (reencoded[index] != payload[index]) {
-        throw const FormatException('Payload não canônico');
+        throw const FormatException('non-canonical payload');
       }
     }
     return decoded;
@@ -105,7 +105,7 @@ class SshSignResponse {
 
   Uint8List encode() {
     if (signature.length != sshSignatureLength) {
-      throw const FormatException('Assinatura de tamanho inválido');
+      throw const FormatException('invalid signature length');
     }
     return (CborWriter()
           ..array(2)
@@ -120,12 +120,12 @@ class SshSignResponse {
       throw const FormatException('Estrutura de payload inesperada');
     }
     if (reader.uint() != sshSchema) {
-      throw const FormatException('Versão de schema ssh não suportada');
+      throw const FormatException('unsupported ssh schema version');
     }
     final decoded = SshSignResponse(signature: reader.bytes());
     reader.finish();
     if (decoded.signature.length != sshSignatureLength) {
-      throw const FormatException('Assinatura de tamanho inválido');
+      throw const FormatException('invalid signature length');
     }
     return decoded;
   });
@@ -139,7 +139,7 @@ class SshSignResponse {
 /// malformed frame becomes a crash instead of a refusal.
 T _decode<T>(Uint8List payload, T Function() read) {
   if (payload.isEmpty || payload.length > maxSshSignDataBytes * 2) {
-    throw const FormatException('Payload ssh com tamanho inválido');
+    throw const FormatException('invalid ssh payload length');
   }
   try {
     return read();

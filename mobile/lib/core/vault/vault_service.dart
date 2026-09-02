@@ -69,7 +69,7 @@ class VaultService {
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
         request.isExpiredAt(moment())) {
-      throw const FormatException('Frame de cofre fora desta sessão');
+      throw const FormatException('vault frame from another session');
     }
     if (!authorized) return _error(request, ApplicationErrorCode.rejected);
 
@@ -94,7 +94,7 @@ class VaultService {
         wire.vaultDeleteOperation => wire.VaultDeleteRequest.decode(
           request.payload,
         ),
-        _ => throw const FormatException('Operação de cofre desconhecida'),
+        _ => throw const FormatException('unknown vault operation'),
       };
     } on FormatException {
       return _error(request, ApplicationErrorCode.invalidRequest);
@@ -257,7 +257,7 @@ class VaultService {
     final offset = restart ? 0 : int.tryParse(request.cursor) ?? -1;
     final all = await _listing.items(restart: restart);
     if (offset < 0 || offset > all.length) {
-      throw const FormatException('Cursor de listagem inválido');
+      throw const FormatException('invalid listing cursor');
     }
     final page = all.skip(offset).take(_pageSize).toList(growable: false);
     final next = offset + page.length;

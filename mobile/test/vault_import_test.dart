@@ -92,8 +92,8 @@ void main() {
 
       expect(preview.items, isEmpty);
       expect(preview.rejections, hasLength(2));
-      expect(preview.rejections.first.reason, contains('sem senha'));
-      expect(preview.rejections.last.reason, contains('sem senha'));
+      expect(preview.rejections.first.reason, RowProblem.noSecret);
+      expect(preview.rejections.last.reason, RowProblem.noSecret);
     });
 
     /// There is nothing here that could ask for the Bitwarden password, so an
@@ -105,9 +105,9 @@ void main() {
         ),
         throwsA(
           isA<VaultImportException>().having(
-            (error) => error.message,
-            'message',
-            contains('sem criptografia'),
+            (error) => error.problem,
+            'problem',
+            ImportProblem.bitwardenEncrypted,
           ),
         ),
       );
@@ -134,7 +134,7 @@ void main() {
         expect(preview.items, hasLength(1));
         expect(preview.rejections, hasLength(1));
         expect(preview.rejections.single.name, 'Meu cartão');
-        expect(preview.rejections.single.reason, contains('tipo 3'));
+        expect(preview.rejections.single.reason, RowProblem.unsupportedType);
       },
     );
 
@@ -153,7 +153,7 @@ void main() {
 
       expect(preview.items, isEmpty);
       expect(preview.rejections.single.row, 1);
-      expect(preview.rejections.single.reason, contains('sem senha'));
+      expect(preview.rejections.single.reason, RowProblem.noSecret);
     });
 
     test('malformed JSON is refused', () {
@@ -207,7 +207,7 @@ void main() {
       );
 
       expect(preview.items, isEmpty);
-      expect(preview.rejections.single.reason, contains('sem senha'));
+      expect(preview.rejections.single.reason, RowProblem.noSecret);
     });
 
     test('reads the plain column names other managers use', () async {
@@ -281,9 +281,9 @@ void main() {
         () => parseVaultImport(bytes('username,password\nalice,hunter2\n')),
         throwsA(
           isA<VaultImportException>().having(
-            (error) => error.message,
-            'message',
-            contains('coluna de nome'),
+            (error) => error.problem,
+            'problem',
+            ImportProblem.csvNeedsNameColumn,
           ),
         ),
       );
@@ -306,7 +306,7 @@ void main() {
       );
 
       expect(preview.items, isEmpty);
-      expect(preview.rejections.single.reason, contains('nome longo'));
+      expect(preview.rejections.single.reason, RowProblem.nameTooLong);
     });
   });
 
@@ -315,9 +315,9 @@ void main() {
       () => parseVaultImport(Uint8List.fromList([0xff, 0xfe, 0x00, 0x01])),
       throwsA(
         isA<VaultImportException>().having(
-          (error) => error.message,
-          'message',
-          contains('UTF-8'),
+          (error) => error.problem,
+          'problem',
+          ImportProblem.notUtf8,
         ),
       ),
     );

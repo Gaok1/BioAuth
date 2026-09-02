@@ -43,7 +43,7 @@ class BleTransport implements AuthTransport {
   Future<void> start() async {
     if (_scanSubscription != null) return;
     if (!await _permissionGate.ensureGranted()) {
-      throw StateError('Permissão Bluetooth negada');
+      throw StateError('Bluetooth permission denied');
     }
     _scanSubscription = _client.scan().listen(
       (peer) => _peers.add(

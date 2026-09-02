@@ -51,14 +51,14 @@ void main() {
 
     expect(find.text('example.com'), findsOneWidget);
     expect(find.textContaining('Alice'), findsOneWidget);
-    await tester.tap(find.byTooltip('Excluir passkey'));
+    await tester.tap(find.byTooltip('Delete passkey'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Continuar'));
+    await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.pump();
 
     expect(deleted, isTrue);
     expect(listCalls, 2);
-    expect(find.text('Nenhuma passkey neste telefone.'), findsOneWidget);
+    expect(find.text('No passkeys on this phone.'), findsOneWidget);
   });
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:phone_auth_native/phone_auth_native.dart';
 
+import '../../l10n/app_strings.dart';
+
 class PasskeysScreen extends StatefulWidget {
   const PasskeysScreen({super.key});
 
@@ -17,6 +19,7 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
   });
 
   Future<void> _delete(ManagedPasskey passkey) async {
+    final strings = AppStrings.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -25,20 +28,20 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
         // size the text is cut off mid-sentence -- and here it is the sentence
         // explaining what the button below it destroys.
         scrollable: true,
-        title: const Text('Excluir passkey?'),
+        title: Text(strings.passkeysDeleteTitle),
         content: Text(
           passkey.kind == 'orphan'
-              ? 'Esta chave órfã não possui metadados recuperáveis.'
-              : 'A passkey de ${passkey.userName} em ${passkey.rpId} será removida deste telefone. O site pode exigir outro método de acesso.',
+              ? strings.passkeysDeleteOrphanBody
+              : strings.passkeysDeleteBody(passkey.userName, passkey.rpId),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Continuar'),
+            child: Text(strings.continueLabel),
           ),
         ],
       ),
@@ -48,9 +51,9 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
       await _passkeys.delete(passkey);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Não foi possível excluir a passkey.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(strings.passkeysDeleteFailed)));
       }
       return;
     }
@@ -60,8 +63,9 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Passkeys')),
+      appBar: AppBar(title: Text(strings.passkeysTitle)),
       body: FutureBuilder<List<ManagedPasskey>>(
         future: _items,
         builder: (context, snapshot) {
@@ -73,13 +77,13 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
               child: FilledButton.icon(
                 onPressed: _reload,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Tentar novamente'),
+                label: Text(strings.retry),
               ),
             );
           }
           final items = snapshot.data!;
           if (items.isEmpty) {
-            return const Center(child: Text('Nenhuma passkey neste telefone.'));
+            return Center(child: Text(strings.passkeysEmpty));
           }
           return ListView.separated(
             itemCount: items.length,
@@ -93,14 +97,19 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
                   healthy ? Icons.key : Icons.warning_amber,
                   color: healthy ? null : Theme.of(context).colorScheme.error,
                 ),
-                title: Text(item.rpId.isEmpty ? 'Chave órfã' : item.rpId),
+                title: Text(
+                  item.rpId.isEmpty ? strings.passkeysOrphan : item.rpId,
+                ),
                 subtitle: Text(
                   healthy
-                      ? '${item.userDisplayName} · criada em $date'
-                      : _statusLabel(item.status),
+                      ? strings.passkeysCreatedOn(
+                          item.userDisplayName,
+                          date ?? '',
+                        )
+                      : _statusLabel(strings, item.status),
                 ),
                 trailing: IconButton(
-                  tooltip: 'Excluir passkey',
+                  tooltip: strings.passkeysDelete,
                   onPressed: () => _delete(item),
                   icon: const Icon(Icons.delete_outline),
                 ),
@@ -113,9 +122,10 @@ class _PasskeysScreenState extends State<PasskeysScreen> {
   }
 }
 
-String _statusLabel(ManagedPasskeyStatus status) => switch (status) {
-  ManagedPasskeyStatus.available => 'Disponível',
-  ManagedPasskeyStatus.missingKey => 'Metadados sem chave correspondente',
-  ManagedPasskeyStatus.invalidKey => 'Chave invalidada pela biometria',
-  ManagedPasskeyStatus.orphanKey => 'Chave sem metadados correspondentes',
-};
+String _statusLabel(AppStrings strings, ManagedPasskeyStatus status) =>
+    switch (status) {
+      ManagedPasskeyStatus.available => strings.passkeyStatusAvailable,
+      ManagedPasskeyStatus.missingKey => strings.passkeyStatusMissingKey,
+      ManagedPasskeyStatus.invalidKey => strings.passkeyStatusInvalidKey,
+      ManagedPasskeyStatus.orphanKey => strings.passkeyStatusOrphanKey,
+    };

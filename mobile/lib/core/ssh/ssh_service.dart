@@ -95,7 +95,7 @@ class SshService {
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
         request.isExpiredAt(moment())) {
-      throw const FormatException('Frame ssh fora desta sessão');
+      throw const FormatException('ssh frame from another session');
     }
     // The session's credential has to be the SSH one. A session opened for
     // anything else cannot borrow this key by naming a different operation.

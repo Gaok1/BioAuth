@@ -21,10 +21,28 @@ import 'ssh_service.dart';
 /// The length of a P-256 scalar, and half of the SSH signature.
 const int _scalarLength = 32;
 
+/// The prompt in English, for callers with no language pack to hand.
+///
+/// That is tests, and nothing in production: the runner is built from a
+/// provider that passes the words the user's language pack holds.
+const String defaultSshPromptTitle = 'SSH login';
+const String defaultSshPromptDetail =
+    'The session stays open until the terminal closes.';
+
 class NativeSshSigner implements SshSigner {
   const NativeSshSigner({
+    required this.promptTitle,
+    required this.promptDetail,
     SecureAuthenticator authenticator = const PhoneAuthNative(),
   }) : _authenticator = authenticator;
+
+  /// The two lines the platform prompt shows.
+  ///
+  /// Passed in rather than written here: this runs in a background session
+  /// with none of the app's own UI on screen, so there is no `Localizations`
+  /// to read, and the words still have to be in the language the user picked.
+  final String promptTitle;
+  final String promptDetail;
 
   final SecureAuthenticator _authenticator;
 
@@ -36,12 +54,11 @@ class NativeSshSigner implements SshSigner {
         payload: data,
         purpose: 'ssh',
         context: AuthenticationContext(
-          title: 'Entrar por SSH',
+          title: promptTitle,
           subtitle: prompt,
           // The prompt is the last thing between a request and a session, so it
           // says what approving costs rather than only what it is.
-          description:
-              'A sessão fica aberta enquanto o terminal estiver aberto.',
+          description: promptDetail,
         ),
       );
     } on Object {

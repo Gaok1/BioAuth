@@ -1,4 +1,4 @@
 import 'app/config.dart';
 import 'main.dart';
 
-void main() => runPhoneAuth(const AppConfig.production());
+Future<void> main() => runPhoneAuth(const AppConfig.production());

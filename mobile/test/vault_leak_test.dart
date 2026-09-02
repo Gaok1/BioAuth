@@ -57,7 +57,7 @@ void main() {
       shown.itemName,
       shown.username,
       shown.uri,
-      shown.operation.label,
+      shown.operation,
       shown.domain,
     ]) {
       expect(field, isNot(contains(canary)));

@@ -46,12 +46,33 @@ const String _kdfInfo = 'bioauth-vault-export-v1';
 /// ceiling, so anything that fits in a vault fits in a backup of it.
 const int maxExportItems = maxVaultItems;
 
+/// What is wrong with a backup file or its code.
+///
+/// A reason rather than a sentence: the restore screen is what turns this
+/// into words, in whichever language the interface is running.
+enum BackupProblem {
+  notABackupCode,
+  codeHasInvalidCharacter,
+  codeIncomplete,
+  vaultTooLarge,
+  fileTruncated,
+  wrongCodeOrEdited,
+  contradictsItself,
+  badHeader,
+  schemaTooNew,
+  backupTooLarge,
+  notABackupFile,
+  badItem,
+  unknownItemKind,
+  corruptContent,
+}
+
 class VaultExportException implements Exception {
-  const VaultExportException(this.message);
-  final String message;
+  const VaultExportException(this.problem);
+  final BackupProblem problem;
 
   @override
-  String toString() => message;
+  String toString() => 'VaultExportException(${problem.name})';
 }
 
 /// One item as it travels inside an export. Carries the secret, which is why
@@ -152,9 +173,7 @@ class VaultExportKey {
   factory VaultExportKey.parse(String code) {
     final cleaned = code.replaceAll(RegExp(r'[\s\-_]'), '').toUpperCase();
     if (!cleaned.startsWith(_codePrefix)) {
-      throw const VaultExportException(
-        'Este código não é de um backup de cofre',
-      );
+      throw const VaultExportException(BackupProblem.notABackupCode);
     }
 
     final body = cleaned.substring(_codePrefix.length);
@@ -164,7 +183,7 @@ class VaultExportKey {
     for (final character in body.split('')) {
       final index = _alphabet.indexOf(character);
       if (index < 0) {
-        throw const VaultExportException('O código tem um caractere inválido');
+        throw const VaultExportException(BackupProblem.codeHasInvalidCharacter);
       }
       accumulator = (accumulator << 5) | index;
       bits += 5;
@@ -174,7 +193,7 @@ class VaultExportKey {
       }
     }
     if (out.length != _keyLength) {
-      throw const VaultExportException('O código está incompleto');
+      throw const VaultExportException(BackupProblem.codeIncomplete);
     }
     return VaultExportKey(Uint8List.fromList(out));
   }
@@ -192,7 +211,7 @@ Future<Uint8List> sealVaultExport({
   Uint8List? nonce,
 }) async {
   if (items.length > maxExportItems) {
-    throw const VaultExportException('Cofre grande demais para exportar');
+    throw const VaultExportException(BackupProblem.vaultTooLarge);
   }
   final random = Random.secure();
   final actualSalt =
@@ -244,7 +263,7 @@ Future<List<VaultExportItem>> openVaultExport(
   final (header, sealed) = _split(file);
   final described = _decodeHeader(header);
   if (sealed.length < 16) {
-    throw const VaultExportException('O arquivo de backup está truncado');
+    throw const VaultExportException(BackupProblem.fileTruncated);
   }
 
   final reader = CborReader(header);
@@ -270,9 +289,7 @@ Future<List<VaultExportItem>> openVaultExport(
       ),
     );
   } on Object {
-    throw const VaultExportException(
-      'O código não abre este arquivo, ou o arquivo foi alterado',
-    );
+    throw const VaultExportException(BackupProblem.wrongCodeOrEdited);
   }
 
   final items = _decodeItems(plaintext);
@@ -280,7 +297,7 @@ Future<List<VaultExportItem>> openVaultExport(
   // disagree if the encoder was wrong. Checking anyway costs nothing and keeps
   // the restore screen's promise honest.
   if (items.length != described.itemCount) {
-    throw const VaultExportException('O backup se contradiz sobre o conteúdo');
+    throw const VaultExportException(BackupProblem.contradictsItself);
   }
   return items;
 }
@@ -315,14 +332,11 @@ VaultExportHeader _decodeHeader(Uint8List header) {
   try {
     final reader = CborReader(header);
     if (reader.array() != 5) {
-      throw const VaultExportException('Cabeçalho de backup inválido');
+      throw const VaultExportException(BackupProblem.badHeader);
     }
     final schema = reader.uint();
     if (schema != vaultExportSchema) {
-      throw VaultExportException(
-        'Este backup é da versão $schema; este aplicativo lê a '
-        '$vaultExportSchema',
-      );
+      throw const VaultExportException(BackupProblem.schemaTooNew);
     }
     reader.bytes();
     reader.bytes();
@@ -330,7 +344,7 @@ VaultExportHeader _decodeHeader(Uint8List header) {
     final itemCount = reader.uint();
     reader.finish();
     if (itemCount > maxExportItems) {
-      throw const VaultExportException('Backup grande demais para restaurar');
+      throw const VaultExportException(BackupProblem.backupTooLarge);
     }
     return VaultExportHeader(
       schema: schema,
@@ -338,7 +352,7 @@ VaultExportHeader _decodeHeader(Uint8List header) {
       itemCount: itemCount,
     );
   } on CborException {
-    throw const VaultExportException('Cabeçalho de backup inválido');
+    throw const VaultExportException(BackupProblem.badHeader);
   }
 }
 
@@ -346,14 +360,14 @@ VaultExportHeader _decodeHeader(Uint8List header) {
   try {
     final reader = CborReader(file);
     if (reader.array() != 2) {
-      throw const VaultExportException('Isto não é um backup de cofre');
+      throw const VaultExportException(BackupProblem.notABackupFile);
     }
     final header = reader.bytes();
     final sealed = reader.bytes();
     reader.finish();
     return (header, sealed);
   } on CborException {
-    throw const VaultExportException('Isto não é um backup de cofre');
+    throw const VaultExportException(BackupProblem.notABackupFile);
   }
 }
 
@@ -376,16 +390,16 @@ List<VaultExportItem> _decodeItems(Uint8List payload) {
     final reader = CborReader(payload);
     final count = reader.array();
     if (count > maxExportItems) {
-      throw const VaultExportException('Backup grande demais para restaurar');
+      throw const VaultExportException(BackupProblem.backupTooLarge);
     }
     final items = <VaultExportItem>[];
     for (var index = 0; index < count; index++) {
       if (reader.array() != 5) {
-        throw const VaultExportException('Item inválido no backup');
+        throw const VaultExportException(BackupProblem.badItem);
       }
       final kind = reader.uint();
       if (kind >= VaultItemKind.values.length) {
-        throw const VaultExportException('Tipo de item desconhecido no backup');
+        throw const VaultExportException(BackupProblem.unknownItemKind);
       }
       items.add(
         VaultExportItem(
@@ -400,6 +414,6 @@ List<VaultExportItem> _decodeItems(Uint8List payload) {
     reader.finish();
     return items;
   } on CborException {
-    throw const VaultExportException('O conteúdo do backup está corrompido');
+    throw const VaultExportException(BackupProblem.corruptContent);
   }
 }

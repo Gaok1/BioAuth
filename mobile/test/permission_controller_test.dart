@@ -149,7 +149,7 @@ void main() {
 
     await controller.toggle('cred-login', 'sudo', true);
 
-    expect(controller.failure, contains('disco cheio'));
+    expect(controller.saveFailed, isTrue);
     expect(controller.credentials.first.services, isEmpty);
   });
 }

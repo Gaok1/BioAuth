@@ -25,8 +25,7 @@ class UnavailablePhoneAuthenticator implements PhoneAuthenticator {
   Future<AuthorizationResult> authorize(
     AuthenticationRequest request, {
     required void Function(ConnectionPhase phase) onPhase,
-  }) =>
-      Future.error(UnsupportedError('Autenticador seguro nativo indisponível'));
+  }) => Future.error(UnsupportedError('no native secure authenticator'));
 
   @override
   void cancel(String requestId) {}

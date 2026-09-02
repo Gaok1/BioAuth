@@ -9,6 +9,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_strings.dart';
 import '../../core/vault/vault_approval.dart';
 
 /// Shows the sheet and resolves to what the user chose.
@@ -64,12 +65,13 @@ class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final strings = AppStrings.of(context);
     final domain = widget.request.domain;
 
     // Scrolls, because the sheet is sized by its contents and its contents are
     // sized by the system font and by names the computer chose. Past a certain
     // height a `Column` does not shrink -- it puts its last children below the
-    // bottom edge, and here those are "Aprovar" and "Recusar". A request that
+    // bottom edge, and here those are approve and refuse. A request that
     // can be neither approved nor refused looks, from the computer, like a
     // phone that stopped answering.
     return SingleChildScrollView(
@@ -100,7 +102,7 @@ class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Pedido do computador',
+                  strings.vaultRequestTitle,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -113,12 +115,23 @@ class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
           // The computer's own claim about its name, framed as a claim. The
           // phone verified the *pairing*, not that the name is honest, and the
           // wording must not promise more than that.
-          _Field(label: 'Computador', value: widget.request.verifierName),
-          _Field(label: 'Operação', value: widget.request.operation.label),
-          _Field(label: 'Item', value: widget.request.itemName, emphasis: true),
+          _Field(
+            label: strings.sshComputer,
+            value: widget.request.verifierName,
+          ),
+          _Field(
+            label: strings.vaultOperationLabel,
+            value: strings.vaultOperation(widget.request.operation),
+          ),
+          _Field(
+            label: strings.vaultItemLabel,
+            value: widget.request.itemName,
+            emphasis: true,
+          ),
           if (widget.request.username.isNotEmpty)
-            _Field(label: 'Usuário', value: widget.request.username),
-          if (domain.isNotEmpty) _Field(label: 'Domínio', value: domain),
+            _Field(label: strings.requestUser, value: widget.request.username),
+          if (domain.isNotEmpty)
+            _Field(label: strings.vaultDomainLabel, value: domain),
 
           const SizedBox(height: 16),
           Container(
@@ -135,11 +148,8 @@ class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
                 Expanded(
                   child: Text(
                     widget.request.operation.releasesSecret
-                        ? 'Se você aprovar, a senha vai para a área de '
-                              'transferência desse computador. O telefone '
-                              'deixa de controlá-la a partir daí.'
-                        : 'Se você aprovar, o item guardado neste telefone '
-                              'muda. A alteração vem do computador acima.',
+                        ? strings.vaultApprovalCopyNote
+                        : strings.vaultApprovalWriteNote,
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
@@ -152,14 +162,14 @@ class _VaultApprovalSheetState extends State<_VaultApprovalSheet> {
             onPressed: () => Navigator.of(context).pop(true),
             child: Text(
               widget.request.operation.releasesSecret
-                  ? 'Aprovar cópia'
-                  : 'Aprovar',
+                  ? strings.vaultApproveCopy
+                  : strings.approve,
             ),
           ),
           const SizedBox(height: 8),
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Recusar'),
+            child: Text(strings.refuse),
           ),
         ],
       ),

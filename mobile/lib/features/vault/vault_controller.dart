@@ -67,7 +67,12 @@ class VaultController extends ChangeNotifier {
 
   bool locked = true;
   bool busy = false;
-  String? error;
+
+  /// What the last action got wrong, if anything.
+  ///
+  /// A reason rather than a sentence, so the screen is the only place that
+  /// decides wording and the controller stays out of the language business.
+  VaultFailure? failure;
 
   /// What the last action did, when it worked.
   ///
@@ -82,14 +87,14 @@ class VaultController extends ChangeNotifier {
   /// and putting nothing back. It matters most for a TOTP item, where what
   /// lands on the clipboard is six digits and what is stored is the seed, and
   /// the user has no way to tell which one they are about to paste.
-  String? notice;
+  VaultNotice? notice;
 
   /// Whether a write landed in the store after this list was read.
   ///
   /// Only the desktop can do that: the screen's own writes replace [_items] as
   /// they finish. Left unsaid, a password created from the PC simply was not
   /// on the phone, and three separate failures already tell the user to
-  /// "atualize o cofre" — an instruction the screen had no way to follow.
+  /// "refresh the vault" -- an instruction the screen had no way to follow.
   bool stale = false;
 
   /// Whether the last failure was one no retry can fix.
@@ -221,7 +226,7 @@ class VaultController extends ChangeNotifier {
     _generation++;
     locked = true;
     _forget();
-    error = null;
+    failure = null;
     notice = null;
     notifyListeners();
   }
@@ -246,7 +251,7 @@ class VaultController extends ChangeNotifier {
   Future<void> reveal(VaultItemSummary item) => _run(() async {
     final fetched = await _store.fetch(item.id);
     if (fetched.revision != item.revision) {
-      throw StateError('Item alterado; atualize o cofre');
+      throw StateError('item changed; refresh the vault');
     }
     // Whatever was open before is closed here, ticker included. There is one
     // revealed code for the whole vault and it is read by whichever item is
@@ -334,7 +339,7 @@ class VaultController extends ChangeNotifier {
   Future<void> copy(VaultItemSummary item) => _run(() async {
     final fetched = await _store.fetch(item.id);
     if (fetched.revision != item.revision) {
-      throw StateError('Item alterado; atualize o cofre');
+      throw StateError('item changed; refresh the vault');
     }
     // A TOTP item copies its six digits, never its seed. Putting the seed on
     // the clipboard would paste something no login field accepts and leave the
@@ -344,11 +349,11 @@ class VaultController extends ChangeNotifier {
       await _copy(code.digits);
       // Said out loud, because this is the one item whose stored value and
       // copied value are different things.
-      notice = 'Código de ${item.name} copiado — não a semente.';
+      notice = VaultCodeCopied(item.name);
       return;
     }
     await _copy(fetched.secret);
-    notice = 'Senha de ${item.name} copiada.';
+    notice = VaultPasswordCopied(item.name);
   });
 
   Future<void> create(VaultItemInput input) =>
@@ -466,7 +471,7 @@ class VaultController extends ChangeNotifier {
     if (busy) return;
     final generation = _generation;
     busy = true;
-    error = null;
+    failure = null;
     // The last action's word on itself does not survive the next one starting.
     notice = null;
     unrecoverable = false;
@@ -474,7 +479,7 @@ class VaultController extends ChangeNotifier {
     notifyListeners();
     try {
       await action();
-    } on PlatformException catch (failure) {
+    } on PlatformException catch (thrown) {
       // Three of these no retry can fix, and saying so is the whole message. A
       // user whose key a new fingerprint invalidated has lost the vault for
       // good; "could not complete the operation" leaves them retrying forever.
@@ -487,10 +492,10 @@ class VaultController extends ChangeNotifier {
         // is 24, so this is a device the app installs on perfectly happily and
         // then cannot open a vault on -- and it is not a failure that a retry
         // reaches. Left out of this set it took the generic message and kept
-        // the "Desbloquear" button live, so the answer to tapping it was to
+        // the unlock button live, so the answer to tapping it was to
         // tap it again.
         'unsupported_android',
-      }.contains(failure.code);
+      }.contains(thrown.code);
 
       // A store written by a newer build is unreadable *here* and perfectly
       // readable after an update. It must never be offered for discarding:
@@ -498,78 +503,20 @@ class VaultController extends ChangeNotifier {
       _discardable = const {
         'key_invalidated',
         'store_corrupt',
-      }.contains(failure.code);
+      }.contains(thrown.code);
 
-      error = switch (failure.code) {
-        'authentication_cancelled' => 'Autenticação cancelada.',
-        // Not the same as cancelling, and the store already tells them apart:
-        // this is the prompt ending on its own -- a lockout after too many
-        // attempts, a timeout, a sensor that failed to read. Retrying is the
-        // right thing to do and the generic message did not say so.
-        'authentication_failed' =>
-          'Não foi possível confirmar sua biometria. Tente de novo em '
-              'instantes.',
-        // `UserNotAuthenticatedException`: the key is auth-per-use and the
-        // authentication behind it has expired. Also a retry.
-        'authentication_required' =>
-          'Confirme sua biometria para abrir o cofre.',
-        'biometric_unavailable' =>
-          'Cadastre uma biometria forte para usar o cofre.',
-        // The prompt could not be raised at all -- the app was on its way out
-        // of the foreground when the tap landed. Nothing is wrong with the
-        // vault and the next tap works, which the generic message did not say.
-        'activity_unavailable' =>
-          'O cofre não conseguiu abrir a confirmação. Volte para o aplicativo '
-              'e tente de novo.',
-        // Permanent on this phone, and not a reason to destroy anything --
-        // there is nothing stored yet, because the key was never created.
-        'unsupported_android' =>
-          'O cofre precisa do Android 11 ou mais novo. Este aparelho não '
-              'consegue guardar a chave com a proteção que o cofre exige.',
-        'revision_conflict' =>
-          'Este item mudou. Atualize o cofre e tente novamente.',
-        'operation_in_progress' =>
-          'Outra operação do cofre está em andamento. Tente de novo em '
-              'instantes.',
-        // Every message around this one names the next thing to do, and this
-        // one named a state. A vault at its ceiling is the one failure here
-        // the user can clear themselves in ten seconds, and "o cofre está
-        // cheio" left them looking for a setting that does not exist.
-        'vault_full' =>
-          'O cofre já guarda o máximo de $maxVaultItems itens. Apague algum '
-              'antes de guardar outro.',
-        // The vault operation worked. The item was fetched, the biometric was
-        // spent and the plaintext was decrypted -- and then the clipboard
-        // refused it. Blaming the vault sends the user to look at the wrong
-        // thing, and a retry buys another fingerprint for the same failure.
-        'clipboard_unavailable' =>
-          'Este aparelho não tem área de transferência, então nada foi '
-              'copiado. Use "Revelar" para ler o valor na tela.',
-        'clipboard_failed' =>
-          'A área de transferência recusou o valor; nada foi copiado.',
-        'key_invalidated' =>
-          'A chave deste cofre foi invalidada por um novo cadastro de '
-              'biometria. O conteúdo não pode mais ser aberto — nem por você, '
-              'nem por ninguém. Restaure a partir de um backup.',
-        'store_corrupt' =>
-          'O arquivo do cofre não passou na verificação de integridade. '
-              'Ele não pode ser aberto. Restaure a partir de um backup.',
-        'store_version_unsupported' =>
-          'Este cofre foi gravado por uma versão mais nova do aplicativo. '
-              'Atualize antes de abri-lo — não apague nada.',
-        _ => 'Não foi possível concluir a operação do cofre.',
-      };
-    } on TotpException catch (failure) {
+      failure = VaultStoreFailure(thrown.code);
+    } on TotpException catch (thrown) {
       // A seed that will not parse is a stored item that is wrong, and saying
       // so beats the generic message: the user can fix it by editing the item.
-      error = failure.message;
-    } on VaultExportException catch (failure) {
-      // A backup already says exactly what is wrong with it — bad code, wrong
-      // file, edited file — and flattening those into the generic message
+      failure = VaultSeedFailure(thrown.problem);
+    } on VaultExportException catch (thrown) {
+      // A backup already says exactly what is wrong with it -- bad code, wrong
+      // file, edited file -- and flattening those into the generic message
       // would leave the user retyping a code that was never the problem.
-      error = failure.message;
+      failure = VaultBackupFailure(thrown.problem);
     } on Object {
-      error = 'Não foi possível concluir a operação do cofre.';
+      failure = const VaultStoreFailure('unknown');
     } finally {
       busy = false;
       // A lock that landed while this was in flight wins, whatever the
@@ -590,4 +537,51 @@ class VaultController extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     }
   }
+}
+
+/// What went wrong in the vault, as something the screen can put into words.
+sealed class VaultFailure {
+  const VaultFailure();
+}
+
+/// A refusal from the store, named by the code it reported.
+///
+/// The code is the store's own vocabulary and stays that way: this side
+/// decides what a code means for the buttons on screen -- whether a retry can
+/// help, whether discarding is offered -- and the language pack decides what
+/// it says.
+class VaultStoreFailure extends VaultFailure {
+  const VaultStoreFailure(this.code);
+
+  final String code;
+}
+
+/// A TOTP seed that will not parse. Fixable by editing the item.
+class VaultSeedFailure extends VaultFailure {
+  const VaultSeedFailure(this.problem);
+
+  final TotpProblem problem;
+}
+
+/// A backup file or code that will not open.
+class VaultBackupFailure extends VaultFailure {
+  const VaultBackupFailure(this.problem);
+
+  final BackupProblem problem;
+}
+
+/// What the last action did, when it worked.
+sealed class VaultNotice {
+  const VaultNotice(this.itemName);
+
+  final String itemName;
+}
+
+class VaultPasswordCopied extends VaultNotice {
+  const VaultPasswordCopied(super.itemName);
+}
+
+/// Six digits, not the seed -- which is the whole reason this is said out loud.
+class VaultCodeCopied extends VaultNotice {
+  const VaultCodeCopied(super.itemName);
 }

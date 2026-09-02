@@ -6,6 +6,7 @@ import 'package:phone_auth/app/app_controller.dart';
 import 'package:phone_auth/app/config.dart';
 import 'package:phone_auth/core/mock/fake_phone_authenticator.dart';
 import 'package:phone_auth/core/mock/mock_seed.dart';
+import 'package:phone_auth/l10n/language_preference.dart';
 
 void main() {
   testWidgets('shows contextual request and approves through mock biometric', (
@@ -31,13 +32,13 @@ void main() {
     await tester.tap(find.text('SSH • prod-server'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Origem'), findsOneWidget);
-    expect(find.text('Usuário'), findsOneWidget);
+    expect(find.text('Origin'), findsOneWidget);
+    expect(find.text('User'), findsOneWidget);
     expect(find.text('alice'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Autorizar'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Solicitações'), findsNothing);
+    expect(find.text('Requests'), findsNothing);
   });
 
   testWidgets('production starts with onboarding and no mock data', (
@@ -45,23 +46,41 @@ void main() {
   ) async {
     await tester.pumpWidget(const ProviderScope(child: PhoneAuthApp()));
 
-    expect(find.text('Seu telefone, sua aprovação'), findsOneWidget);
-    expect(find.text('Passkeys ainda não têm backup'), findsOneWidget);
+    expect(find.text('Approve logins with your phone'), findsOneWidget);
+    expect(find.text('Passkeys have no backup'), findsOneWidget);
     expect(find.text('Desktop-Casa'), findsNothing);
   });
 
-  testWidgets('Flutter speaks the language the rest of the app does', (
+  testWidgets("with nothing picked, the app speaks the phone's language", (
     tester,
   ) async {
     await tester.pumpWidget(const ProviderScope(child: PhoneAuthApp()));
 
     final context = tester.element(find.byType(Navigator).first);
-    expect(Localizations.localeOf(context), const Locale('pt', 'BR'));
+    expect(Localizations.localeOf(context), const Locale('en'));
+    expect(find.text('Approve logins with your phone'), findsOneWidget);
+  });
 
-    // The strings nobody writes and everybody reads: the overflow button on
-    // every vault item, the toolbar over every text field, the back button.
-    // With no delegates a `MaterialApp` runs on `DefaultMaterialLocalizations`
-    // and these were English in an app that is Portuguese everywhere else.
+  /// The strings nobody writes and everybody reads: the overflow button on
+  /// every vault item, the toolbar over every text field, the back button.
+  /// They come from Flutter, and a picked language that moved only this app's
+  /// own words would leave half a screen in each.
+  testWidgets("a picked language moves Flutter's own strings too", (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          bootLanguageProvider.overrideWithValue(const Locale('pt', 'BR')),
+        ],
+        child: const PhoneAuthApp(),
+      ),
+    );
+
+    final context = tester.element(find.byType(Navigator).first);
+    expect(Localizations.localeOf(context), const Locale('pt', 'BR'));
+    expect(find.text('Aprove acessos pelo telefone'), findsOneWidget);
+
     final material = MaterialLocalizations.of(context);
     expect(material.pasteButtonLabel, isNot('Paste'));
     expect(material.backButtonTooltip, isNot('Back'));

@@ -13,6 +13,8 @@ import 'package:phone_auth_native/phone_auth_native.dart';
 import 'app_controller.dart';
 import 'navigation.dart';
 
+import '../l10n/language_preference.dart';
+
 import '../core/auth/interactive_authorizer.dart';
 import '../core/ssh/ssh_service.dart';
 import '../core/vault/vault_approval.dart';
@@ -215,8 +217,13 @@ final pairedSessionRunnerProvider = Provider.autoDispose<PairedSessionRunner?>((
   final records = ref.watch(pairedVerifiersProvider).value;
   if (transport == null || records == null) return null;
 
+  final strings = ref.watch(appStringsProvider);
   final runner = PairedSessionRunner(
     transport: transport,
+    // The SSH prompt is raised by the platform from a background session, so
+    // its words cannot come from the widget tree.
+    sshPromptTitle: strings.sshTitle,
+    sshPromptDetail: strings.sshSessionLasts,
     authorizer: ref.watch(biometricAuthorizerProvider),
     consent: ref.watch(interactiveAuthorizerProvider),
     vaultApproval: ref.watch(vaultApprovalProvider),

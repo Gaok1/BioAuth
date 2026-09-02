@@ -20,7 +20,7 @@ class AuthResponse {
         credentialId.isEmpty ||
         (decision == AuthorizationDecision.authorized &&
             (algorithm.isEmpty || signature.isEmpty))) {
-      throw const FormatException('Resposta de autorização inválida');
+      throw const FormatException('invalid authorization response');
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:phone_auth_native/phone_auth_native.dart';
 
 import '../../app/providers.dart';
+import '../../l10n/app_strings.dart';
 import '../../shared/security_status.dart';
 
 class SecurityScreen extends ConsumerWidget {
@@ -10,101 +11,104 @@ class SecurityScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     final capabilities = ref.watch(securityCapabilitiesProvider);
     final background = ref.watch(backgroundSessionsReadyProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Segurança')),
+      appBar: AppBar(title: Text(strings.securityTitle)),
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 12),
         children: [
           capabilities.when(
-            data: _keyStatus,
-            loading: () => const SecurityStatus(
-              title: 'Chave do dispositivo',
-              detail: 'Verificando o Android Keystore…',
+            data: (data) => _keyStatus(strings, data),
+            loading: () => SecurityStatus(
+              title: strings.securityKey,
+              detail: strings.securityChecking,
               secure: false,
             ),
-            error: (_, _) => const SecurityStatus(
-              title: 'Chave do dispositivo',
-              detail: 'Não foi possível consultar o Android Keystore',
+            error: (_, _) => SecurityStatus(
+              title: strings.securityKey,
+              detail: strings.securityKeyUnknown,
               secure: false,
             ),
           ),
           capabilities.when(
-            data: _biometricStatus,
-            loading: () => const SecurityStatus(
-              title: 'Biometria forte',
-              detail: 'Verificando…',
+            data: (data) => _biometricStatus(strings, data),
+            loading: () => SecurityStatus(
+              title: strings.securityBiometrics,
+              detail: strings.securityChecking,
               secure: false,
             ),
-            error: (_, _) => const SecurityStatus(
-              title: 'Biometria forte',
-              detail: 'Não foi possível verificar a biometria',
+            error: (_, _) => SecurityStatus(
+              title: strings.securityBiometrics,
+              detail: strings.securityBiometricsUnknown,
               secure: false,
             ),
           ),
           background.when(
             data: (ready) => SecurityStatus(
-              title: 'Sessões em segundo plano',
+              title: strings.securityBackground,
               detail: ready
-                  ? 'Serviço persistente ativo'
-                  : 'Inativas; pareie um computador para ativar',
+                  ? strings.securityBackgroundRunning
+                  : strings.securityBackgroundIdle,
               secure: ready,
             ),
-            loading: () => const SecurityStatus(
-              title: 'Sessões em segundo plano',
-              detail: 'Verificando o serviço persistente…',
+            loading: () => SecurityStatus(
+              title: strings.securityBackground,
+              detail: strings.securityChecking,
               secure: false,
             ),
-            error: (_, _) => const SecurityStatus(
-              title: 'Sessões em segundo plano',
-              detail: 'Não foi possível verificar o serviço persistente',
+            error: (_, _) => SecurityStatus(
+              title: strings.securityBackground,
+              detail: strings.securityBackgroundUnknown,
               secure: false,
             ),
-          ),
-          const SecurityStatus(
-            title: 'Funcionamento offline',
-            detail: 'Nenhuma conexão com nuvem é necessária',
-            secure: true,
           ),
         ],
       ),
     );
   }
 
-  static SecurityStatus _keyStatus(SecurityCapabilities capabilities) {
+  static SecurityStatus _keyStatus(
+    AppStrings strings,
+    SecurityCapabilities capabilities,
+  ) {
     final detail = !capabilities.keyExists
-        ? 'A chave de autorização ainda não foi criada'
+        ? strings.securityKeyMissing
         : capabilities.strongBoxBacked
-        ? 'Chave protegida por StrongBox no Android Keystore'
+        ? strings.securityKeyStrongBox
         : capabilities.hardwareBacked
-        ? 'Chave protegida por hardware no Android Keystore; sem StrongBox'
-        : 'Chave sem proteção de hardware';
+        ? strings.securityKeyHardware
+        : strings.securityKeySoftware;
     return SecurityStatus(
-      title: 'Chave do dispositivo',
+      title: strings.securityKey,
       detail: detail,
       secure: capabilities.keyExists && capabilities.hardwareBacked,
     );
   }
 
-  static SecurityStatus _biometricStatus(SecurityCapabilities capabilities) {
+  static SecurityStatus _biometricStatus(
+    AppStrings strings,
+    SecurityCapabilities capabilities,
+  ) {
     final biometrics = capabilities.biometrics;
     final available =
         biometrics.availability == BiometricAvailability.available;
     return SecurityStatus(
-      title: 'Biometria forte',
+      title: strings.securityBiometrics,
       detail: switch (biometrics.availability) {
         BiometricAvailability.available when biometrics.strongBiometrics =>
-          'BIOMETRIC_STRONG disponível',
-        BiometricAvailability.available =>
-          'Há biometria, mas ela não atende BIOMETRIC_STRONG',
-        BiometricAvailability.noneEnrolled => 'Nenhuma biometria cadastrada',
+          strings.securityBiometricsStrong,
+        BiometricAvailability.available => strings.securityBiometricsWeak,
+        BiometricAvailability.noneEnrolled =>
+          strings.securityBiometricsNoneEnrolled,
         BiometricAvailability.temporarilyUnavailable =>
-          'Biometria temporariamente indisponível',
-        BiometricAvailability.unavailable => 'Biometria indisponível',
+          strings.securityBiometricsTemporarilyUnavailable,
+        BiometricAvailability.unavailable =>
+          strings.securityBiometricsUnavailable,
         BiometricAvailability.unsupported =>
-          'Biometria não suportada neste dispositivo',
-        BiometricAvailability.unknown => 'Estado biométrico desconhecido',
+          strings.securityBiometricsUnsupported,
+        BiometricAvailability.unknown => strings.securityBiometricsUnknown,
       },
       secure: available && biometrics.strongBiometrics,
     );

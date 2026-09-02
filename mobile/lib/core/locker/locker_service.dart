@@ -103,7 +103,7 @@ class LockerService {
     if (request.kind != ApplicationFrameKind.request ||
         !_sameBytes(request.sessionBinding, sessionBinding) ||
         request.isExpiredAt(moment)) {
-      throw const FormatException('Frame de locker fora desta sessão');
+      throw const FormatException('locker frame from another session');
     }
 
     Future<ApplicationOutcome> execute() async {
@@ -112,7 +112,7 @@ class LockerService {
           lockerCreateOperation => await _wrap(request),
           lockerUnlockOperation => await _unwrap(request, rekeying: false),
           lockerRekeyOperation => await _unwrap(request, rekeying: true),
-          _ => throw const FormatException('Operação de locker desconhecida'),
+          _ => throw const FormatException('unknown locker operation'),
         };
         return ApplicationOutcome(ApplicationFrameKind.response, payload);
       } on Object {

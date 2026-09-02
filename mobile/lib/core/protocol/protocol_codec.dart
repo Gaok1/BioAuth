@@ -96,7 +96,7 @@ class PhoneAuthProtocolCodec {
         final credentialId = _text(reader);
         final decisionIndex = reader.uint();
         if (decisionIndex >= AuthorizationDecision.values.length) {
-          throw const FormatException('Decisão inválida');
+          throw const FormatException('invalid decision');
         }
         return AuthResponse(
           protocolVersion: protocolVersion,
@@ -117,12 +117,12 @@ class PhoneAuthProtocolCodec {
     T Function(CborReader reader) build,
   ) {
     if (frame.isEmpty || frame.length > _maxFrameBytes) {
-      throw const FormatException('Tamanho de frame inválido');
+      throw const FormatException('invalid frame length');
     }
     try {
       final reader = CborReader(frame);
       if (reader.array() != expectedLength) {
-        throw const FormatException('Estrutura CBOR inválida');
+        throw const FormatException('invalid CBOR structure');
       }
       final decoded = build(reader);
       // Trailing bytes would mean the frame carried more than it declared.

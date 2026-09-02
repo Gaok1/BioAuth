@@ -163,7 +163,7 @@ T _decode<T>(
   Uint8List Function(T) encode,
 ) {
   if (payload.isEmpty || payload.length > _maxPayloadBytes) {
-    throw const FormatException('Payload LUKS inválido');
+    throw const FormatException('invalid LUKS payload');
   }
   try {
     final reader = CborReader(payload);
@@ -171,17 +171,17 @@ T _decode<T>(
       throw const FormatException('Estrutura LUKS inesperada');
     }
     if (reader.uint() != luksSchema) {
-      throw const FormatException('Schema LUKS não suportado');
+      throw const FormatException('unsupported LUKS schema');
     }
     final value = read(reader);
     reader.finish();
     final canonical = encode(value);
     if (canonical.length != payload.length) {
-      throw const FormatException('Payload LUKS não canônico');
+      throw const FormatException('non-canonical LUKS payload');
     }
     for (var i = 0; i < payload.length; i++) {
       if (canonical[i] != payload[i]) {
-        throw const FormatException('Payload LUKS não canônico');
+        throw const FormatException('non-canonical LUKS payload');
       }
     }
     return value;
@@ -195,30 +195,30 @@ void _names(String verifier, String volume) {
       verifier.length > _maxNameLength ||
       volume.trim().isEmpty ||
       volume.length > _maxNameLength) {
-    throw const FormatException('Nome LUKS inválido');
+    throw const FormatException('invalid LUKS name');
   }
 }
 
 void _binding(Uint8List value) {
   if (value.length != luksVolumeBindingLength) {
-    throw const FormatException('Binding LUKS inválido');
+    throw const FormatException('invalid LUKS binding');
   }
 }
 
 void _key(Uint8List value) {
   if (value.length != luksDiskKeyLength) {
-    throw const FormatException('Chave LUKS inválida');
+    throw const FormatException('invalid LUKS key');
   }
 }
 
 void _id(String value) {
   if (value.trim().isEmpty || value.length > _maxIdLength) {
-    throw const FormatException('Credencial LUKS inválida');
+    throw const FormatException('invalid LUKS credential');
   }
 }
 
 void _wrapper(Uint8List value) {
   if (value.isEmpty || value.length > luksMaxWrapperBytes) {
-    throw const FormatException('Wrapper LUKS inválido');
+    throw const FormatException('invalid LUKS wrapper');
   }
 }

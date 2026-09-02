@@ -9,6 +9,7 @@ library;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
+import 'package:phone_auth/core/vault/vault_export.dart';
 
 void main() {
   VaultItemInput input(String name, String secret) => VaultItemInput(
@@ -31,7 +32,7 @@ void main() {
     final controller = VaultController(store: newPhone);
     final outcome = await controller.restoreBackup(backup.bytes, backup.code);
 
-    expect(controller.error, isNull);
+    expect(controller.failure, isNull);
     expect(outcome!.added, 2);
     expect(outcome.skipped, 0);
     expect(await newPhone.fetchByName('banco'), 'hunter2');
@@ -86,7 +87,10 @@ void main() {
     expect(outcome, isNull);
     // Not the generic vault message: the user has to know it was the code and
     // not the file, or they go looking for the wrong problem.
-    expect(controller.error, contains('código'));
+    expect(
+      (controller.failure! as VaultBackupFailure).problem,
+      BackupProblem.wrongCodeOrEdited,
+    );
     expect(await target.listAll(), isEmpty);
   });
 

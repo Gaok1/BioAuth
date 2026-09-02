@@ -20,7 +20,7 @@ class NativeBiometricAuthorizer implements BiometricAuthorizer {
   }) async {
     final capabilities = await _authenticator.getSecurityCapabilities();
     if (!capabilities.biometrics.strongBiometrics) {
-      throw StateError('BIOMETRIC_STRONG indisponível');
+      throw StateError('BIOMETRIC_STRONG unavailable');
     }
     final result = await _authenticator.sign(
       payload: canonicalRequest,

@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/app_controller.dart';
+import '../../l10n/app_strings.dart';
 
 class OnboardingScreen extends ConsumerWidget {
   const OnboardingScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     return Scaffold(
       body: SafeArea(
         child: LayoutBuilder(
@@ -20,7 +22,7 @@ class OnboardingScreen extends ConsumerWidget {
             //
             // The height a scroll view offers is unbounded, so the column is
             // told it is at least a screenful. That is what gives
-            // `spaceBetween` something to spread — and it is why the spacing
+            // `spaceBetween` something to spread -- and it is why the spacing
             // is alignment rather than the `Spacer` that used to do it, since
             // a flex child in an unbounded column is an error.
             child: ConstrainedBox(
@@ -42,7 +44,7 @@ class OnboardingScreen extends ConsumerWidget {
                           .read(appControllerProvider.notifier)
                           .completeOnboarding(),
                       icon: const Icon(Icons.arrow_forward),
-                      label: const Text('Começar'),
+                      label: Text(strings.onboardingStart),
                     ),
                   ),
                 ],
@@ -59,36 +61,36 @@ class _Pitch extends StatelessWidget {
   const _Pitch();
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(
-        Icons.phonelink_lock,
-        size: 72,
-        color: Theme.of(context).colorScheme.primary,
-      ),
-      const SizedBox(height: 24),
-      Text(
-        'Seu telefone, sua aprovação',
-        style: Theme.of(context).textTheme.headlineLarge,
-      ),
-      const SizedBox(height: 12),
-      Text(
-        'Autorize acessos locais com contexto e biometria. '
-        'Funciona offline e suas chaves privadas permanecem no aparelho.',
-        style: Theme.of(context).textTheme.bodyLarge,
-      ),
-      const SizedBox(height: 20),
-      const Card(
-        child: ListTile(
-          leading: Icon(Icons.warning_amber),
-          title: Text('Passkeys ainda não têm backup'),
-          subtitle: Text(
-            'Mantenha outro método de acesso em cada site antes de criar uma passkey.',
+  Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.phonelink_lock,
+          size: 72,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(height: 24),
+        Text(
+          strings.onboardingTitle,
+          style: Theme.of(context).textTheme.headlineLarge,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          strings.onboardingBody,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 20),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.warning_amber),
+            title: Text(strings.onboardingPasskeyWarningTitle),
+            subtitle: Text(strings.onboardingPasskeyWarningBody),
           ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }

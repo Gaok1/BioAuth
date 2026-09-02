@@ -51,12 +51,27 @@ enum TotpAlgorithm {
   }
 }
 
+/// What is wrong with a seed, as a reason rather than a sentence.
+///
+/// The screen is what turns this into words, so the same failure reads in
+/// whichever language the interface is running.
+enum TotpProblem {
+  digitsOutOfRange,
+  windowOutOfRange,
+  emptyKey,
+  invalidCharacter,
+  keyTooShort,
+  notOtpauth,
+  noKeyInUri,
+  unsupportedAlgorithm,
+}
+
 class TotpException implements Exception {
-  const TotpException(this.message);
-  final String message;
+  const TotpException(this.problem);
+  final TotpProblem problem;
 
   @override
-  String toString() => message;
+  String toString() => 'TotpException(${problem.name})';
 }
 
 /// RFC 4648 base32, which is how every issuer writes a TOTP seed.
@@ -89,17 +104,17 @@ class TotpSecret {
     TotpAlgorithm algorithm = TotpAlgorithm.sha1,
   }) {
     if (digits < 6 || digits > 8) {
-      throw const TotpException('Um código TOTP tem de 6 a 8 dígitos');
+      throw const TotpException(TotpProblem.digitsOutOfRange);
     }
     if (period.inSeconds < 1 || period.inSeconds > 300) {
-      throw const TotpException('Janela TOTP fora do intervalo aceitável');
+      throw const TotpException(TotpProblem.windowOutOfRange);
     }
 
     final cleaned = secret
         .replaceAll(RegExp(r'[\s-]'), '')
         .replaceAll('=', '')
         .toUpperCase();
-    if (cleaned.isEmpty) throw const TotpException('A chave TOTP está vazia');
+    if (cleaned.isEmpty) throw const TotpException(TotpProblem.emptyKey);
 
     final out = <int>[];
     var accumulator = 0;
@@ -107,7 +122,7 @@ class TotpSecret {
     for (final character in cleaned.split('')) {
       final index = _alphabet.indexOf(character);
       if (index < 0) {
-        throw const TotpException('A chave TOTP tem um caractere inválido');
+        throw const TotpException(TotpProblem.invalidCharacter);
       }
       accumulator = (accumulator << 5) | index;
       bits += 5;
@@ -116,7 +131,7 @@ class TotpSecret {
         out.add((accumulator >> bits) & 0xff);
       }
     }
-    if (out.isEmpty) throw const TotpException('A chave TOTP é curta demais');
+    if (out.isEmpty) throw const TotpException(TotpProblem.keyTooShort);
     return TotpSecret(
       Uint8List.fromList(out),
       digits: digits,
@@ -133,11 +148,11 @@ class TotpSecret {
   factory TotpSecret.fromUri(String uri) {
     final parsed = Uri.tryParse(uri);
     if (parsed == null || parsed.scheme != 'otpauth' || parsed.host != 'totp') {
-      throw const TotpException('Isto não é um otpauth://totp');
+      throw const TotpException(TotpProblem.notOtpauth);
     }
     final secret = parsed.queryParameters['secret'];
     if (secret == null || secret.isEmpty) {
-      throw const TotpException('O otpauth não traz uma chave');
+      throw const TotpException(TotpProblem.noKeyInUri);
     }
     // An `algorithm=` this does not implement is still refused rather than
     // ignored: reading it as SHA-1 would generate a plausible code that no
@@ -147,7 +162,7 @@ class TotpSecret {
         ? TotpAlgorithm.sha1
         : TotpAlgorithm.parse(named);
     if (algorithm == null) {
-      throw TotpException('Algoritmo TOTP não suportado: $named');
+      throw const TotpException(TotpProblem.unsupportedAlgorithm);
     }
     return TotpSecret.parse(
       secret,

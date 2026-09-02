@@ -218,7 +218,7 @@ class VaultListResponse {
 
   void validate() {
     if (items.length > vaultMaxPageItems) {
-      throw const FormatException('Página de cofre grande demais');
+      throw const FormatException('vault page too large');
     }
     for (final item in items) {
       item.validate();
@@ -247,7 +247,7 @@ class VaultListResponse {
       // Conferido antes de alocar: o prefixo de tamanho vem de fora e confiar
       // nele seria a negação de serviço inteira.
       if (count > vaultMaxPageItems) {
-        throw const FormatException('Página de cofre grande demais');
+        throw const FormatException('vault page too large');
       }
       final items = <VaultItemSummary>[
         for (var index = 0; index < count; index++)
@@ -610,7 +610,7 @@ T _decode<T>(
   Uint8List Function(T value) encode,
 ) {
   if (payload.isEmpty || payload.length > maxVaultPayloadBytes) {
-    throw const FormatException('Payload de cofre com tamanho inválido');
+    throw const FormatException('invalid vault payload length');
   }
   try {
     final reader = CborReader(payload);
@@ -618,17 +618,17 @@ T _decode<T>(
       throw const FormatException('Estrutura de payload inesperada');
     }
     if (reader.uint() != vaultSchema) {
-      throw const FormatException('Schema de cofre não suportado');
+      throw const FormatException('unsupported vault schema');
     }
     final decoded = read(reader);
     reader.finish();
     final reencoded = encode(decoded);
     if (reencoded.length != payload.length) {
-      throw const FormatException('Payload de cofre não canônico');
+      throw const FormatException('non-canonical vault payload');
     }
     for (var index = 0; index < payload.length; index++) {
       if (reencoded[index] != payload[index]) {
-        throw const FormatException('Payload de cofre não canônico');
+        throw const FormatException('non-canonical vault payload');
       }
     }
     return decoded;
@@ -648,32 +648,32 @@ Uint8List _sized(Uint8List payload) {
 
 void _checkName(String field, String value) {
   if (value.trim().isEmpty || value.length > _maxNameLength) {
-    throw FormatException('$field inválido');
+    throw FormatException('invalid $field');
   }
 }
 
 void _checkId(String field, String value) {
   if (value.trim().isEmpty || value.length > _maxIdLength) {
-    throw FormatException('$field inválido');
+    throw FormatException('invalid $field');
   }
 }
 
 /// Limitado, mas pode ser vazio.
 void _checkOptional(String field, String value, int max) {
   if (value.length > max) {
-    throw FormatException('$field inválido');
+    throw FormatException('invalid $field');
   }
 }
 
 void _checkSecret(String value) {
   if (value.isEmpty || value.length > _maxSecretLength) {
-    throw const FormatException('secret inválido');
+    throw const FormatException('invalid secret');
   }
 }
 
 /// Revisão começa em um, então zero é sempre quem esqueceu de preencher.
 void _checkRevision(int revision) {
   if (revision < 1) {
-    throw const FormatException('revision inválida');
+    throw const FormatException('invalid revision');
   }
 }

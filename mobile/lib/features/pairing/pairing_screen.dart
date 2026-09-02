@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/pairing/pairing_service.dart';
 import '../../core/protocol/enrolment.dart';
+import '../../l10n/app_strings.dart';
 import '../../shared/page_heading.dart';
 import '../../shared/pairing_qr_scanner.dart';
 import '../../shared/verification_code_panel.dart';
@@ -12,15 +14,16 @@ class PairingScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final strings = AppStrings.of(context);
     final state = ref.watch(pairingControllerProvider);
     final controller = ref.read(pairingControllerProvider.notifier);
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 32),
       children: [
-        const PageHeading(
-          title: 'Parear dispositivo',
-          subtitle: 'Escaneie o QR exibido pelo computador',
+        PageHeading(
+          title: strings.pairingTitle,
+          subtitle: strings.pairingSubtitle,
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -28,9 +31,7 @@ class PairingScreen extends ConsumerWidget {
             PairingStage.idle => PairingQRScanner(
               onDetect: controller.submitScan,
             ),
-            PairingStage.connecting => const _Busy(
-              label: 'Conectando ao computador…',
-            ),
+            PairingStage.connecting => _Busy(label: strings.pairingConnecting),
             PairingStage.awaitingCode => VerificationCodePanel(
               code: state.verificationCode!,
               verifierId: state.verifierId!,
@@ -40,30 +41,21 @@ class PairingScreen extends ConsumerWidget {
             ),
             PairingStage.paired => _Result(
               icon: Icons.verified_user,
-              title: state.message ?? 'Pareado.',
-              detail:
-                  'Conclua a autorização no computador para liberar as '
-                  'permissões desta credencial.',
+              title: strings.pairingDone(state.verifierId ?? ''),
+              detail: strings.pairingFinishOnComputer,
               onDismiss: controller.reset,
+              dismissLabel: strings.done,
             ),
             PairingStage.failed => _Result(
               icon: Icons.error_outline,
-              title: 'Pareamento não concluído',
-              detail: state.message ?? 'Tente novamente.',
+              title: strings.pairingFailed,
+              detail: strings.pairingProblem(
+                state.problem ?? PairingProblem.failed,
+              ),
               onDismiss: controller.reset,
+              dismissLabel: strings.done,
             ),
           },
-        ),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Text(
-            'O QR autentica o computador para o telefone. O código de seis '
-            'dígitos fecha o outro sentido: sem ele, quem fotografar a tela '
-            'poderia parear no seu lugar.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
         ),
       ],
     );
@@ -94,12 +86,14 @@ class _Result extends StatelessWidget {
     required this.title,
     required this.detail,
     required this.onDismiss,
+    required this.dismissLabel,
   });
 
   final IconData icon;
   final String title;
   final String detail;
   final VoidCallback onDismiss;
+  final String dismissLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +117,7 @@ class _Result extends StatelessWidget {
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 20),
-            FilledButton(onPressed: onDismiss, child: const Text('Concluir')),
+            FilledButton(onPressed: onDismiss, child: Text(dismissLabel)),
           ],
         ),
       ),

@@ -64,7 +64,7 @@ void main() {
 
     // And the consequence, which is what makes this different from every other
     // approval in the app.
-    expect(find.textContaining('enquanto o terminal'), findsOneWidget);
+    expect(find.textContaining('until the terminal closes'), findsOneWidget);
   });
 
   /// An `ssh` older than 8.9 sends no `session-bind`, so the phone genuinely
@@ -75,8 +75,8 @@ void main() {
   ) async {
     await pump(tester, destination: '');
 
-    expect(find.textContaining('não disse para qual servidor'), findsOneWidget);
-    expect(find.textContaining('não informado'), findsOneWidget);
+    expect(find.textContaining('did not name the server'), findsOneWidget);
+    expect(find.textContaining('not named'), findsOneWidget);
   });
 
   /// The two answers, and a helper that actually waits for the sheet to
@@ -111,11 +111,11 @@ void main() {
   }
 
   testWidgets('approving returns true', (tester) async {
-    expect(await answerWith(tester, 'Aprovar login'), isTrue);
+    expect(await answerWith(tester, 'Approve login'), isTrue);
   });
 
   testWidgets('refusing returns false', (tester) async {
-    expect(await answerWith(tester, 'Recusar'), isFalse);
+    expect(await answerWith(tester, 'Refuse'), isFalse);
   });
 
   /// Dismissing is not approving. A sheet whose only escape is the approve

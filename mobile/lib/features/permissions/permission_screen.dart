@@ -3,14 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/permissions/permission_store.dart';
+import '../../l10n/app_strings.dart';
 import 'permission_controller.dart';
 
-/// O que um computador pareado pode autorizar, editável daqui.
+/// What a paired computer may authorize, editable from here.
 ///
-/// A mesma lista existe no computador e as duas se acertam sozinhas. Editar
-/// aqui não fala com ele — este lado nunca inicia sessão — então a mudança vale
-/// a partir da próxima vez que ele conectar, e a tela diz isso em vez de fingir
-/// que já aplicou.
+/// The desktop holds the same list and the two reconcile. Editing here does
+/// not talk to it -- this side never opens a session -- so the change takes
+/// effect the next time it connects, which is what the screen says.
 class PermissionScreen extends ConsumerStatefulWidget {
   const PermissionScreen({
     required this.verifierId,
@@ -53,37 +53,36 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
     return Scaffold(
-      appBar: AppBar(title: Text('Permissões · ${widget.verifierName}')),
+      appBar: AppBar(
+        title: Text(strings.permissionsTitle(widget.verifierName)),
+      ),
       body: _controller.loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
-                const Card(
+                Card(
                   child: Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text(
-                      'Vale a partir da próxima conexão deste computador. '
-                      'Ele também pode editar a mesma lista; a mais recente '
-                      'vence, e num empate vale a deste aparelho.',
-                    ),
+                    padding: const EdgeInsets.all(16),
+                    child: Text(strings.permissionsAppliesOnNextConnection),
                   ),
                 ),
-                if (_controller.failure case final failure?) ...[
+                if (_controller.saveFailed) ...[
                   const SizedBox(height: 12),
                   Card(
                     color: Theme.of(context).colorScheme.errorContainer,
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Text(failure),
+                      child: Text(strings.permissionsSaveFailed),
                     ),
                   ),
                 ],
                 if (_controller.credentials.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('Nenhuma credencial para este computador.'),
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(strings.permissionsNoCredentials),
                   ),
                 for (final credential in _controller.credentials) ...[
                   const SizedBox(height: 12),
@@ -102,19 +101,18 @@ class _PermissionScreenState extends ConsumerState<PermissionScreen> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 8),
-                          for (final entry
-                              in PermissionController.grantable.entries)
+                          for (final service in PermissionController.grantable)
                             SwitchListTile(
                               key: Key(
-                                'grant ${credential.credentialId} ${entry.key}',
+                                'grant ${credential.credentialId} $service',
                               ),
                               dense: true,
                               contentPadding: EdgeInsets.zero,
-                              title: Text(entry.value),
-                              value: credential.services.contains(entry.key),
+                              title: Text(strings.permissionService(service)),
+                              value: credential.services.contains(service),
                               onChanged: (granted) => _controller.toggle(
                                 credential.credentialId,
-                                entry.key,
+                                service,
                                 granted,
                               ),
                             ),

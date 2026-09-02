@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/protocol/enrolment.dart';
 import '../domain/desktop_device.dart';
+import '../l10n/app_strings.dart';
 import 'connection_status.dart';
 
 class DeviceCard extends StatelessWidget {
@@ -15,12 +16,13 @@ class DeviceCard extends StatelessWidget {
   final DesktopDevice device;
   final VoidCallback onRevoke;
 
-  /// Abre o que este computador pode autorizar. Ausente onde o card é só
-  /// leitura.
+  /// Opens what this computer may authorize. Absent where the card is read
+  /// only.
   final VoidCallback? onPermissions;
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
     final blocked = device.isBlockedAt(DateTime.now().toUtc());
     return Card(
       child: Padding(
@@ -39,12 +41,14 @@ class DeviceCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   if (blocked)
-                    const Text('Bloqueado temporariamente')
+                    Text(strings.deviceBlocked)
                   else
                     ConnectionStatus(phase: device.phase),
                   const SizedBox(height: 4),
                   Text(
-                    'Visto ${_relativeTime(device.lastSeen)}',
+                    strings.deviceLastSeen(
+                      _relativeTime(strings, device.lastSeen),
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (device.purposes.isNotEmpty) ...[
@@ -65,16 +69,16 @@ class DeviceCard extends StatelessWidget {
               ),
             ),
             PopupMenuButton<void>(
-              tooltip: 'Opções do dispositivo',
+              tooltip: strings.deviceMenu,
               itemBuilder: (context) => [
                 if (onPermissions case final open?)
                   PopupMenuItem<void>(
                     onTap: open,
-                    child: const Text('Permissões'),
+                    child: Text(strings.devicePermissions),
                   ),
                 PopupMenuItem<void>(
                   onTap: () => _confirmRevoke(context),
-                  child: const Text('Revogar dispositivo'),
+                  child: Text(strings.deviceRevoke),
                 ),
               ],
             ),
@@ -85,6 +89,7 @@ class DeviceCard extends StatelessWidget {
   }
 
   Future<void> _confirmRevoke(BuildContext context) async {
+    final strings = AppStrings.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -93,21 +98,16 @@ class DeviceCard extends StatelessWidget {
         // size the text is cut off mid-sentence -- and here it is the sentence
         // explaining what the button below it destroys.
         scrollable: true,
-        title: const Text('Revogar este computador?'),
-        content: Text(
-          'O telefone removerá ${device.name} e encerrará a sessão. '
-          'O computador ainda pode guardar sua chave pública até você remover '
-          'o pareamento também nele. Para reconectar, faça um novo pareamento '
-          'e confira os dois códigos.',
-        ),
+        title: Text(strings.deviceRevokeTitle),
+        content: Text(strings.deviceRevokeBody(device.name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Revogar'),
+            child: Text(strings.revoke),
           ),
         ],
       ),
@@ -115,12 +115,12 @@ class DeviceCard extends StatelessWidget {
     if (confirmed == true) onRevoke();
   }
 
-  String _relativeTime(DateTime at) {
+  String _relativeTime(AppStrings strings, DateTime at) {
     final elapsed = DateTime.now().toUtc().difference(at);
-    if (elapsed.inMinutes < 1) return 'agora';
-    if (elapsed.inHours < 1) return 'há ${elapsed.inMinutes} min';
-    if (elapsed.inDays < 1) return 'há ${elapsed.inHours} h';
-    return 'há ${elapsed.inDays} d';
+    if (elapsed.inMinutes < 1) return strings.deviceJustNow;
+    if (elapsed.inHours < 1) return strings.deviceMinutesAgo(elapsed.inMinutes);
+    if (elapsed.inDays < 1) return strings.deviceHoursAgo(elapsed.inHours);
+    return strings.deviceDaysAgo(elapsed.inDays);
   }
 }
 
@@ -133,14 +133,15 @@ class _PurposeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final (icon, label) = switch (purpose) {
-      CredentialPurpose.authorization => (Icons.lock_outline, 'Login'),
-      CredentialPurpose.diskUnlock => (Icons.storage, 'Disco'),
-      CredentialPurpose.webAuthn => (Icons.password, 'Sites'),
-      CredentialPurpose.vault => (Icons.vpn_key_outlined, 'Cofre'),
-      CredentialPurpose.fileLocker => (Icons.folder_outlined, 'Arquivos'),
-      CredentialPurpose.ssh => (Icons.terminal, 'SSH'),
+    final icon = switch (purpose) {
+      CredentialPurpose.authorization => Icons.lock_outline,
+      CredentialPurpose.diskUnlock => Icons.storage,
+      CredentialPurpose.webAuthn => Icons.password,
+      CredentialPurpose.vault => Icons.vpn_key_outlined,
+      CredentialPurpose.fileLocker => Icons.folder_outlined,
+      CredentialPurpose.ssh => Icons.terminal,
     };
+    final label = AppStrings.of(context).credentialPurpose(purpose);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

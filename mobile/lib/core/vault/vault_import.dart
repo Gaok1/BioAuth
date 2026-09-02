@@ -41,12 +41,41 @@ const int _maxSecret = maxVaultSecretLength;
 /// memory finding that out.
 const int maxImportRows = 4096;
 
+/// Why a whole file cannot be read.
+///
+/// A reason rather than a sentence: the import screen turns this into words,
+/// in whichever language the interface is running.
+enum ImportProblem {
+  notUtf8,
+  malformedJson,
+  notBitwarden,
+  bitwardenEncrypted,
+  noItemsList,
+  tooManyRows,
+  unreadableCsv,
+  emptyFile,
+  csvNeedsNameColumn,
+  csvNeedsSecretColumn,
+}
+
+/// Why one row is left out.
+enum RowProblem {
+  notAnItem,
+  unsupportedType,
+  noName,
+  noSecret,
+  nameTooLong,
+  usernameTooLong,
+  uriTooLong,
+  secretTooLong,
+}
+
 class VaultImportException implements Exception {
-  const VaultImportException(this.message);
-  final String message;
+  const VaultImportException(this.problem);
+  final ImportProblem problem;
 
   @override
-  String toString() => message;
+  String toString() => 'VaultImportException(${problem.name})';
 }
 
 /// One row that will not be imported, and why.
@@ -61,7 +90,7 @@ class VaultImportRejection {
   });
 
   final int row;
-  final String reason;
+  final RowProblem reason;
 
   /// The item's name when there was one. Never its secret — this list is
   /// rendered on screen and may be screenshotted or read aloud.
@@ -86,9 +115,7 @@ Future<VaultImportPreview> parseVaultImport(Uint8List bytes) async {
   try {
     text = utf8.decode(bytes, allowMalformed: false);
   } on FormatException {
-    throw const VaultImportException(
-      'O arquivo não é texto UTF-8. Exporte de novo em UTF-8.',
-    );
+    throw const VaultImportException(ImportProblem.notUtf8);
   }
 
   final trimmed = text.trimLeft();
@@ -105,32 +132,25 @@ VaultImportPreview _parseBitwardenJson(String text) {
   try {
     decoded = jsonDecode(text);
   } on FormatException {
-    throw const VaultImportException('O JSON deste arquivo está malformado.');
+    throw const VaultImportException(ImportProblem.malformedJson);
   }
   if (decoded is! Map<String, Object?>) {
-    throw const VaultImportException(
-      'Este JSON não parece uma exportação do Bitwarden.',
-    );
+    throw const VaultImportException(ImportProblem.notBitwarden);
   }
 
   // An encrypted export is not something to fail on obscurely: the user has to
   // be told to export again unencrypted, because there is nothing here that
   // could ask them for the Bitwarden password.
   if (decoded['encrypted'] == true) {
-    throw const VaultImportException(
-      'Esta exportação do Bitwarden está criptografada. Exporte de novo sem '
-      'criptografia — este aplicativo não tem como pedir a senha do Bitwarden.',
-    );
+    throw const VaultImportException(ImportProblem.bitwardenEncrypted);
   }
 
   final rawItems = decoded['items'];
   if (rawItems is! List) {
-    throw const VaultImportException('Este JSON não tem uma lista `items`.');
+    throw const VaultImportException(ImportProblem.noItemsList);
   }
   if (rawItems.length > maxImportRows) {
-    throw const VaultImportException(
-      'O arquivo tem mais de $maxImportRows itens.',
-    );
+    throw const VaultImportException(ImportProblem.tooManyRows);
   }
 
   final items = <VaultItemInput>[];
@@ -140,7 +160,9 @@ VaultImportPreview _parseBitwardenJson(String text) {
     final row = index + 1;
     final raw = rawItems[index];
     if (raw is! Map<String, Object?>) {
-      rejections.add(VaultImportRejection(row: row, reason: 'não é um item'));
+      rejections.add(
+        VaultImportRejection(row: row, reason: RowProblem.notAnItem),
+      );
       continue;
     }
 
@@ -173,7 +195,7 @@ VaultImportPreview _parseBitwardenJson(String text) {
         VaultImportRejection(
           row: row,
           name: name,
-          reason: 'tipo ${type ?? '?'} não é login nem nota',
+          reason: RowProblem.unsupportedType,
         ),
       );
       continue;
@@ -271,15 +293,13 @@ VaultImportPreview _parseCsv(String text) {
       dynamicTyping: false,
     ).convert(text.replaceAll('\r\n', '\n'));
   } on Object {
-    throw const VaultImportException('Não foi possível ler este CSV.');
+    throw const VaultImportException(ImportProblem.unreadableCsv);
   }
   if (rows.isEmpty) {
-    throw const VaultImportException('O arquivo está vazio.');
+    throw const VaultImportException(ImportProblem.emptyFile);
   }
   if (rows.length - 1 > maxImportRows) {
-    throw const VaultImportException(
-      'O arquivo tem mais de $maxImportRows linhas.',
-    );
+    throw const VaultImportException(ImportProblem.tooManyRows);
   }
 
   final header = <String, int>{};
@@ -291,14 +311,10 @@ VaultImportPreview _parseCsv(String text) {
     if (field != null) header.putIfAbsent(field, () => column);
   }
   if (!header.containsKey('name')) {
-    throw const VaultImportException(
-      'O CSV precisa de uma coluna de nome (name, title ou account).',
-    );
+    throw const VaultImportException(ImportProblem.csvNeedsNameColumn);
   }
   if (!header.containsKey('secret') && !header.containsKey('notes')) {
-    throw const VaultImportException(
-      'O CSV precisa de uma coluna de senha ou de nota.',
-    );
+    throw const VaultImportException(ImportProblem.csvNeedsSecretColumn);
   }
 
   final items = <VaultItemInput>[];
@@ -393,17 +409,17 @@ VaultImportRejection? _validate({
   required String secret,
 }) {
   final problem = switch (true) {
-    _ when name.isEmpty => 'sem nome',
+    _ when name.isEmpty => RowProblem.noName,
     // Asked of the trimmed value while the item keeps the untrimmed one.
     // Whitespace is not content: a CSV cell holding three spaces and a JSON
     // string holding three spaces are the same empty item, and only the CSV
     // path used to say so. The other stored it as a password, so the user
     // ended up with a vault entry that reveals nothing and logs in nowhere.
-    _ when secret.trim().isEmpty => 'sem senha nem conteúdo',
-    _ when name.length > _maxName => 'nome longo demais',
-    _ when username.length > _maxUsername => 'usuário longo demais',
-    _ when uri.length > _maxUri => 'endereço longo demais',
-    _ when secret.length > _maxSecret => 'conteúdo longo demais',
+    _ when secret.trim().isEmpty => RowProblem.noSecret,
+    _ when name.length > _maxName => RowProblem.nameTooLong,
+    _ when username.length > _maxUsername => RowProblem.usernameTooLong,
+    _ when uri.length > _maxUri => RowProblem.uriTooLong,
+    _ when secret.length > _maxSecret => RowProblem.secretTooLong,
     _ => null,
   };
   return problem == null

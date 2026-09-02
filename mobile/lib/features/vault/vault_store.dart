@@ -55,7 +55,7 @@ class VaultItemSummary {
   static VaultItemSummary fromMap(Map<Object?, Object?> map) {
     final kind = _integer(map, 'kind');
     if (kind < 0 || kind >= VaultItemKind.values.length) {
-      throw const FormatException('Tipo de item do cofre inválido');
+      throw const FormatException('invalid vault item kind');
     }
     return VaultItemSummary(
       id: _text(map, 'id'),
@@ -161,7 +161,7 @@ abstract class VaultStore {
           (!seen.add(cursor) ||
               page.items.isEmpty ||
               result.length > maxVaultItems)) {
-        throw const FormatException('Paginação inválida do cofre');
+        throw const FormatException('invalid vault pagination');
       }
     } while (cursor != null);
     return result;
@@ -217,7 +217,7 @@ abstract class VaultStore {
   /// must say so: a no-op would report success and leave the user believing
   /// they had started over on a vault that is still there.
   Future<void> discard() async {
-    throw UnsupportedError('Este cofre não pode ser descartado');
+    throw UnsupportedError('this vault cannot be discarded');
   }
 
   /// Adds items from a backup to whatever this vault already holds.
@@ -292,18 +292,18 @@ class NativeVaultStore extends VaultStore {
       'cursor': ?cursor,
     });
     if (raw == null || raw['items'] is! List) {
-      throw const FormatException('Resposta inválida do cofre');
+      throw const FormatException('invalid vault response');
     }
     final items = <VaultItemSummary>[];
     for (final value in raw['items']! as List) {
       if (value is! Map) {
-        throw const FormatException('Item inválido no cofre');
+        throw const FormatException('invalid vault item');
       }
       items.add(VaultItemSummary.fromMap(value.cast<Object?, Object?>()));
     }
     final next = raw['nextCursor'];
     if (next != null && (next is! String || next.isEmpty)) {
-      throw const FormatException('Cursor inválido do cofre');
+      throw const FormatException('invalid vault cursor');
     }
     return VaultPage(items: items, nextCursor: next as String?);
   }
@@ -325,7 +325,7 @@ class NativeVaultStore extends VaultStore {
     );
     final items = _summaries(raw);
     if (items == null) {
-      throw const FormatException('Resposta inválida do cofre');
+      throw const FormatException('invalid vault response');
     }
     return items;
   }
@@ -335,7 +335,7 @@ class NativeVaultStore extends VaultStore {
     final raw = await _channel.invokeMapMethod<Object?, Object?>('fetch', {
       'id': id,
     });
-    if (raw == null) throw const FormatException('Resposta inválida do cofre');
+    if (raw == null) throw const FormatException('invalid vault response');
     return VaultSecret(
       id: _text(raw, 'id'),
       revision: _positive(raw, 'revision'),
@@ -384,7 +384,7 @@ class NativeVaultStore extends VaultStore {
   Future<List<VaultItemInput>> exportAll() async {
     final raw = await _channel.invokeMapMethod<Object?, Object?>('export', {});
     if (raw == null || raw['items'] is! List) {
-      throw const FormatException('Resposta inválida do cofre');
+      throw const FormatException('invalid vault response');
     }
     return [
       for (final value in raw['items']! as List)
@@ -397,7 +397,7 @@ class NativeVaultStore extends VaultStore {
             secret: _text(value, 'secret'),
           )
         else
-          throw const FormatException('Item inválido no cofre'),
+          throw const FormatException('invalid vault item'),
     ];
   }
 
@@ -409,7 +409,7 @@ class NativeVaultStore extends VaultStore {
     final raw = await _channel.invokeMapMethod<Object?, Object?>('restore', {
       'items': [for (final item in items) item.toMap()],
     });
-    if (raw == null) throw const FormatException('Resposta inválida do cofre');
+    if (raw == null) throw const FormatException('invalid vault response');
     return VaultRestoreOutcome(
       added: _count(raw, 'added'),
       skipped: _count(raw, 'skipped'),
@@ -427,7 +427,7 @@ class NativeVaultStore extends VaultStore {
     }
     if (item.username.length > maxVaultUsernameLength ||
         item.uri.length > maxVaultUriLength) {
-      throw ArgumentError('Usuário ou endereço grande demais');
+      throw ArgumentError('username or address too large');
     }
     if (item.secret.isEmpty || item.secret.length > maxVaultSecretLength) {
       throw ArgumentError.value(
@@ -439,7 +439,7 @@ class NativeVaultStore extends VaultStore {
   }
 
   static VaultWrite _write(Map<Object?, Object?>? raw) {
-    if (raw == null) throw const FormatException('Resposta inválida do cofre');
+    if (raw == null) throw const FormatException('invalid vault response');
     return VaultWrite(
       id: _text(raw, 'id'),
       revision: _positive(raw, 'revision'),
@@ -465,40 +465,40 @@ class NativeVaultStore extends VaultStore {
         if (value is Map)
           VaultItemSummary.fromMap(value.cast<Object?, Object?>())
         else
-          throw const FormatException('Item inválido no cofre'),
+          throw const FormatException('invalid vault item'),
     ];
   }
 }
 
 String _text(Map<Object?, Object?> map, String key) {
   final value = map[key];
-  if (value is! String) throw FormatException('Campo inválido: $key');
+  if (value is! String) throw FormatException('invalid field: $key');
   return value;
 }
 
 int _integer(Map<Object?, Object?> map, String key) {
   final value = map[key];
-  if (value is! int) throw FormatException('Campo inválido: $key');
+  if (value is! int) throw FormatException('invalid field: $key');
   return value;
 }
 
 int _positive(Map<Object?, Object?> map, String key) {
   final value = _integer(map, key);
-  if (value < 1) throw FormatException('Campo inválido: $key');
+  if (value < 1) throw FormatException('invalid field: $key');
   return value;
 }
 
 /// A tally, which unlike a revision is allowed to be zero.
 int _count(Map<Object?, Object?> map, String key) {
   final value = _integer(map, key);
-  if (value < 0) throw FormatException('Campo inválido: $key');
+  if (value < 0) throw FormatException('invalid field: $key');
   return value;
 }
 
 int _kind(Map<Object?, Object?> map) {
   final value = _integer(map, 'kind');
   if (value < 0 || value >= VaultItemKind.values.length) {
-    throw const FormatException('Tipo de item do cofre inválido');
+    throw const FormatException('invalid vault item kind');
   }
   return value;
 }
@@ -507,6 +507,6 @@ int _kind(Map<Object?, Object?> map) {
 String _optionalText(Map<Object?, Object?> map, String key) {
   final value = map[key];
   if (value == null) return '';
-  if (value is! String) throw FormatException('Campo inválido: $key');
+  if (value is! String) throw FormatException('invalid field: $key');
   return value;
 }

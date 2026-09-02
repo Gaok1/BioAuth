@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../domain/connection_phase.dart';
+import '../l10n/app_strings.dart';
 
 class ConnectionStatus extends StatelessWidget {
   const ConnectionStatus({required this.phase, super.key});
@@ -30,7 +31,7 @@ class ConnectionStatus extends StatelessWidget {
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 7),
-        Text(phase.label),
+        Text(AppStrings.of(context).connectionPhase(phase)),
       ],
     );
   }

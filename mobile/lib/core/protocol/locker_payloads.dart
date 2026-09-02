@@ -64,13 +64,13 @@ class LockerWrapRequest {
     _checkName('verifierName', verifierName);
     _checkName('fileName', fileName);
     if (containerBinding.length != _bindingLength) {
-      throw const FormatException('containerBinding inválido');
+      throw const FormatException('invalid containerBinding');
     }
     if (dataKey.length != lockerDataKeyLength) {
-      throw const FormatException('dataKey inválida');
+      throw const FormatException('invalid dataKey');
     }
     if (plaintextLength < 0) {
-      throw const FormatException('plaintextLength inválido');
+      throw const FormatException('invalid plaintextLength');
     }
   }
 
@@ -166,11 +166,11 @@ class LockerUnwrapRequest {
     _checkName('fileName', fileName);
     _checkId('credentialId', credentialId);
     if (containerBinding.length != _bindingLength) {
-      throw const FormatException('containerBinding inválido');
+      throw const FormatException('invalid containerBinding');
     }
     _checkWrapper(wrapper);
     if (plaintextLength < 0) {
-      throw const FormatException('plaintextLength inválido');
+      throw const FormatException('invalid plaintextLength');
     }
   }
 
@@ -213,7 +213,7 @@ class LockerUnwrapResponse {
 
   void validate() {
     if (dataKey.length != lockerDataKeyLength) {
-      throw const FormatException('dataKey inválida');
+      throw const FormatException('invalid dataKey');
     }
   }
 
@@ -242,7 +242,7 @@ T _decode<T>(
   Uint8List Function(T value) encode,
 ) {
   if (payload.isEmpty || payload.length > maxLockerPayloadBytes) {
-    throw const FormatException('Payload de locker com tamanho inválido');
+    throw const FormatException('invalid locker payload length');
   }
   try {
     final reader = CborReader(payload);
@@ -250,17 +250,17 @@ T _decode<T>(
       throw const FormatException('Estrutura de payload inesperada');
     }
     if (reader.uint() != lockerSchema) {
-      throw const FormatException('Schema de locker não suportado');
+      throw const FormatException('unsupported locker schema');
     }
     final decoded = read(reader);
     reader.finish();
     final reencoded = encode(decoded);
     if (reencoded.length != payload.length) {
-      throw const FormatException('Payload de locker não canônico');
+      throw const FormatException('non-canonical locker payload');
     }
     for (var index = 0; index < payload.length; index++) {
       if (reencoded[index] != payload[index]) {
-        throw const FormatException('Payload de locker não canônico');
+        throw const FormatException('non-canonical locker payload');
       }
     }
     return decoded;
@@ -274,18 +274,18 @@ const int maxLockerPayloadBytes = 6 * 1024;
 
 void _checkName(String field, String value) {
   if (value.trim().isEmpty || value.length > _maxNameLength) {
-    throw FormatException('$field inválido');
+    throw FormatException('invalid $field');
   }
 }
 
 void _checkId(String field, String value) {
   if (value.trim().isEmpty || value.length > _maxIdLength) {
-    throw FormatException('$field inválido');
+    throw FormatException('invalid $field');
   }
 }
 
 void _checkWrapper(Uint8List wrapper) {
   if (wrapper.isEmpty || wrapper.length > lockerMaxWrapperBytes) {
-    throw const FormatException('wrapper inválido');
+    throw const FormatException('invalid wrapper');
   }
 }

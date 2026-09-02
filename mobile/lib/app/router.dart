@@ -7,6 +7,7 @@ import '../features/history/history_screen.dart';
 import '../features/pairing/pairing_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/vault/vault_screen.dart';
+import '../l10n/app_strings.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
@@ -36,6 +37,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final waiting = ref.watch(
       appControllerProvider.select((state) => state.requests.length),
     );
+    final strings = AppStrings.of(context);
     return Scaffold(
       body: SafeArea(
         child: IndexedStack(index: _index, children: _screens),
@@ -45,27 +47,31 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: [
           NavigationDestination(
-            icon: _waiting(waiting, const Icon(Icons.devices_outlined)),
-            selectedIcon: _waiting(waiting, const Icon(Icons.devices)),
-            label: 'Dispositivos',
+            icon: _waiting(
+              strings,
+              waiting,
+              const Icon(Icons.devices_outlined),
+            ),
+            selectedIcon: _waiting(strings, waiting, const Icon(Icons.devices)),
+            label: strings.tabDevices,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.qr_code_scanner),
-            label: 'Parear',
+          NavigationDestination(
+            icon: const Icon(Icons.qr_code_scanner),
+            label: strings.tabPair,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.lock_outline),
-            selectedIcon: Icon(Icons.lock),
-            label: 'Cofre',
+          NavigationDestination(
+            icon: const Icon(Icons.lock_outline),
+            selectedIcon: const Icon(Icons.lock),
+            label: strings.tabVault,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.history),
-            label: 'Histórico',
+          NavigationDestination(
+            icon: const Icon(Icons.history),
+            label: strings.tabHistory,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Ajustes',
+          NavigationDestination(
+            icon: const Icon(Icons.settings_outlined),
+            selectedIcon: const Icon(Icons.settings),
+            label: strings.tabSettings,
           ),
         ],
       ),
@@ -77,15 +83,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// A count rather than a dot: two desktops asking at once is the case where
   /// the difference matters, and it is the case where answering the wrong one
   /// is easiest. Announced, because a badge is drawn and not read out.
-  Widget _waiting(int count, Icon icon) => count == 0
+  Widget _waiting(AppStrings strings, int count, Icon icon) => count == 0
       ? icon
       : Badge(
           label: Text('$count'),
-          child: Semantics(
-            label: count == 1
-                ? '1 solicitação aguardando'
-                : '$count solicitações aguardando',
-            child: icon,
-          ),
+          child: Semantics(label: strings.requestsWaiting(count), child: icon),
         );
 }

@@ -19,6 +19,7 @@ import '../../core/vault/sensitive_clipboard.dart';
 
 import '../../core/vault/vault_export.dart';
 import '../../core/vault/vault_import.dart';
+import '../../l10n/app_strings.dart';
 import 'vault_controller.dart';
 import 'vault_store.dart';
 
@@ -34,15 +35,25 @@ class VaultBackupScreen extends StatefulWidget {
 class _VaultBackupScreenState extends State<VaultBackupScreen> {
   VaultBackup? _backup;
   String? _message;
+
+  /// The words for the one message line, read at the moment it is written.
+  ///
+  /// The line holds an answer to what just happened, so it is built when that
+  /// happens rather than kept as a code: a message already on screen when the
+  /// language changes stays in the language it was written in, and the next
+  /// action replaces it.
+  AppStrings get _strings => AppStrings.of(context);
+
   bool _busy = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = AppStrings.of(context);
     return SensitiveContent(
       sensitivity: ContentSensitivity.sensitive,
       child: Scaffold(
-        appBar: AppBar(title: const Text('Backup do cofre')),
+        appBar: AppBar(title: Text(strings.backupTitle)),
         body: ListView(
           padding: const EdgeInsets.all(20),
           children: [
@@ -55,52 +66,36 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
               const SizedBox(height: 24),
             ],
 
-            Text('Exportar', style: theme.textTheme.titleMedium),
+            Text(strings.backupExport, style: theme.textTheme.titleMedium),
             const SizedBox(height: 6),
-            const Text(
-              'Gera um arquivo criptografado com tudo que este cofre guarda, '
-              'e um código que só aparece uma vez. Sem o código o arquivo não '
-              'serve para nada — inclusive para você.',
-            ),
+            Text(strings.backupExportNote),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _busy ? null : _export,
               icon: const Icon(Icons.lock_outline),
-              label: const Text('Gerar backup'),
+              label: Text(strings.backupCreate),
             ),
 
             const Divider(height: 40),
 
-            Text('Restaurar', style: theme.textTheme.titleMedium),
+            Text(strings.backupRestore, style: theme.textTheme.titleMedium),
             const SizedBox(height: 6),
-            const Text(
-              'Abre um backup e acrescenta o que houver nele. Nada é apagado: '
-              'itens que este cofre já tem são ignorados, então restaurar o '
-              'mesmo arquivo duas vezes não duplica nada.',
-            ),
+            Text(strings.backupRestoreNote),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _busy ? null : _restore,
               icon: const Icon(Icons.restore),
-              label: const Text('Escolher arquivo…'),
+              label: Text(strings.backupChooseFile),
             ),
 
             const Divider(height: 40),
 
-            Text(
-              'Importar de outro gerenciador',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text(strings.backupImport, style: theme.textTheme.titleMedium),
             const SizedBox(height: 6),
-            const Text(
-              'Lê uma exportação do Bitwarden (JSON) ou um CSV com cabeçalho. '
-              'Você vê o que será adicionado e o que foi recusado antes de '
-              'qualquer coisa ser guardada.',
-            ),
+            Text(strings.backupImportNote),
             const SizedBox(height: 8),
             Text(
-              'O arquivo de outro gerenciador está em texto claro. Apague-o do '
-              'telefone assim que terminar.',
+              strings.backupImportWarning,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
               ),
@@ -109,16 +104,19 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
             OutlinedButton.icon(
               onPressed: _busy ? null : _import,
               icon: const Icon(Icons.download_outlined),
-              label: const Text('Escolher exportação…'),
+              label: Text(strings.backupChooseExport),
             ),
 
             if (_message case final message?) ...[
               const SizedBox(height: 20),
               Text(message, style: theme.textTheme.bodyMedium),
             ],
-            if (widget.controller.error case final error?) ...[
+            if (widget.controller.failure case final failure?) ...[
               const SizedBox(height: 12),
-              Text(error, style: TextStyle(color: theme.colorScheme.error)),
+              Text(
+                strings.vaultFailure(failure),
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
             ],
           ],
         ),
@@ -150,14 +148,10 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
     try {
       await copySensitive(code);
       if (!mounted) return;
-      setState(() => _message = 'Código copiado.');
+      setState(() => _message = _strings.backupCodeCopied);
     } on Object {
       if (!mounted) return;
-      setState(
-        () => _message =
-            'Não foi possível copiar. Anote o código exatamente como está '
-            'acima — sem ele o backup não abre.',
-      );
+      setState(() => _message = _strings.backupCodeCopyFailed);
     }
   }
 
@@ -182,10 +176,10 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
       // "setState() called after dispose()" -- after the backup had in fact
       // been written, so the error named the wrong thing entirely.
       if (!mounted) return;
-      setState(() => _message = 'Backup salvo. Guarde o código separado dele.');
+      setState(() => _message = _strings.backupSaved);
     } on Object {
       if (!mounted) return;
-      setState(() => _message = 'Não foi possível salvar o arquivo.');
+      setState(() => _message = _strings.backupSaveFailed);
     }
   }
 
@@ -214,11 +208,11 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
       // screen while a wrong file is read reported the rejection to a screen
       // that had gone, as "setState() called after dispose()".
       if (!mounted) return;
-      setState(() => _message = failure.message);
+      setState(() => _message = _strings.backupProblem(failure.problem));
       return;
     } on Object {
       if (!mounted) return;
-      setState(() => _message = 'Não foi possível ler o arquivo.');
+      setState(() => _message = _strings.backupReadFailed);
       return;
     }
     if (!mounted) return;
@@ -260,11 +254,11 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
       // will not parse is the ordinary outcome here, and it leaves before the
       // guard below.
       if (!mounted) return;
-      setState(() => _message = failure.message);
+      setState(() => _message = _strings.importProblem(failure.problem));
       return;
     } on Object {
       if (!mounted) return;
-      setState(() => _message = 'Não foi possível ler o arquivo.');
+      setState(() => _message = _strings.backupReadFailed);
       return;
     }
     if (!mounted) return;
@@ -290,19 +284,8 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
     });
   }
 
-  String _describeRestore(VaultRestoreOutcome outcome) {
-    if (outcome.added == 0 && outcome.skipped == 0) {
-      return 'O backup estava vazio.';
-    }
-    final added = outcome.added == 1
-        ? '1 item restaurado'
-        : '${outcome.added} itens restaurados';
-    if (outcome.skipped == 0) return '$added.';
-    final skipped = outcome.skipped == 1
-        ? '1 já estava aqui'
-        : '${outcome.skipped} já estavam aqui';
-    return '$added; $skipped.';
-  }
+  String _describeRestore(VaultRestoreOutcome outcome) =>
+      _strings.backupRestored(outcome.added, outcome.skipped);
 }
 
 class _CodeCard extends StatelessWidget {
@@ -322,6 +305,7 @@ class _CodeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = AppStrings.of(context);
     return Card(
       color: theme.colorScheme.surfaceContainerHighest,
       child: Padding(
@@ -330,17 +314,13 @@ class _CodeCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Anote este código agora',
+              strings.backupWriteCodeDown,
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              'Ele não aparece de novo, e não fica guardado em lugar nenhum. '
-              'Sem ele o backup é um arquivo inútil.',
-              style: theme.textTheme.bodySmall,
-            ),
+            Text(strings.backupCodeShownOnce, style: theme.textTheme.bodySmall),
             const SizedBox(height: 12),
             SelectableText(
               backup.code,
@@ -361,24 +341,23 @@ class _CodeCard extends StatelessWidget {
                 // the one string that opens this file left only on screen.
                 onPressed: onCopy,
                 icon: const Icon(Icons.copy, size: 18),
-                label: const Text('Copiar código'),
+                label: Text(strings.backupCopyCode),
               ),
             ),
             const Divider(height: 24),
             Text(
-              '${backup.itemCount} itens neste backup.',
+              strings.backupItemCount(backup.itemCount),
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
               onPressed: onSave,
               icon: const Icon(Icons.save_alt),
-              label: const Text('Salvar arquivo…'),
+              label: Text(strings.backupSaveFile),
             ),
             const SizedBox(height: 8),
             Text(
-              'Guarde o arquivo e o código em lugares diferentes. Juntos, os '
-              'dois são o cofre inteiro em texto claro.',
+              strings.backupKeepApart,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
               ),
@@ -403,8 +382,9 @@ class _ImportPreviewDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final strings = AppStrings.of(context);
     return AlertDialog(
-      title: const Text('Conferir a importação'),
+      title: Text(strings.importReviewTitle),
       content: SizedBox(
         width: double.maxFinite,
         child: Column(
@@ -412,22 +392,18 @@ class _ImportPreviewDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              preview.items.length == 1
-                  ? '1 item será adicionado.'
-                  : '${preview.items.length} itens serão adicionados.',
+              strings.importWillAdd(preview.items.length),
               style: theme.textTheme.bodyLarge,
             ),
             const SizedBox(height: 4),
             Text(
-              'Nada é apagado. Itens que este cofre já tem são ignorados.',
+              strings.importNothingDeleted,
               style: theme.textTheme.bodySmall,
             ),
             if (preview.rejections.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text(
-                preview.rejections.length == 1
-                    ? '1 linha não será importada:'
-                    : '${preview.rejections.length} linhas não serão importadas:',
+                strings.importRejectedCount(preview.rejections.length),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.error,
                   fontWeight: FontWeight.w600,
@@ -442,15 +418,17 @@ class _ImportPreviewDialog extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Text(
-                          'linha ${rejection.row}'
-                          '${rejection.name.isEmpty ? '' : ' (${rejection.name})'}'
-                          ' — ${rejection.reason}',
+                          strings.importRejectedRow(
+                            rejection.row,
+                            rejection.name,
+                            strings.rowProblem(rejection.reason),
+                          ),
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
                     if (preview.rejections.length > 50)
                       Text(
-                        '…e mais ${preview.rejections.length - 50}.',
+                        strings.importAndMore(preview.rejections.length - 50),
                         style: theme.textTheme.bodySmall,
                       ),
                   ],
@@ -463,13 +441,13 @@ class _ImportPreviewDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancelar'),
+          child: Text(strings.cancel),
         ),
         FilledButton(
           onPressed: preview.isEmpty
               ? null
               : () => Navigator.of(context).pop(true),
-          child: const Text('Importar'),
+          child: Text(strings.importAction),
         ),
       ],
     );
@@ -497,6 +475,7 @@ class _CodeDialogState extends State<_CodeDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
     final created = widget.header.createdAt.toLocal();
     return AlertDialog(
       // Scrollable, because the keyboard opens over this one. What it takes
@@ -504,15 +483,18 @@ class _CodeDialogState extends State<_CodeDialog> {
       // field the keyboard was raised to type into: a code that cannot be
       // reached is a backup that cannot be restored.
       scrollable: true,
-      title: const Text('Código do backup'),
+      title: Text(strings.backupCodeTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${widget.header.itemCount} itens, de '
-            '${created.day.toString().padLeft(2, '0')}/'
-            '${created.month.toString().padLeft(2, '0')}/${created.year}.',
+            strings.backupFileSummary(
+              widget.header.itemCount,
+              '${created.day.toString().padLeft(2, '0')}/'
+              '${created.month.toString().padLeft(2, '0')}/'
+              '${created.year}',
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -521,8 +503,8 @@ class _CodeDialogState extends State<_CodeDialog> {
             autocorrect: false,
             enableSuggestions: false,
             textCapitalization: TextCapitalization.characters,
-            decoration: const InputDecoration(
-              labelText: 'Código',
+            decoration: InputDecoration(
+              labelText: strings.backupCodeLabel,
               hintText: 'BAV1-…',
             ),
           ),
@@ -531,11 +513,11 @@ class _CodeDialogState extends State<_CodeDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
+          child: Text(strings.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_code.text),
-          child: const Text('Restaurar'),
+          child: Text(strings.backupRestoreAction),
         ),
       ],
     );

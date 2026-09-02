@@ -11,6 +11,20 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/features/vault/vault_controller.dart';
 import 'package:phone_auth/features/vault/vault_store.dart';
+import 'package:phone_auth/l10n/app_strings_en.dart';
+
+/// The failure as a person would read it.
+///
+/// The controller holds a code and the language pack holds the words, so the
+/// tests that are about what the user is told read them from a pack. English,
+/// because a test that changed meaning with the phone's language would not be
+/// a test.
+String worded(VaultController controller) =>
+    const EnglishStrings().vaultFailure(controller.failure!);
+
+/// The store's own code for what went wrong.
+String codeOf(VaultController controller) =>
+    (controller.failure! as VaultStoreFailure).code;
 
 void main() {
   Future<VaultController> failing(String code) async {
@@ -22,7 +36,7 @@ void main() {
   test('a transient failure stays retryable', () async {
     final controller = await failing('authentication_cancelled');
 
-    expect(controller.error, 'Autenticação cancelada.');
+    expect(codeOf(controller), 'authentication_cancelled');
     expect(controller.unrecoverable, isFalse);
     expect(controller.canDiscard, isFalse);
   });
@@ -34,8 +48,8 @@ void main() {
     () async {
       final controller = await failing('key_invalidated');
 
-      expect(controller.error, contains('biometria'));
-      expect(controller.error, contains('backup'));
+      expect(worded(controller), contains('fingerprint'));
+      expect(worded(controller), contains('backup'));
       expect(controller.unrecoverable, isTrue);
       expect(controller.canDiscard, isTrue);
     },
@@ -44,7 +58,7 @@ void main() {
   test('a corrupt store says so rather than blaming the fingerprint', () async {
     final controller = await failing('store_corrupt');
 
-    expect(controller.error, contains('integridade'));
+    expect(worded(controller), contains('integrity'));
     expect(controller.canDiscard, isTrue);
   });
 
@@ -56,8 +70,8 @@ void main() {
 
     expect(controller.unrecoverable, isTrue);
     expect(controller.canDiscard, isFalse);
-    expect(controller.error, contains('mais nova'));
-    expect(controller.error, contains('não apague'));
+    expect(worded(controller), contains('newer version'));
+    expect(worded(controller), contains('do not delete'));
   });
 
   /// The store will not create the key before Android 11, and the plugin's
@@ -72,7 +86,7 @@ void main() {
 
       expect(controller.unrecoverable, isTrue);
       expect(controller.canDiscard, isFalse);
-      expect(controller.error, contains('Android 11'));
+      expect(worded(controller), contains('Android 11'));
     },
   );
 
@@ -90,7 +104,7 @@ void main() {
 
         expect(controller.unrecoverable, isFalse, reason: code);
         expect(controller.canDiscard, isFalse, reason: code);
-        expect(controller.error, contains('biometria'), reason: code);
+        expect(worded(controller), contains('fingerprint'), reason: code);
       }
     },
   );
@@ -100,7 +114,7 @@ void main() {
     () async {
       final controller = await failing('operation_in_progress');
 
-      expect(controller.error, contains('andamento'));
+      expect(worded(controller), contains('Another vault operation'));
       expect(controller.unrecoverable, isFalse);
     },
   );
@@ -118,7 +132,7 @@ void main() {
 
     expect(controller.unrecoverable, isFalse);
     expect(controller.canDiscard, isFalse);
-    expect(controller.error, isNull);
+    expect(controller.failure, isNull);
     expect(controller.locked, isFalse);
   });
 
@@ -143,7 +157,7 @@ void main() {
 
     await controller.discard();
 
-    expect(controller.error, isNotNull);
+    expect(controller.failure, isNotNull);
   });
 }
 

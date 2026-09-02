@@ -14,7 +14,7 @@ void main() {
     'challenge': base64Url.encode(Uint8List(32)),
     'origin': 'BLE pareado',
     'service': 'SSH',
-    'action': 'Iniciar sessão',
+    'action': 'Sign in',
     'resource': 'prod-server',
     'user': 'alice',
     'issuedAt': '2026-08-26T12:00:00Z',

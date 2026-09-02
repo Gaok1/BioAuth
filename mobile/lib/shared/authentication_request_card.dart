@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../domain/authentication_request.dart';
+import '../l10n/app_strings.dart';
 
 class AuthenticationRequestCard extends StatelessWidget {
   const AuthenticationRequestCard({
@@ -35,7 +36,9 @@ class AuthenticationRequestCard extends StatelessWidget {
                     Text('${request.service} • ${request.resource}'),
                     if (request.duplicateCount > 1)
                       Text(
-                        '${request.duplicateCount} solicitações iguais agrupadas',
+                        AppStrings.of(
+                          context,
+                        ).requestGroupedShort(request.duplicateCount),
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
                           fontWeight: FontWeight.w600,

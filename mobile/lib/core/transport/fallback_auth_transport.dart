@@ -133,8 +133,8 @@ class FallbackTransportException implements Exception {
 
   @override
   String toString() =>
-      'Nenhum transporte alcançou o computador '
-      '(rede: $primaryError; Bluetooth: $fallbackError)';
+      'no transport reached the computer '
+      '(network: $primaryError; Bluetooth: $fallbackError)';
 }
 
 /// Releases the single native Android GATT client when its session closes.
@@ -208,9 +208,7 @@ class _SerialGate {
       // Give up this slot on the way out, so whoever is queued behind gets the
       // same chance instead of inheriting the wedge.
       release();
-      throw StateError(
-        'A conexão Bluetooth anterior não foi liberada. Reinicie o aplicativo.',
-      );
+      throw StateError('the previous Bluetooth connection was never released');
     }
     return release;
   }
