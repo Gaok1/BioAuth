@@ -531,11 +531,11 @@ test('a refused fill says why, where the button is', async () => {
     return { action, click: clicks[0], menu: menus[0] };
   };
 
-  const refused = boot({ answer: { ok: false, error: 'o cofre está trancado' } });
+  const refused = boot({ answer: { ok: false, error: 'the vault is locked' } });
   refused.click({ id: 7, url: 'https://bank.example/login' });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(refused.action.badge, '!');
-  assert.equal(refused.action.title, 'PhoneAuth: o cofre está trancado');
+  assert.equal(refused.action.title, 'PhoneAuth: the vault is locked');
 
   // A filled field is not an announcement. The mark comes down and the title
   // goes back to what the button does.
@@ -543,7 +543,7 @@ test('a refused fill says why, where the button is', async () => {
   filled.click({ id: 7, url: 'https://bank.example/login' });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(filled.action.badge, '');
-  assert.equal(filled.action.title, 'Preencher senha do cofre');
+  assert.equal(filled.action.title, 'Fill password from vault');
 
   // Nobody answered, because no frame held a focused field. That silence has
   // its own sentence rather than being left as nothing happening.
@@ -560,7 +560,7 @@ test('a refused fill says why, where the button is', async () => {
   quiet.click({ id: 7, url: 'https://bank.example/login' });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(quiet.action.badge, '!');
-  assert.equal(quiet.action.title, 'PhoneAuth: selecione o campo de senha primeiro');
+  assert.equal(quiet.action.title, 'PhoneAuth: select the password field first');
 
   // A page the content scripts were never injected into. Told apart from the
   // silence above by the only thing that can tell them apart: the page's URL.
@@ -572,7 +572,7 @@ test('a refused fill says why, where the button is', async () => {
   insecure.click({ id: 7, url: 'http://bank.example/login' });
   assert.equal(asked, false, 'no tab was messaged');
   assert.equal(insecure.action.badge, '!');
-  assert.equal(insecure.action.title, 'PhoneAuth: só páginas https podem ser preenchidas');
+  assert.equal(insecure.action.title, 'PhoneAuth: only https pages can be filled');
 });
 
 test('a bridge that cannot reach the extension says which way it failed', async () => {

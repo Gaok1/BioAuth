@@ -155,6 +155,15 @@ test('packaging runs with no installed modules', () => {
 /// Firefox got a `service_worker` it does not run. And it was not an obscure
 /// path -- it was the path the native-host allowlist is registered against, so
 /// it is exactly what a user following the instructions loads.
+/// Every file under a directory, as paths relative to it, with forward slashes.
+function tree(dir, prefix = '') {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory()
+      ? tree(path.join(dir, entry.name), `${prefix}${entry.name}/`)
+      : [`${prefix}${entry.name}`]
+  );
+}
+
 test('the shipped directories are per-browser, not the developer source', () => {
   const out = sandbox();
   const built = tool.buildUnpacked(out);
@@ -165,7 +174,10 @@ test('the shipped directories are per-browser, not the developer source', () => 
   );
 
   for (const { dir } of built) {
-    assert.deepEqual(fs.readdirSync(dir).sort(), [...tool.INCLUDED].sort());
+    // Walked rather than listed: `_locales/<lang>/messages.json` is nested, and
+    // a top-level listing would compare a directory name against a file path
+    // and pass on anything inside it.
+    assert.deepEqual(tree(dir).sort(), [...tool.INCLUDED].sort());
 
     const manifest = JSON.parse(
       fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')

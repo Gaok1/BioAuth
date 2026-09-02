@@ -38,6 +38,16 @@
 //      the frame the user is actually typing in.
 
 (() => {
+  /// One string, in whichever language the browser is set to.
+  ///
+  /// The packs live in `_locales/`, which is the browser's own mechanism: it
+  /// picks by the browser's UI language and there is nothing for this extension
+  /// to choose. The fallback is not decoration -- this file is also loaded under
+  /// `node --test` with a stub `chrome` that has no `i18n`, and a missing
+  /// message must not become an empty error message.
+  const t = (key, fallback = "") =>
+    globalThis.chrome?.i18n?.getMessage?.(key) || fallback;
+
   const runtime = globalThis.browser?.runtime ?? chrome.runtime;
 
   /// Whether this frame may be filled at all.
@@ -96,7 +106,7 @@
   /// The focused field itself when it is one. Otherwise the single password box
   /// in the same form, which is how every password manager behaves when you
   /// click the username line rather than the password one -- and what this
-  /// script used to answer with "Selecione o campo de senha primeiro".
+  /// script used to answer with "select the password field first".
   ///
   /// "Single" is the whole rule. A change-password form holds three of them and
   /// choosing between them is the guess this file exists not to make, so a form
@@ -185,16 +195,16 @@
   /// can be exercised without a browser.
   async function performFill({ view, document, send, EventCtor }) {
     if (!frameIsFillable(view)) {
-      return { ok: false, error: "Este quadro não pode ser preenchido" };
+      return { ok: false, error: t("fillFrameRefused", "This frame cannot be filled") };
     }
     const origin = fillableOrigin(view.location);
     if (!origin) {
-      return { ok: false, error: "Só páginas https podem ser preenchidas" };
+      return { ok: false, error: t("fillHttpsOnlyCapitalized", "Only https pages can be filled") };
     }
     const focused = fillTarget(document);
     const password = passwordFieldFor(focused);
     if (!password) {
-      return { ok: false, error: "Selecione o campo de usuário ou de senha primeiro" };
+      return { ok: false, error: t("fillSelectFieldCapitalized", "Select the user or password field first") };
     }
 
     // The host answers with a secret or with nothing. Everything about which
@@ -202,12 +212,12 @@
     // call — this side only says where it is.
     const response = await send({ type: "bioauth-autofill", origin });
     if (!response?.ok || typeof response.password !== "string") {
-      return { ok: false, error: response?.error ?? "O cofre não respondeu" };
+      return { ok: false, error: response?.error ?? t("fillNoAnswerCapitalized", "The vault did not answer") };
     }
 
     // Asked again, because the answer above arrived seconds later.
     if (!stillWritable(password, ["password"])) {
-      return { ok: false, error: "O campo mudou enquanto o cofre respondia" };
+      return { ok: false, error: t("fillFieldChanged", "The field changed while the vault was answering") };
     }
     setFieldValue(password, response.password, EventCtor);
     if (typeof response.username === "string" && response.username) {
@@ -262,7 +272,7 @@
         EventCtor: Event,
         send: (payload) => runtime.sendMessage(payload),
       }).then(sendResponse, () =>
-        sendResponse({ ok: false, error: "Falha ao preencher" }),
+        sendResponse({ ok: false, error: t("fillFailed", "Could not fill") }),
       );
       return true;
     });

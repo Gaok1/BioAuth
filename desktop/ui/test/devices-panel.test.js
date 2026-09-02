@@ -121,7 +121,7 @@ function boot({ call }) {
       pushEvent({ event: 'devices-changed' });
       await settle();
     },
-    /** The "esquecer" buttons currently on screen, in order. */
+    /** The "forget" buttons currently on screen, in order. */
     forgetButtons() {
       return element('devices')
         .children.flatMap((entry) => entry.children)
@@ -279,7 +279,7 @@ function syncButton(harness) {
     .element('devices')
     .children.flatMap((entry) => entry.children)
     .flatMap((row) => row.children)
-    .find((child) => child.tagName === 'button' && child.textContent === 'sincronizar');
+    .find((child) => child.tagName === 'button' && child.textContent === 'sync');
 }
 
 test('the editor shows what is granted and sends the whole set', async () => {

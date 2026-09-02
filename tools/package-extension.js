@@ -33,6 +33,10 @@ const INCLUDED = [
   'content-bridge.js',
   'page-bridge.js',
   'autofill-bridge.js',
+  // The browser's own language packs. Nested, which is why the writers below
+  // create the parent directory: every other entry here is flat.
+  '_locales/en/messages.json',
+  '_locales/pt_BR/messages.json',
 ];
 
 /**
@@ -195,7 +199,9 @@ function buildUnpacked(outDir) {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
     for (const [name, contents] of filesFor(target, manifestSource)) {
-      fs.writeFileSync(path.join(dir, name), contents);
+      const file = path.join(dir, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, contents);
     }
     built.push({ dir, version: manifestSource.version });
   }

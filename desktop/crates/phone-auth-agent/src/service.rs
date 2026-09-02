@@ -2041,7 +2041,7 @@ fn origin_host(value: &str) -> Option<String> {
 /// The host in the address field of a stored item.
 ///
 /// Looser than [`origin_host`], and only on the side the user types. Somebody
-/// filling in "endereço" writes `github.com`; `https://` is not part of what
+/// filling in "Address" writes `github.com`; `https://` is not part of what
 /// they think they are saying. The fill compared that field against a parsed
 /// origin, so an item saved the natural way matched nothing and autofill
 /// answered "no vault item for this site" -- which was not true, and was the
@@ -2715,7 +2715,7 @@ mod subscriber_tests {
     /// The address a person typed into the item, which is not an origin and
     /// was never going to be one.
     ///
-    /// `github.com` is what someone writes in a field labelled "endereço", and
+    /// `github.com` is what someone writes in a field labelled "Address", and
     /// requiring `https://` there meant every item saved that way matched no
     /// site at all -- reported as "no vault item for this site", which reads as
     /// the vault being empty rather than as the address being spelled a way the

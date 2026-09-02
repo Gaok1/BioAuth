@@ -188,7 +188,7 @@ test('storing a login sends no secret and is given none back', async () => {
   // them is the password. Asserted on the keys rather than on one name, so a
   // field added later has to be looked at.
   assert.deepEqual(Object.keys(created.params).sort(), ['name', 'uri', 'username']);
-  assert.match(harness.element('vault-note').textContent, /20 caracteres/);
+  assert.match(harness.element('vault-note').textContent, /20 characters/);
   // Written, so the list this panel is holding is behind by exactly the item
   // the person just made -- and it is the one they will want to copy.
   assert.ok(harness.calls.some((entry) => entry.method === 'vault.list'));
@@ -215,7 +215,7 @@ test('a store whose re-listing fails still says the item was stored', async () =
   await new Promise((resolve) => setImmediate(resolve));
 
   const note = harness.element('vault-note');
-  assert.match(note.textContent, /20 caracteres/, 'the write happened');
+  assert.match(note.textContent, /20 characters/, 'the write happened');
   assert.match(note.textContent, /o telefone recusou/, 'the listing did not');
   assert.match(note.className, /note--bad/);
   // Still cleared: the item is on the phone, and leaving the fields filled
@@ -253,7 +253,7 @@ test('an unnamed item never reaches the phone', async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(harness.calls.some((entry) => entry.method === 'vault.create'), false);
-  assert.match(harness.element('vault-note').textContent, /nome/i);
+  assert.match(harness.element('vault-note').textContent, /name/i);
   assert.equal(harness.element('vault-new-name').focused, true);
 });
 
@@ -288,13 +288,13 @@ test('a copy names the revision of the row on screen', async () => {
     'expectedRevision',
     'itemId',
   ]);
-  assert.match(harness.element('vault-note').textContent, /limpa em \d+s/);
+  assert.match(harness.element('vault-note').textContent, /clears in \d+s/);
 });
 
 test('a copy still in flight survives the list being re-rendered', async () => {
   // The wait is however long someone takes to approve on their phone, and a
   // keystroke in the search box rebuilds every row from `vaultItems`. The
-  // button that was disabled and reading "no telefone…" was a detached node
+  // button that was disabled and reading "on the phone…" was a detached node
   // after that, and the row on screen was a fresh one: enabled, and inviting
   // a second press for a copy already under way.
   // Every copy is held, not just the first. A second one getting through is
@@ -337,7 +337,7 @@ test('a copy still in flight survives the list being re-rendered', async () => {
     .filter((node) => node.dataset && node.dataset.copy);
 
   assert.equal(redrawn.disabled, true, 'the redrawn row invited a second press');
-  assert.equal(redrawn.textContent, 'no telefone…');
+  assert.equal(redrawn.textContent, 'on the phone…');
 
   // And pressing it anyway asks the phone nothing further. Not awaited: a
   // press that does get through starts a copy that only `release` below can
@@ -358,7 +358,7 @@ test('a copy still in flight survives the list being re-rendered', async () => {
     .flatMap((row) => row.children)
     .filter((node) => node.dataset && node.dataset.copy);
   assert.equal(settled.disabled, false);
-  assert.equal(settled.textContent, 'copiado');
+  assert.equal(settled.textContent, 'copied');
 });
 
 test('a copy does not send the phone back for a whole new listing', async () => {
@@ -413,13 +413,13 @@ test('a clipboard the OS would not protect is reported, not hidden', async () =>
 
   const note = harness.element('vault-note').textContent;
   assert.match(note, /pagefile/);
-  assert.match(note, /hist[óo]rico/);
+  assert.match(note, /clipboard history/);
 });
 
 /// The same clipboard, the same reply type, and for a while only one of the
 /// two paths read the honest half of it.
 ///
-/// "Gerar e copiar" is the quicker way to make a password and the one with no
+/// "Generate and copy" is the quicker way to make a password and the one with no
 /// item behind it to fall back on, so a copy of it sitting in `Win+V` history
 /// -- or synced to a Microsoft account, off this machine entirely -- is the
 /// case the user most needs told about.
@@ -443,10 +443,10 @@ test('a generated password reports the same clipboard warnings as a stored one',
   await harness.element('vault-generate').emit('click');
 
   const note = harness.element('vault-note').textContent;
-  assert.match(note, /20 caracteres/);
-  assert.match(note, /limpa em \d+s/);
-  assert.match(note, /hist[óo]rico/);
-  assert.match(note, /nuvem/);
+  assert.match(note, /20 characters/);
+  assert.match(note, /clears in \d+s/);
+  assert.match(note, /clipboard history/);
+  assert.match(note, /synced to the cloud/);
 });
 
 test('a clean generated copy says only what it did', async () => {
@@ -463,7 +463,7 @@ test('a clean generated copy says only what it did', async () => {
   await harness.element('vault-generate').emit('click');
 
   const note = harness.element('vault-note').textContent;
-  assert.match(note, /limpa em \d+s/);
+  assert.match(note, /clears in \d+s/);
   assert.doesNotMatch(note, /ATEN/, 'nothing failed, so nothing is warned about');
 });
 
@@ -518,5 +518,5 @@ test('a list from the simulator says so', async () => {
 
   await openVault(harness);
 
-  assert.match(harness.element('vault-note').textContent, /simulador/);
+  assert.match(harness.element('vault-note').textContent, /simulator/);
 });

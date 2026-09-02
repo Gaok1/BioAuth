@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <!-- No remote origins, no inline script, no eval. The window renders local
@@ -11,88 +11,91 @@
     <title>PhoneAuth</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
+  <!-- Every `data-i18n` is a key in the language packs at the top of
+       renderer.js, applied on load and again whenever the language changes.
+       `data-i18n-attr` puts the same lookup into an attribute instead of the
+       element's text. -->
   <body>
     <header class="bar">
       <div>
         <h1 id="verifier-name">PhoneAuth</h1>
         <p id="verifier-id" class="muted mono"></p>
       </div>
-      <span id="connection" class="pill pill--off" title="Estado do agente">offline</span>
+      <div class="row">
+        <select id="language" class="select select--compact" data-i18n-attr="title:languageTitle"></select>
+        <span id="connection" class="pill pill--off" data-i18n-attr="title:connectionTitle">offline</span>
+      </div>
     </header>
 
     <div id="dev-banner" class="banner banner--warn" hidden>
-      <strong>Modo de desenvolvimento.</strong>
-      As autorizações são assinadas em processo por uma chave de software. Sem
-      biometria, sem telefone.
+      <strong data-i18n="devBannerTitle"></strong>
+      <span data-i18n="devBannerBody"></span>
     </div>
 
     <div id="offline-banner" class="banner" hidden>
-      <strong>Agente indisponível.</strong>
+      <strong data-i18n="offlineTitle"></strong>
       <span id="offline-detail"></span>
       <p class="muted mono" id="offline-endpoint"></p>
     </div>
 
     <section id="live" class="card card--live" hidden>
-      <p class="label">Aguardando o telefone</p>
+      <p class="label" data-i18n="liveWaiting"></p>
       <h2 id="live-action"></h2>
       <dl class="facts">
-        <dt>serviço</dt><dd id="live-service"></dd>
-        <dt>recurso</dt><dd id="live-resource"></dd>
-        <dt>usuário</dt><dd id="live-user"></dd>
-        <dt>origem</dt><dd id="live-origin"></dd>
+        <dt data-i18n="fieldService"></dt><dd id="live-service"></dd>
+        <dt data-i18n="fieldResource"></dt><dd id="live-resource"></dd>
+        <dt data-i18n="fieldUser"></dt><dd id="live-user"></dd>
+        <dt data-i18n="fieldOrigin"></dt><dd id="live-origin"></dd>
       </dl>
-      <p class="muted">Aprove ou recuse no telefone. Esta janela não decide nada.</p>
+      <p class="muted" data-i18n="liveNote"></p>
     </section>
 
     <nav class="tabs" role="tablist">
-      <button class="tab tab--active" data-panel="panel-devices" role="tab">Telefones</button>
-      <button class="tab" data-panel="panel-vault" role="tab">Cofre</button>
-      <button class="tab" data-panel="panel-transports" role="tab">Conexão</button>
-      <button class="tab" data-panel="panel-history" role="tab">Histórico</button>
+      <button class="tab tab--active" data-panel="panel-devices" role="tab" data-i18n="tabPhones"></button>
+      <button class="tab" data-panel="panel-vault" role="tab" data-i18n="tabVault"></button>
+      <button class="tab" data-panel="panel-transports" role="tab" data-i18n="tabConnection"></button>
+      <button class="tab" data-panel="panel-history" role="tab" data-i18n="tabHistory"></button>
     </nav>
 
     <main>
       <section id="panel-devices" class="panel">
         <div id="devices"></div>
-        <label class="label" for="pair-service">Parear para</label>
+        <label class="label" for="pair-service" data-i18n="pairFor"></label>
         <select id="pair-service" class="select">
-          <option value="authorization">Login e `sudo`</option>
-          <option value="vault">Cofre de senhas</option>
-          <option value="locker">Arquivos trancados</option>
-          <option value="webauthn">Chaves de acesso em sites</option>
-          <option value="ssh">Login SSH em servidores</option>
+          <option value="authorization" data-i18n="serviceAuthorization"></option>
+          <option value="vault" data-i18n="serviceVault"></option>
+          <option value="locker" data-i18n="serviceLocker"></option>
+          <option value="webauthn" data-i18n="serviceWebauthn"></option>
+          <option value="ssh" data-i18n="serviceSsh"></option>
         </select>
         <p class="muted" id="pair-service-note"></p>
-        <button id="pair" class="button">Parear um telefone…</button>
+        <button id="pair" class="button" data-i18n="pairButton"></button>
 
         <div id="pairing" class="card" hidden>
-          <p class="label">Escaneie no telefone</p>
+          <p class="label" data-i18n="pairingScan"></p>
           <p class="muted" id="pairing-service"></p>
-          <div class="qr"><img id="pairing-qr" alt="Código de pareamento" /></div>
+          <div class="qr"><img id="pairing-qr" data-i18n-attr="alt:pairingQrAlt" alt="" /></div>
           <p class="muted" id="pairing-expiry"></p>
           <details>
-            <summary class="muted">Ver o conteúdo do código</summary>
+            <summary class="muted" data-i18n="pairingShowPayload"></summary>
             <p class="mono wrap" id="pairing-payload"></p>
           </details>
           <p id="pairing-blocked" class="muted"></p>
-          <button id="pairing-cancel" class="button">Cancelar</button>
+          <button id="pairing-cancel" class="button" data-i18n="cancel"></button>
         </div>
 
         <div id="confirm" class="card card--live" hidden>
-          <p class="label">Confirme no telefone</p>
+          <p class="label" data-i18n="confirmOnPhone"></p>
           <p class="code" id="confirm-code"></p>
-          <p>
-            Este número deve aparecer igual na tela do telefone. Se for
-            diferente, alguém está no meio da conexão — recuse.
-          </p>
+          <p data-i18n="confirmNote"></p>
           <dl class="facts">
-            <dt>telefone</dt><dd id="confirm-device"></dd>
-            <dt>credencial</dt><dd id="confirm-credential"></dd>
-            <dt>chave</dt><dd id="confirm-key"></dd>
+            <dt data-i18n="fieldPhone"></dt><dd id="confirm-device"></dd>
+            <dt data-i18n="fieldCredential"></dt><dd id="confirm-credential"></dd>
+            <dt data-i18n="fieldKey"></dt><dd id="confirm-key"></dd>
           </dl>
           <div class="actions">
-            <button id="confirm-yes" class="button button--primary">Confere</button>
-            <button id="confirm-no" class="button">Não confere</button>
+            <button id="confirm-yes" class="button button--primary" data-i18n="matches"></button>
+            <button id="confirm-no" class="button" data-i18n="doesNotMatch"></button>
           </div>
           <p id="confirm-error" class="muted"></p>
         </div>
@@ -104,50 +107,40 @@
             id="vault-search"
             class="search"
             type="search"
-            placeholder="Buscar no cofre…"
+            data-i18n-attr="placeholder:vaultSearch"
             autocomplete="off"
             spellcheck="false"
           />
-          <button id="vault-refresh" class="tag">atualizar</button>
+          <button id="vault-refresh" class="tag" data-i18n="refresh"></button>
         </div>
 
-        <p class="muted">
-          A lista não tem senha nenhuma. Cada cópia é aprovada no telefone, que
-          mostra este computador, o item e o domínio antes de liberar.
-        </p>
+        <p class="muted" data-i18n="vaultListNote"></p>
 
         <div id="vault-items"></div>
         <p id="vault-note" class="muted" aria-live="polite"></p>
 
         <div class="card">
-          <p class="label">Senha nova</p>
-          <p class="muted">
-            Gerada neste computador e copiada direto. Não passa pelo telefone e
-            não fica guardada em lugar nenhum — cole antes que ela expire.
-          </p>
-          <button id="vault-generate" class="button">Gerar e copiar</button>
+          <p class="label" data-i18n="vaultNewTitle"></p>
+          <p class="muted" data-i18n="vaultNewNote"></p>
+          <button id="vault-generate" class="button" data-i18n="vaultGenerate"></button>
         </div>
 
         <div class="card">
-          <p class="label">Guardar no telefone</p>
-          <p class="muted">
-            A senha é gerada dentro do agente e vai direto para o telefone, que
-            pede sua aprovação antes de gravar. Ela não aparece nesta janela e
-            não fica neste computador — nem para mostrar a você.
-          </p>
-          <label class="label" for="vault-new-name">Nome</label>
+          <p class="label" data-i18n="vaultStoreTitle"></p>
+          <p class="muted" data-i18n="vaultStoreNote"></p>
+          <label class="label" for="vault-new-name" data-i18n="fieldName"></label>
           <input id="vault-new-name" class="search" type="text" autocomplete="off" />
-          <label class="label" for="vault-new-username">Usuário</label>
+          <label class="label" for="vault-new-username" data-i18n="fieldUser"></label>
           <input id="vault-new-username" class="search" type="text" autocomplete="off" />
-          <label class="label" for="vault-new-uri">Endereço</label>
+          <label class="label" for="vault-new-uri" data-i18n="fieldAddress"></label>
           <input
             id="vault-new-uri"
             class="search"
             type="url"
-            placeholder="https://exemplo.com"
+            placeholder="https://example.com"
             autocomplete="off"
           />
-          <button id="vault-store" class="button">Gerar e guardar</button>
+          <button id="vault-store" class="button" data-i18n="vaultStoreButton"></button>
         </div>
       </section>
 

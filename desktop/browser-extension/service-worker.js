@@ -1,3 +1,13 @@
+/// One string, in whichever language the browser is set to.
+///
+/// The packs live in `_locales/`, which is the browser's own mechanism: it
+/// picks by the browser's UI language and there is nothing for this extension
+/// to choose. The fallback is not decoration -- these files are also loaded
+/// under `node --test` with a stub `chrome` that has no `i18n`, and a missing
+/// message must not become an empty error message.
+const t = (key, fallback = "") =>
+  globalThis.chrome?.i18n?.getMessage?.(key) || fallback;
+
 const runtime = globalThis.browser?.runtime ?? chrome.runtime;
 
 const HOST = "com.bioauth.webauthn";
@@ -79,7 +89,7 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
 // cannot reach `chrome.action.onClicked`.
 
 const AUTOFILL_MENU = "bioauth-autofill";
-const AUTOFILL_TITLE = "Preencher senha do cofre";
+const AUTOFILL_TITLE = t("autofillTitle", "Fill password from vault");
 
 // What went wrong, where the person who pressed the button can see it.
 //
@@ -127,7 +137,7 @@ const startFill = ({ tabId, frameId, pageUrl }) => {
   // to answer, and that silence would otherwise be read as "no field is
   // focused". The page's own URL is the only thing that tells those apart.
   if (typeof pageUrl === "string" && !pageUrl.startsWith("https://")) {
-    report("só páginas https podem ser preenchidas");
+    report(t("fillHttpsOnly", "only https pages can be filled"));
     return;
   }
   // The context menu names the frame the click was in. The toolbar button
@@ -136,9 +146,11 @@ const startFill = ({ tabId, frameId, pageUrl }) => {
   // nothing focused rather than answering for a page it is not part of.
   askFrameToFill(tabId, frameId).then(
     (response) => {
-      if (!response?.ok) report(response?.error ?? "o cofre não respondeu");
+      if (!response?.ok) {
+        report(response?.error ?? t("fillNoAnswer", "the vault did not answer"));
+      }
     },
-    () => report("selecione o campo de senha primeiro"),
+    () => report(t("fillSelectField", "select the password field first")),
   );
 };
 

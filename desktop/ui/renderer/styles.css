@@ -281,6 +281,16 @@ main {
   font-size: 12px;
 }
 
+/* The one in the title bar sits next to the connection pill rather than
+   filling the column, so it drops the block layout the pairing select needs. */
+.select--compact {
+  display: inline-block;
+  width: auto;
+  margin: 0;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
 .select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

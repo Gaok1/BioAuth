@@ -1,0 +1,33 @@
+{
+  "autofillTitle": {
+    "message": "Fill password from vault",
+    "description": "The toolbar button and the context-menu entry."
+  },
+  "fillHttpsOnly": {
+    "message": "only https pages can be filled"
+  },
+  "fillSelectField": {
+    "message": "select the password field first"
+  },
+  "fillNoAnswer": {
+    "message": "the vault did not answer"
+  },
+  "fillFrameRefused": {
+    "message": "This frame cannot be filled"
+  },
+  "fillHttpsOnlyCapitalized": {
+    "message": "Only https pages can be filled"
+  },
+  "fillSelectFieldCapitalized": {
+    "message": "Select the user or password field first"
+  },
+  "fillNoAnswerCapitalized": {
+    "message": "The vault did not answer"
+  },
+  "fillFieldChanged": {
+    "message": "The field changed while the vault was answering"
+  },
+  "fillFailed": {
+    "message": "Could not fill"
+  }
+}

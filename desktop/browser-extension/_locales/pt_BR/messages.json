@@ -1,0 +1,33 @@
+{
+  "autofillTitle": {
+    "message": "Preencher senha do cofre",
+    "description": "The toolbar button and the context-menu entry."
+  },
+  "fillHttpsOnly": {
+    "message": "só páginas https podem ser preenchidas"
+  },
+  "fillSelectField": {
+    "message": "selecione o campo de senha primeiro"
+  },
+  "fillNoAnswer": {
+    "message": "o cofre não respondeu"
+  },
+  "fillFrameRefused": {
+    "message": "Este quadro não pode ser preenchido"
+  },
+  "fillHttpsOnlyCapitalized": {
+    "message": "Só páginas https podem ser preenchidas"
+  },
+  "fillSelectFieldCapitalized": {
+    "message": "Selecione o campo de usuário ou de senha primeiro"
+  },
+  "fillNoAnswerCapitalized": {
+    "message": "O cofre não respondeu"
+  },
+  "fillFieldChanged": {
+    "message": "O campo mudou enquanto o cofre respondia"
+  },
+  "fillFailed": {
+    "message": "Falha ao preencher"
+  }
+}

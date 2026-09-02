@@ -24,6 +24,312 @@ function clear(container) {
   while (container.firstChild) container.removeChild(container.firstChild);
 }
 
+// --- language -------------------------------------------------------------
+
+/// Every word this window says, in each language it ships.
+///
+/// Kept here rather than in a file of its own because the window is one
+/// script, and because the tests run `renderer.js` on its own in a `vm`. A
+/// value is either a string or a function of whatever the line needs; adding a
+/// language is adding one entry, and a key missing from it falls back to
+/// English rather than rendering blank.
+///
+/// The house rule for the copy: say what a thing is or what a button does. No
+/// sentence explains how the app works underneath.
+const STRINGS = {
+  en: {
+    languageName: 'English',
+    languageTitle: 'Language',
+    connectionTitle: 'Agent state',
+    connectionReady: 'ready',
+    connectionNoTransport: 'no transport',
+    connectionOffline: 'offline',
+    devBannerTitle: 'Development mode.',
+    devBannerBody:
+      'Authorizations are signed here by a software key. No biometrics, no phone.',
+    offlineTitle: 'Agent unavailable.',
+    offlineDefault: 'Could not reach the agent.',
+    liveWaiting: 'Waiting for the phone',
+    liveNote: 'Approve or refuse on the phone.',
+    fieldService: 'service',
+    fieldResource: 'resource',
+    fieldUser: 'user',
+    fieldOrigin: 'origin',
+    fieldPhone: 'phone',
+    fieldCredential: 'credential',
+    fieldKey: 'key',
+    fieldName: 'Name',
+    fieldAddress: 'Address',
+    tabPhones: 'Phones',
+    tabVault: 'Vault',
+    tabConnection: 'Connection',
+    tabHistory: 'History',
+    pairFor: 'Pair for',
+    serviceAuthorization: 'Login and `sudo`',
+    serviceVault: 'Password vault',
+    serviceLocker: 'Locked files',
+    serviceWebauthn: 'Passkeys on websites',
+    serviceSsh: 'SSH logins',
+    pairButton: 'Pair a phone…',
+    pairingScan: 'Scan this on the phone',
+    pairingQrAlt: 'Pairing code',
+    pairingShowPayload: 'Show what the code carries',
+    pairingExpiry: (time) => `Valid until ${time}`,
+    pairingQrFailed: (reason) => `Could not draw the code: ${reason}`,
+    cancel: 'Cancel',
+    confirmOnPhone: 'Confirm on the phone',
+    confirmNote:
+      "This number must match the phone's screen. If it differs, refuse.",
+    matches: 'It matches',
+    doesNotMatch: 'It does not match',
+    noPhones: 'No phone paired with this computer.',
+    forget: 'forget',
+    grantSudo: 'sudo',
+    grantLogin: 'login',
+    grantVault: 'vault',
+    grantLocker: 'files',
+    grantSsh: 'ssh',
+    grantLuks: 'disk',
+    grantWebauthn: 'passkeys',
+    syncing: 'syncing…',
+    sync: 'sync',
+    grantLine: (service, action, resource, user) =>
+      `${service} / ${action} on ${resource} as ${user}`,
+    noGrants: 'no permissions — authorizes nothing',
+    transportPending: (reason) => `pending — ${reason}`,
+    blockedOn: 'Pending',
+    noHistory: 'No authorizations recorded.',
+    credentialAuthorization:
+      'Approves logins and actions on this computer.',
+    credentialVault:
+      "Releases passwords from the phone's vault to this computer.",
+    credentialLocker: 'Opens locked files stored here.',
+    credentialWebauthn: 'Answers for passkeys on websites.',
+    credentialSsh:
+      'Signs SSH logins. Every login still asks for the fingerprint.',
+    refresh: 'refresh',
+    vaultSearch: 'Search the vault…',
+    vaultListNote: 'No passwords here. Each copy is approved on the phone.',
+    vaultNewTitle: 'New password',
+    vaultNewNote: 'Generated here and copied. Paste it before it clears.',
+    vaultGenerate: 'Generate and copy',
+    vaultStoreTitle: 'Store on the phone',
+    vaultStoreNote:
+      'The password goes straight to the phone, which asks before storing it. '
+      + 'It is never shown here.',
+    vaultStoreButton: 'Generate and store',
+    vaultAsking: 'Asking the phone…',
+    vaultDevelopment:
+      'WARNING — this list came from the development simulator, not a phone.',
+    vaultListed: (count, device) => `${count} items on ${device}.`,
+    vaultPhone: 'the phone',
+    vaultEmpty: 'The vault is empty. Add items on the phone.',
+    vaultNoMatch: 'Nothing matches that search.',
+    copy: 'copy',
+    copyOnPhone: 'on the phone…',
+    copied: 'copied',
+    approveOnPhone: (name) => `Approve on the phone: ${name}.`,
+    copiedOpening: 'Copied.',
+    generatedOpening: (length) => `Password of ${length} characters copied.`,
+    storedOpening: (name, length) =>
+      `"${name}" stored with a password of ${length} characters.`,
+    listFailed: (reason) => `The list could not be refreshed: ${reason}`,
+    nameRequired: 'Give the item a name before storing it.',
+    clipboardClears: (seconds) => `The clipboard clears in ${seconds}s.`,
+    clipboardWarning: (warnings) => `WARNING — ${warnings}.`,
+    clipboardPagefile: 'the password may have reached the pagefile',
+    clipboardHistory: 'the clipboard history may hold a copy',
+    clipboardCloud: 'the clipboard may have synced to the cloud',
+  },
+  pt: {
+    languageName: 'Português (Brasil)',
+    languageTitle: 'Idioma',
+    connectionTitle: 'Estado do agente',
+    connectionReady: 'pronto',
+    connectionNoTransport: 'sem transporte',
+    connectionOffline: 'offline',
+    devBannerTitle: 'Modo de desenvolvimento.',
+    devBannerBody:
+      'As autorizações são assinadas aqui por uma chave de software. Sem '
+      + 'biometria, sem telefone.',
+    offlineTitle: 'Agente indisponível.',
+    offlineDefault: 'Não foi possível falar com o agente.',
+    liveWaiting: 'Aguardando o telefone',
+    liveNote: 'Aprove ou recuse no telefone.',
+    fieldService: 'serviço',
+    fieldResource: 'recurso',
+    fieldUser: 'usuário',
+    fieldOrigin: 'origem',
+    fieldPhone: 'telefone',
+    fieldCredential: 'credencial',
+    fieldKey: 'chave',
+    fieldName: 'Nome',
+    fieldAddress: 'Endereço',
+    tabPhones: 'Telefones',
+    tabVault: 'Cofre',
+    tabConnection: 'Conexão',
+    tabHistory: 'Histórico',
+    pairFor: 'Parear para',
+    serviceAuthorization: 'Login e `sudo`',
+    serviceVault: 'Cofre de senhas',
+    serviceLocker: 'Arquivos trancados',
+    serviceWebauthn: 'Passkeys em sites',
+    serviceSsh: 'Login SSH',
+    pairButton: 'Parear um telefone…',
+    pairingScan: 'Escaneie no telefone',
+    pairingQrAlt: 'Código de pareamento',
+    pairingShowPayload: 'Ver o conteúdo do código',
+    pairingExpiry: (time) => `Válido até ${time}`,
+    pairingQrFailed: (reason) => `Não foi possível desenhar o código: ${reason}`,
+    cancel: 'Cancelar',
+    confirmOnPhone: 'Confirme no telefone',
+    confirmNote:
+      'Este número tem de ser igual ao da tela do telefone. Se for diferente, '
+      + 'recuse.',
+    matches: 'Confere',
+    doesNotMatch: 'Não confere',
+    noPhones: 'Nenhum telefone pareado com este computador.',
+    forget: 'esquecer',
+    grantSudo: 'sudo',
+    grantLogin: 'login',
+    grantVault: 'cofre',
+    grantLocker: 'arquivos',
+    grantSsh: 'ssh',
+    grantLuks: 'disco',
+    grantWebauthn: 'passkeys',
+    syncing: 'sincronizando…',
+    sync: 'sincronizar',
+    grantLine: (service, action, resource, user) =>
+      `${service} / ${action} em ${resource} como ${user}`,
+    noGrants: 'sem permissões — não autoriza nada',
+    transportPending: (reason) => `pendente — ${reason}`,
+    blockedOn: 'Pendências',
+    noHistory: 'Nenhuma autorização registrada.',
+    credentialAuthorization:
+      'Aprova logins e ações neste computador.',
+    credentialVault:
+      'Libera senhas do cofre do telefone para este computador.',
+    credentialLocker: 'Abre arquivos trancados guardados aqui.',
+    credentialWebauthn: 'Responde por passkeys em sites.',
+    credentialSsh:
+      'Assina logins SSH. Cada login ainda pede a digital no telefone.',
+    refresh: 'atualizar',
+    vaultSearch: 'Buscar no cofre…',
+    vaultListNote: 'Nenhuma senha aqui. Cada cópia é aprovada no telefone.',
+    vaultNewTitle: 'Senha nova',
+    vaultNewNote: 'Gerada aqui e copiada. Cole antes que ela se apague.',
+    vaultGenerate: 'Gerar e copiar',
+    vaultStoreTitle: 'Guardar no telefone',
+    vaultStoreNote:
+      'A senha vai direto para o telefone, que pede aprovação antes de '
+      + 'gravar. Ela não aparece aqui.',
+    vaultStoreButton: 'Gerar e guardar',
+    vaultAsking: 'Perguntando ao telefone…',
+    vaultDevelopment:
+      'ATENÇÃO — esta lista veio do simulador de desenvolvimento, não de um '
+      + 'telefone.',
+    vaultListed: (count, device) => `${count} itens em ${device}.`,
+    vaultPhone: 'telefone',
+    vaultEmpty: 'O cofre está vazio. Adicione itens no telefone.',
+    vaultNoMatch: 'Nada corresponde a essa busca.',
+    copy: 'copiar',
+    copyOnPhone: 'no telefone…',
+    copied: 'copiado',
+    approveOnPhone: (name) => `Aprove no telefone: ${name}.`,
+    copiedOpening: 'Copiado.',
+    generatedOpening: (length) => `Senha de ${length} caracteres copiada.`,
+    storedOpening: (name, length) =>
+      `"${name}" guardado com senha de ${length} caracteres.`,
+    listFailed: (reason) => `A lista não pôde ser atualizada: ${reason}`,
+    nameRequired: 'Dê um nome ao item antes de guardar.',
+    clipboardClears: (seconds) =>
+      `A área de transferência se limpa em ${seconds}s.`,
+    clipboardWarning: (warnings) => `ATENÇÃO — ${warnings}.`,
+    clipboardPagefile: 'a senha pode ter chegado ao pagefile',
+    clipboardHistory:
+      'o histórico da área de transferência pode ter guardado uma cópia',
+    clipboardCloud: 'a área de transferência pode ter sincronizado com a nuvem',
+  },
+};
+
+const LANGUAGE_KEY = 'phoneauth.language';
+
+/// Follows the machine unless a person picked one here.
+///
+/// Everything is guarded: this same file runs under the tests in a bare `vm`
+/// with no `localStorage` and no `navigator`, and a window that failed to boot
+/// over a preference would be a worse trade than one in the wrong language.
+function readLanguage() {
+  try {
+    const stored = globalThis.localStorage?.getItem(LANGUAGE_KEY);
+    if (stored && STRINGS[stored]) return stored;
+  } catch {
+    // Storage unavailable; the machine's own language decides.
+  }
+  const system = String(globalThis.navigator?.language || 'en')
+    .slice(0, 2)
+    .toLowerCase();
+  return STRINGS[system] ? system : 'en';
+}
+
+let language = readLanguage();
+
+/// One word or line, in the current language, falling back to English.
+function t(key, ...args) {
+  const value = STRINGS[language][key] ?? STRINGS.en[key];
+  return typeof value === 'function' ? value(...args) : value;
+}
+
+/// Writes every `data-i18n` in the markup, and re-writes them on a switch.
+function applyLanguage() {
+  try {
+    document.documentElement.lang = language;
+  } catch {
+    // No document element under the test harness.
+  }
+  // The key is read back rather than trusted from the selector: the test
+  // harness answers every `querySelectorAll` with the same handful of
+  // elements, and a window that threw here would not boot at all.
+  for (const element of document.querySelectorAll('[data-i18n]')) {
+    if (element.dataset?.i18n) element.textContent = t(element.dataset.i18n);
+  }
+  for (const element of document.querySelectorAll('[data-i18n-attr]')) {
+    if (!element.dataset?.i18nAttr) continue;
+    const [attribute, key] = element.dataset.i18nAttr.split(':');
+    element.setAttribute?.(attribute, t(key));
+  }
+}
+
+/// The picker, built from whatever languages the pack holds.
+function setUpLanguagePicker() {
+  const picker = el('language');
+  if (!picker) return;
+  for (const code of Object.keys(STRINGS)) {
+    const option = document.createElement('option');
+    option.value = code;
+    // Each language names itself: a list renamed into the language currently
+    // showing is one nobody can use to get out of a language they cannot read.
+    option.textContent = STRINGS[code].languageName;
+    picker.appendChild(option);
+  }
+  picker.value = language;
+  picker.addEventListener('change', () => {
+    language = STRINGS[picker.value] ? picker.value : 'en';
+    try {
+      globalThis.localStorage?.setItem(LANGUAGE_KEY, language);
+    } catch {
+      // Applied for this session; the next launch follows the machine again.
+    }
+    applyLanguage();
+    describeService();
+    refresh();
+    if (vaultItems !== null) renderVault();
+  });
+}
+
+applyLanguage();
+setUpLanguagePicker();
+
 // --- tabs -----------------------------------------------------------------
 
 for (const tab of document.querySelectorAll('.tab')) {
@@ -45,7 +351,9 @@ function renderStatus(status) {
   el('dev-banner').hidden = !status.developmentMode;
 
   const connection = el('connection');
-  connection.textContent = status.canAuthorize ? 'pronto' : 'sem transporte';
+  connection.textContent = status.canAuthorize
+    ? t('connectionReady')
+    : t('connectionNoTransport');
   connection.className = `pill ${status.canAuthorize ? 'pill--on' : 'pill--off'}`;
 
   renderDevices(status.pairedDevices || []);
@@ -63,7 +371,7 @@ function renderStatus(status) {
 /// The failure had nowhere to go either. The old handler wrote the error onto
 /// the button and never re-enabled it, so a forget that failed left a dead
 /// button labelled with a sentence -- and the next poll replaced it with a
-/// fresh "esquecer" that said nothing had happened.
+/// fresh "forget" that said nothing had happened.
 let forgetting = null;
 let forgetFailure = null;
 
@@ -74,13 +382,13 @@ let forgetFailure = null;
 /// a wildcard service is a grant of everything. A free-text box here would
 /// mostly produce grants that match nothing.
 const GRANTABLE = [
-  ['sudo', 'sudo'],
-  ['login', 'login'],
-  ['vault', 'cofre'],
-  ['locker', 'arquivos'],
-  ['ssh', 'ssh'],
-  ['luks', 'disco'],
-  ['webauthn', 'passkeys'],
+  ['sudo', 'grantSudo'],
+  ['login', 'grantLogin'],
+  ['vault', 'grantVault'],
+  ['locker', 'grantLocker'],
+  ['ssh', 'grantSsh'],
+  ['luks', 'grantLuks'],
+  ['webauthn', 'grantWebauthn'],
 ];
 
 /// How every field but `service` says "any value". The same string the agent
@@ -112,7 +420,7 @@ function permissionEditor(device, credential) {
     (credential.permissions || []).map((permission) => permission.service)
   );
 
-  for (const [service, label] of GRANTABLE) {
+  for (const [service, labelKey] of GRANTABLE) {
     const wrapper = node('label', 'tag');
     const check = document.createElement('input');
     check.type = 'checkbox';
@@ -132,11 +440,11 @@ function permissionEditor(device, credential) {
       await writePermissions(device, credential, next);
     });
     wrapper.appendChild(check);
-    wrapper.appendChild(document.createTextNode(` ${label}`));
+    wrapper.appendChild(document.createTextNode(` ${t(labelKey)}`));
     box.appendChild(wrapper);
   }
 
-  const sync = node('button', 'tag', busy ? 'sincronizando…' : 'sincronizar');
+  const sync = node('button', 'tag', busy ? t('syncing') : t('sync'));
   sync.disabled = busy;
   sync.addEventListener('click', async () => {
     if (permissionBusy) return;
@@ -194,7 +502,7 @@ function renderDevices(devices) {
 
   if (devices.length === 0) {
     container.appendChild(
-      node('p', 'empty', 'Nenhum telefone pareado com este computador.')
+      node('p', 'empty', t('noPhones'))
     );
     return;
   }
@@ -204,7 +512,7 @@ function renderDevices(devices) {
     const row = node('div', 'row');
     row.appendChild(node('h3', null, device.displayName));
 
-    const forget = node('button', 'tag', 'esquecer');
+    const forget = node('button', 'tag', t('forget'));
     // Re-applied on every render, so neither state is lost to a poll.
     if (forgetting === device.deviceId) {
       forget.disabled = true;
@@ -226,7 +534,7 @@ function renderDevices(devices) {
         // above for when a poll has already replaced it. Neither knows which
         // of the two happened.
         forget.disabled = false;
-        forget.textContent = forgetFailure ? forgetFailure.message : 'esquecer';
+        forget.textContent = forgetFailure ? forgetFailure.message : t('forget');
       }
       // On the way out of both paths. A device that went needs the list
       // without it; one that refused to go needs the reason on the live row.
@@ -260,12 +568,18 @@ function renderDevices(devices) {
           node(
             'li',
             null,
-            `${permission.service} / ${permission.action} em ${permission.resource} como ${permission.user}`
+            t(
+              'grantLine',
+              permission.service,
+              permission.action,
+              permission.resource,
+              permission.user
+            )
           )
         );
       }
       if ((credential.permissions || []).length === 0) {
-        permissions.appendChild(node('li', null, 'sem permissões — não autoriza nada'));
+        permissions.appendChild(node('li', null, t('noGrants')));
       }
       entry.appendChild(permissions);
       entry.appendChild(permissionEditor(device, credential));
@@ -292,14 +606,16 @@ function renderTransports(transports, blockedOn) {
     entry.appendChild(node('p', 'muted', transport.description));
 
     if (transport.blockedOn) {
-      entry.appendChild(node('p', 'muted', `pendente — ${transport.blockedOn}`));
+      entry.appendChild(
+        node('p', 'muted', t('transportPending', transport.blockedOn))
+      );
     }
     container.appendChild(entry);
   }
 
   if (blockedOn.length > 0) {
     const entry = node('div', 'entry');
-    entry.appendChild(node('h3', null, 'Pendências'));
+    entry.appendChild(node('h3', null, t('blockedOn')));
     const list = node('ul');
     for (const item of blockedOn) list.appendChild(node('li', null, item));
     entry.appendChild(list);
@@ -312,7 +628,7 @@ function renderHistory(entries) {
   clear(container);
 
   if (entries.length === 0) {
-    container.appendChild(node('p', 'empty', 'Nenhuma autorização registrada.'));
+    container.appendChild(node('p', 'empty', t('noHistory')));
     return;
   }
 
@@ -368,9 +684,9 @@ async function refresh() {
 
 async function showOffline(reason) {
   el('offline-banner').hidden = false;
-  el('offline-detail').textContent = reason || 'Não foi possível falar com o agente.';
+  el('offline-detail').textContent = reason || t('offlineDefault');
   const connection = el('connection');
-  connection.textContent = 'offline';
+  connection.textContent = t('connectionOffline');
   connection.className = 'pill pill--off';
 
   try {
@@ -403,16 +719,18 @@ function hidePairing() {
 // Shown before the code because the picture is identical for all of them, and
 // a credential enrolled for the wrong one is invisible in the device list.
 const PAIRING_SERVICES = {
-  authorization: 'A credencial aprova logins e ações neste computador.',
-  vault: 'A credencial libera senhas do cofre do telefone para este computador.',
-  locker: 'A credencial abre arquivos trancados guardados aqui.',
-  webauthn: 'A credencial responde por chaves de acesso em sites.',
-  ssh: 'A credencial assina logins SSH. Cada login ainda pede a digital no telefone.',
+  authorization: 'credentialAuthorization',
+  vault: 'credentialVault',
+  locker: 'credentialLocker',
+  webauthn: 'credentialWebauthn',
+  ssh: 'credentialSsh',
 };
 
 function describeService() {
   const service = el('pair-service').value;
-  el('pair-service-note').textContent = PAIRING_SERVICES[service] || '';
+  el('pair-service-note').textContent = PAIRING_SERVICES[service]
+    ? t(PAIRING_SERVICES[service])
+    : '';
 }
 
 el('pair-service').addEventListener('change', describeService);
@@ -423,19 +741,22 @@ el('pair').addEventListener('click', async () => {
   const service = el('pair-service').value;
   try {
     const bootstrap = await api.call('pair.begin', { service });
-    el('pairing-service').textContent = PAIRING_SERVICES[bootstrap.service] || '';
+    el('pairing-service').textContent = PAIRING_SERVICES[bootstrap.service]
+      ? t(PAIRING_SERVICES[bootstrap.service])
+      : '';
     el('pairing-payload').textContent = bootstrap.qrPayload;
     el('pairing-blocked').textContent = bootstrap.blockedOn || '';
-    el('pairing-expiry').textContent = `Válido até ${new Date(
-      bootstrap.expiresAtMs
-    ).toLocaleTimeString()}`;
+    el('pairing-expiry').textContent = t(
+      'pairingExpiry',
+      new Date(bootstrap.expiresAtMs).toLocaleTimeString()
+    );
 
     try {
       el('pairing-qr').src = await api.renderQr(bootstrap.qrPayload);
     } catch (error) {
       // The payload is still readable below the code, so a rendering failure
       // is a degradation rather than a dead end.
-      el('pairing-blocked').textContent = `Não foi possível desenhar o código: ${error.message}`;
+      el('pairing-blocked').textContent = t('pairingQrFailed', error.message);
     }
 
     el('pairing').hidden = false;
@@ -573,21 +894,21 @@ function vaultNote(text, kind) {
 /// empty -- and the sentence explaining why was replaced, half a tick later,
 /// by "guardado". A person who declined the second Keystore prompt got a
 /// success message above an empty vault and nothing anywhere saying to press
-/// Atualizar.
+/// refresh.
 async function loadVault() {
   // Another listing is already on its way and will write the note itself.
   // Not a failure to report: the panel does end up current.
   if (vaultLoading) return null;
   vaultLoading = true;
-  vaultNote('Perguntando ao telefone…');
+  vaultNote(t('vaultAsking'));
   let failure = null;
   try {
     const listed = await api.call('vault.list', {});
     vaultItems = listed.items || [];
     vaultNote(
       listed.development
-        ? 'ATENÇÃO — esta lista veio do simulador de desenvolvimento, não de um telefone.'
-        : `${vaultItems.length} itens em ${listed.deviceName || 'telefone'}.`
+        ? t('vaultDevelopment')
+        : t('vaultListed', vaultItems.length, listed.deviceName || t('vaultPhone'))
     );
   } catch (error) {
     vaultItems = null;
@@ -620,9 +941,7 @@ function renderVault() {
       node(
         'p',
         'empty',
-        vaultItems.length === 0
-          ? 'O cofre está vazio. Adicione itens no telefone.'
-          : 'Nada corresponde a essa busca.'
+        vaultItems.length === 0 ? t('vaultEmpty') : t('vaultNoMatch')
       )
     );
     return;
@@ -633,14 +952,14 @@ function renderVault() {
     const row = node('div', 'row');
     row.appendChild(node('h3', null, item.name));
 
-    const copy = node('button', 'tag', 'copiar');
+    const copy = node('button', 'tag', t('copy'));
     copy.dataset.copy = item.id;
     // Re-applied on every render, so the state survives one.
     if (vaultCopying === item.id) {
       copy.disabled = true;
-      copy.textContent = 'no telefone…';
+      copy.textContent = t('copyOnPhone');
     } else if (vaultCopied === item.id) {
-      copy.textContent = 'copiado';
+      copy.textContent = t('copied');
     }
     copy.addEventListener('click', () => copyItem(item));
     row.appendChild(copy);
@@ -673,13 +992,13 @@ function hostOf(uri) {
 function clipboardNote(result, opening) {
   const seconds = Math.max(0, Math.round((result.clearsAtMs - Date.now()) / 1000));
   const warnings = [];
-  if (!result.memoryLocked) warnings.push('a senha pode ter chegado ao pagefile');
-  if (!result.historyExcluded) warnings.push('o histórico da área de transferência pode ter guardado uma cópia');
-  if (!result.cloudExcluded) warnings.push('a área de transferência pode ter sincronizado com a nuvem');
+  if (!result.memoryLocked) warnings.push(t('clipboardPagefile'));
+  if (!result.historyExcluded) warnings.push(t('clipboardHistory'));
+  if (!result.cloudExcluded) warnings.push(t('clipboardCloud'));
 
   return (
-    `${opening} A área de transferência se limpa em ${seconds}s.` +
-    (warnings.length ? ` ATENÇÃO — ${warnings.join('; ')}.` : '')
+    `${opening} ${t('clipboardClears', seconds)}` +
+    (warnings.length ? ` ${t('clipboardWarning', warnings.join('; '))}` : '')
   );
 }
 
@@ -690,7 +1009,7 @@ async function copyItem(item) {
   vaultCopying = item.id;
   vaultCopied = null;
   renderVault();
-  vaultNote(`Aprove no telefone: ${item.name}.`);
+  vaultNote(t('approveOnPhone', item.name));
   try {
     // The revision of the row that is on screen. If the phone answers with a
     // different one the agent refuses the copy — the item was edited somewhere
@@ -700,7 +1019,7 @@ async function copyItem(item) {
       expectedRevision: item.revision,
     });
     vaultCopied = item.id;
-    vaultNote(clipboardNote(result, 'Copiado.'));
+    vaultNote(clipboardNote(result, t('copiedOpening')));
   } catch (error) {
     // A refusal on the phone, a stale revision and a missing item all arrive
     // as the same code. Saying which one it was is not something this window
@@ -720,7 +1039,7 @@ async function copyItem(item) {
     // What the re-list was protecting against is already handled: `vault.copy`
     // carries the revision of the row on screen and the agent refuses a copy
     // whose revision has moved on. So a stale row costs one clear failure and
-    // a press of Atualizar, rather than an unexplained prompt after every
+    // a press of refresh, rather than an unexplained prompt after every
     // single copy.
   }
 }
@@ -733,9 +1052,7 @@ el('vault-generate').addEventListener('click', async (event) => {
   button.disabled = true;
   try {
     const result = await api.call('vault.generate-copy', {});
-    vaultNote(
-      clipboardNote(result, `Senha de ${result.length} caracteres copiada.`)
-    );
+    vaultNote(clipboardNote(result, t('generatedOpening', result.length)));
   } catch (error) {
     vaultNote(error.message, 'bad');
   } finally {
@@ -757,12 +1074,12 @@ el('vault-store').addEventListener('click', async (event) => {
   // Checked here as well as in the agent. Reaching the phone to be told the
   // name was blank costs a prompt on the person's phone for nothing.
   if (!name) {
-    vaultNote('Dê um nome ao item antes de guardar.', 'bad');
+    vaultNote(t('nameRequired'), 'bad');
     el('vault-new-name').focus();
     return;
   }
   button.disabled = true;
-  vaultNote(`Aprove no telefone: ${name}.`);
+  vaultNote(t('approveOnPhone', name));
   try {
     const result = await api.call('vault.create', {
       name,
@@ -783,13 +1100,13 @@ el('vault-store').addEventListener('click', async (event) => {
     // for the write -- with no approval sheet to explain it, which is the
     // reason `copyItem` no longer re-lists at all. Declining that prompt does
     // not undo the write: the item is on the phone, and both halves have to be
-    // said, or the panel reads "guardado" over a list that is empty for a
+    // said, or the panel reads "stored" over a list that is empty for a
     // reason nobody mentioned.
     vaultItems = null;
     const failure = await loadVault();
-    const stored = `"${name}" guardado com senha de ${result.length} caracteres.`;
+    const stored = t('storedOpening', name, result.length);
     if (failure) {
-      vaultNote(`${stored} A lista não pôde ser atualizada: ${failure}`, 'bad');
+      vaultNote(`${stored} ${t('listFailed', failure)}`, 'bad');
     } else {
       vaultNote(stored);
     }

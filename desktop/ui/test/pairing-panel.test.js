@@ -143,7 +143,7 @@ test('what the credential will do is said before the code is scanned', async () 
   const shown = element('pairing-service').textContent;
   assert.match(shown, /SSH/);
   // And that the pairing is not itself an approval of those logins.
-  assert.match(shown, /digital/);
+  assert.match(shown, /fingerprint/);
 });
 
 // The panel echoes the agent's answer, not its own request: if the agent
@@ -155,7 +155,7 @@ test('the note follows the agent reply, not the local selection', async () => {
   element('pair-service').value = 'ssh';
   await element('pair').emit('click');
 
-  assert.match(element('pairing-service').textContent, /cofre/);
+  assert.match(element('pairing-service').textContent, /vault/);
 });
 
 test('choosing a service explains it before anything is sent', () => {
@@ -164,6 +164,6 @@ test('choosing a service explains it before anything is sent', () => {
   element('pair-service').value = 'vault';
   element('pair-service').emit('change');
 
-  assert.match(element('pair-service-note').textContent, /cofre/);
+  assert.match(element('pair-service-note').textContent, /vault/);
   assert.deepEqual(pairCalls(), [], 'explaining a choice must not begin a pairing');
 });
