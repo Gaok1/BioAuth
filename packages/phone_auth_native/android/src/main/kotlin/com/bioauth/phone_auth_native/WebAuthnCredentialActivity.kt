@@ -1,6 +1,7 @@
 package com.bioauth.phone_auth_native
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.annotation.RequiresApi
@@ -73,7 +74,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                     authenticate(
                         title = "Criar passkey",
                         subtitle = options.rpId,
-                        description = NO_BACKUP_WARNING,
+                        description = getString(R.string.passkey_no_backup),
                         crypto = null,
                         onSuccess = { finishCreate(core.create(options, client)) },
                         onFailure = { failCreateWith(it) },
@@ -167,7 +168,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
                 }
             },
         )
-        val info = webAuthnPromptInfo(title, subtitle, description)
+        val info = webAuthnPromptInfo(this, title, subtitle, description)
         if (crypto == null) prompt?.authenticate(info) else prompt?.authenticate(info, crypto)
     }
 
@@ -268,8 +269,6 @@ class WebAuthnCredentialActivity : FragmentActivity() {
     }
 
     companion object {
-        private const val NO_BACKUP_WARNING =
-            "Sem backup: continue somente se a conta tiver outro método de acesso"
         const val ACTION_CREATE = "com.bioauth.phone_auth_native.WEBAUTHN_CREATE"
         const val ACTION_GET = "com.bioauth.phone_auth_native.WEBAUTHN_GET"
         const val EXTRA_CREDENTIAL_ID = "credential_id"
@@ -277,6 +276,7 @@ class WebAuthnCredentialActivity : FragmentActivity() {
 }
 
 internal fun webAuthnPromptInfo(
+    context: Context,
     title: String,
     subtitle: String,
     description: String?,
@@ -285,6 +285,6 @@ internal fun webAuthnPromptInfo(
     .setSubtitle(subtitle)
     .setDescription(description)
     .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-    .setNegativeButtonText("Cancelar")
+    .setNegativeButtonText(context.getString(R.string.cancel))
     .setConfirmationRequired(true)
     .build()

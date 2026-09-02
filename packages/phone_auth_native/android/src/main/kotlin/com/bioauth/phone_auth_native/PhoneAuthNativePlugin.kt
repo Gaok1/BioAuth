@@ -212,7 +212,7 @@ class PhoneAuthNativePlugin :
                 .setSubtitle(request.subtitle)
                 .setDescription(request.description)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButtonText("Cancelar")
+                .setNegativeButtonText(fragmentActivity.getString(R.string.cancel))
                 .setConfirmationRequired(true)
                 .build()
             prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(initialized))
@@ -257,7 +257,7 @@ class PhoneAuthNativePlugin :
                     require(identifier.startsWith(WebAuthnKeyStore.ALIAS_PREFIX))
                     require(identifier in webAuthnKeyStore.aliases())
                     require(passkeyStore.all().none { it.keyAlias == identifier })
-                    Pair("Chave órfã") {
+                    Pair(fragmentActivity.getString(R.string.passkey_orphan)) {
                         require(passkeyStore.all().none { it.keyAlias == identifier })
                         webAuthnKeyStore.delete(identifier)
                     }
@@ -277,11 +277,13 @@ class PhoneAuthNativePlugin :
         ).also { prompt ->
             prompt.authenticate(
                 BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Excluir passkey")
+                    .setTitle(fragmentActivity.getString(R.string.passkey_delete_title))
                     .setSubtitle(target.first)
-                    .setDescription("A chave e os metadados serão removidos deste telefone")
+                    .setDescription(
+                        fragmentActivity.getString(R.string.passkey_delete_description),
+                    )
                     .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                    .setNegativeButtonText("Cancelar")
+                    .setNegativeButtonText(fragmentActivity.getString(R.string.cancel))
                     .setConfirmationRequired(true)
                     .build(),
             )
@@ -542,7 +544,7 @@ class PhoneAuthNativePlugin :
                 .setSubtitle(subtitle)
                 .setDescription(description)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .setNegativeButtonText("Cancelar")
+                .setNegativeButtonText(fragmentActivity.getString(R.string.cancel))
                 .setConfirmationRequired(true)
                 .build()
             prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))

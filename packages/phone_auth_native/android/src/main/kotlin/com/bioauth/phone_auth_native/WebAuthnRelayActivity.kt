@@ -67,9 +67,9 @@ class WebAuthnRelayActivity : FragmentActivity() {
         runOnUiThread {
             if (cancelled) return@runOnUiThread
             authenticate(
-                "Criar passkey",
+                getString(R.string.passkey_create_title),
                 "${options.rpId} via $origin",
-                NO_BACKUP_WARNING,
+                getString(R.string.passkey_no_backup),
                 null,
                 claimBeforeOperation = true,
             ) { core.create(options, client) }
@@ -88,11 +88,13 @@ class WebAuthnRelayActivity : FragmentActivity() {
                 authenticateGet(options, matches.single(), origin, client)
             } else {
                 AlertDialog.Builder(this)
-                    .setTitle("Escolha uma conta")
+                    .setTitle(getString(R.string.passkey_choose_account))
                     .setItems(accountLabels(matches)) { _, index ->
                         authenticateGet(options, matches[index], origin, client)
                     }
-                    .setNegativeButton("Cancelar") { _, _ -> fail("Passkey selection was cancelled") }
+                    .setNegativeButton(getString(R.string.cancel)) { _, _ ->
+                        fail("Passkey selection was cancelled")
+                    }
                     .setOnCancelListener { fail("Passkey selection was cancelled") }
                     .show()
             }
@@ -184,7 +186,7 @@ class WebAuthnRelayActivity : FragmentActivity() {
             .setSubtitle(subtitle)
             .setDescription(description)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("Cancelar")
+            .setNegativeButtonText(getString(R.string.cancel))
             .setConfirmationRequired(true)
             .build()
         if (crypto == null) prompt?.authenticate(info) else prompt?.authenticate(info, crypto)
@@ -235,8 +237,6 @@ class WebAuthnRelayActivity : FragmentActivity() {
     }
 
     companion object {
-        private const val NO_BACKUP_WARNING =
-            "Sem backup: continue somente se a conta tiver outro método de acesso"
         const val EXTRA_REQUEST_ID = "relay_request_id"
         const val EXTRA_OPERATION = "relay_operation"
         const val EXTRA_ORIGIN = "relay_origin"

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="session_channel_name">Conexões com computadores</string>
+  <string name="session_channel_description">Mantém computadores pareados alcançáveis</string>
+  <string name="session_title">PhoneAuth está disponível</string>
+  <string name="session_text">Aguardando computadores pareados</string>
+
+  <string name="cancel">Cancelar</string>
+
+  <string name="passkey_delete_title">Excluir passkey</string>
+  <string name="passkey_delete_description">A chave e os metadados saem deste telefone</string>
+  <string name="passkey_orphan">Chave órfã</string>
+  <string name="passkey_create_title">Criar passkey</string>
+  <string name="passkey_no_backup">Sem backup: continue só se a conta tiver outra forma de entrar</string>
+  <string name="passkey_choose_account">Escolha uma conta</string>
+
+  <string name="vault_which_account">Qual conta?</string>
+  <string name="vault_fill_title">Preencher senha do cofre</string>
+  <string name="vault_unlock_title">Desbloquear o cofre BioAuth</string>
+</resources>

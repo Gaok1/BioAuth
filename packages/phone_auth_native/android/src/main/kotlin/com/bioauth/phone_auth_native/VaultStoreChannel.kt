@@ -239,13 +239,14 @@ internal class VaultStoreChannel(
         prompt = BiometricPrompt(fragmentActivity, callback).also {
             it.authenticate(
                 BiometricPrompt.PromptInfo.Builder()
-                    // In the app's language. This dialog is drawn by the
-                    // system over a screen that is entirely in Portuguese, and
-                    // a prompt the user cannot read is a prompt they answer by
-                    // guessing which button dismisses it.
-                    .setTitle("Desbloquear o cofre BioAuth")
+                    // From the plugin's own string resources, which Android
+                    // picks by the phone's language. This dialog is drawn by
+                    // the system over the app's screens, and a prompt the user
+                    // cannot read is one they answer by guessing which button
+                    // dismisses it.
+                    .setTitle(fragmentActivity.getString(R.string.vault_unlock_title))
                     .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                    .setNegativeButtonText("Cancelar")
+                    .setNegativeButtonText(fragmentActivity.getString(R.string.cancel))
                     .build(),
                 BiometricPrompt.CryptoObject(cipher),
             )

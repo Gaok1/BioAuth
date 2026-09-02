@@ -110,7 +110,7 @@ class VaultCredentialActivity : FragmentActivity() {
 
     private fun choose(matches: List<VaultItem>) {
         AlertDialog.Builder(this)
-            .setTitle("Qual conta?")
+            .setTitle(getString(R.string.vault_which_account))
             .setItems(
                 matches.map { item -> item.username.ifEmpty { item.name } }.toTypedArray(),
             ) { _, index -> respond(matches[index]) }
@@ -148,9 +148,9 @@ class VaultCredentialActivity : FragmentActivity() {
         // Names the operation rather than the app. The user is being asked to
         // hand a password to whatever raised the field; a title reading
         // "Unlock" would not say that.
-        .setTitle("Preencher senha do cofre")
+        .setTitle(getString(R.string.vault_fill_title))
         .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-        .setNegativeButtonText("Cancelar")
+        .setNegativeButtonText(getString(R.string.cancel))
         .build()
 
     /**

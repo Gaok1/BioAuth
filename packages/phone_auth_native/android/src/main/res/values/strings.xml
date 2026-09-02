@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The words the platform says on this app's behalf: the foreground-service
+  notification, and every biometric prompt the plugin raises.
+
+  They cannot come from the Dart language pack. A prompt is drawn by the system
+  from another process, and the notification outlives the Flutter engine — so
+  they live here, and Android picks the file by the phone's own language. A
+  phone set to a language this app does not ship falls back to this one.
+-->
+<resources>
+  <string name="session_channel_name">Connections to computers</string>
+  <string name="session_channel_description">Keeps paired computers reachable</string>
+  <string name="session_title">PhoneAuth is available</string>
+  <string name="session_text">Waiting for paired computers</string>
+
+  <string name="cancel">Cancel</string>
+
+  <string name="passkey_delete_title">Delete passkey</string>
+  <string name="passkey_delete_description">The key and its metadata are removed from this phone</string>
+  <string name="passkey_orphan">Orphan key</string>
+  <string name="passkey_create_title">Create passkey</string>
+  <string name="passkey_no_backup">No backup: continue only if the account has another way in</string>
+  <string name="passkey_choose_account">Choose an account</string>
+
+  <string name="vault_which_account">Which account?</string>
+  <string name="vault_fill_title">Fill password from vault</string>
+  <string name="vault_unlock_title">Unlock the BioAuth vault</string>
+</resources>

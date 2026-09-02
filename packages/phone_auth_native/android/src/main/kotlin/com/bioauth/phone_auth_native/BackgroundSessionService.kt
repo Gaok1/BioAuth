@@ -20,10 +20,10 @@ class BackgroundSessionService : Service() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
-                    "Conexões com computadores",
+                    getString(R.string.session_channel_name),
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
-                    description = "Mantém computadores pareados disponíveis para autenticação"
+                    description = getString(R.string.session_channel_description)
                     setShowBadge(false)
                 },
             )
@@ -72,8 +72,8 @@ class BackgroundSessionService : Service() {
             ?: android.R.drawable.stat_sys_data_bluetooth
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(icon)
-            .setContentTitle("PhoneAuth está disponível")
-            .setContentText("Aguardando solicitações de computadores pareados")
+            .setContentTitle(getString(R.string.session_title))
+            .setContentText(getString(R.string.session_text))
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
