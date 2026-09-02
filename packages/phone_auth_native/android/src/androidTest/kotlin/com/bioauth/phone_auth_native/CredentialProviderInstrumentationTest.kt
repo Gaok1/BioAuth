@@ -183,10 +183,15 @@ class CredentialProviderInstrumentationTest {
 
     @Test
     fun biometricPolicyAllowsOnlyStrongBiometricsAndConfirmation() {
-        val info = webAuthnPromptInfo("Usar passkey", "example.com", null)
+        val info = webAuthnPromptInfo(context, "Use passkey", "example.com", null)
         assertEquals(BiometricManager.Authenticators.BIOMETRIC_STRONG, info.allowedAuthenticators)
         assertTrue(info.isConfirmationRequired)
-        assertEquals("Cancelar", info.negativeButtonText)
+        // A BIOMETRIC_STRONG-only prompt will not build without a negative
+        // button, so this asserts there is one and that it came from the
+        // resources -- which is what follows the phone's language -- rather
+        // than from a literal left behind in the builder.
+        assertTrue(info.negativeButtonText.isNotEmpty())
+        assertEquals(context.getString(R.string.cancel), info.negativeButtonText)
         assertNotEquals(
             BiometricManager.BIOMETRIC_ERROR_UNSUPPORTED,
             BiometricManager.from(context).canAuthenticate(
