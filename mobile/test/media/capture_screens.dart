@@ -25,7 +25,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_auth/app/app_controller.dart';
 import 'package:phone_auth/app/config.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:phone_auth/app/theme.dart';
+import 'package:phone_auth/l10n/app_strings.dart';
 import 'package:phone_auth/core/mock/fake_phone_authenticator.dart';
 import 'package:phone_auth/core/mock/mock_seed.dart';
 import 'package:phone_auth/domain/authentication_request.dart';
@@ -193,6 +195,15 @@ Future<_Scene> _open(
       container: container,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
+        // Pinned, not inherited. The README is in English and so are the
+        // pictures in it; a capture that followed whatever locale the machine
+        // running it happened to have would change the images by accident.
+        locale: const Locale('en'),
+        supportedLocales: AppStrings.supportedLocales,
+        localizationsDelegates: const [
+          AppStrings.delegate,
+          ...GlobalMaterialLocalizations.delegates,
+        ],
         theme: buildTheme(brightness),
         home: RepaintBoundary(key: _captureKey, child: child),
       ),
