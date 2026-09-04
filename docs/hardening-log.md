@@ -159,14 +159,34 @@ Rules this log follows:
   What it removes is a visible moment of the old language, and the requirement
   that every future caller of `applyLanguage` remember to refresh.
 
+### Pass 10 — 2026-09-04
+
+- **The extension's packs are now checked too**, which completes the set: the
+  phone by its compiler, the window by pass 9, the extension by
+  `extension-locales.test.js`. Five checks — the manifest's `default_locale` is
+  a pack that ships, every pack holds the same keys, every key the code asks for
+  exists, every message is asked for by somebody, and every `t("key",
+  "fallback")` fallback is exactly what the default pack says.
+- **The fallback check is the one that earns its place.** A fallback is not
+  decoration: it is what a browser with no `i18n` shows and what `node --test`
+  sees, so a fallback drifting from the pack is a second wording of the same
+  sentence that nobody maintains.
+- **Writing it surfaced a copy bug.** `fillSelectField` said "select the
+  password field first" while `fillSelectFieldCapitalized` said "Select the
+  user or password field first". The bridge accepts a username box — it says so
+  in `fillTarget` — so the toolbar button was telling people to pick the one
+  field when either would have done. Both variants now agree with the code.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
-2. **The extension has no language test at all.** `_locales/en` and
-   `_locales/pt_BR` are two JSON files with nothing comparing their keys, and
-   every `t("key", "fallback")` call carries an English fallback that no test
-   checks against the pack. Pass 9's shape, one component over.
-3. **The installer cannot tell a stale host binary from a current one.**
+2. **The installer cannot tell a stale host binary from a current one.** It
+   refuses a path that is not an executable named `phone-auth-webauthn-host`;
+   what it cannot do is notice the binary predates the extension that will talk
+   to it. Pass 7 made that legible after the fact.
+3. **Nothing checks the two capitalised/uncapitalised message pairs against
+   each other.** Pass 10 found one that had drifted; the pairing is a
+   convention, and a test could hold it.
 
 ## Ruled out
 

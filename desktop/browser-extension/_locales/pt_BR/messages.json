@@ -7,7 +7,7 @@
     "message": "só páginas https e localhost podem ser preenchidas"
   },
   "fillSelectField": {
-    "message": "selecione o campo de senha primeiro"
+    "message": "selecione o campo de usuário ou de senha primeiro"
   },
   "fillNoAnswer": {
     "message": "o cofre não respondeu"

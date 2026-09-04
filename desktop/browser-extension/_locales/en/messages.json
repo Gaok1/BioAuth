@@ -7,7 +7,7 @@
     "message": "only https pages and localhost can be filled"
   },
   "fillSelectField": {
-    "message": "select the password field first"
+    "message": "select the user or password field first"
   },
   "fillNoAnswer": {
     "message": "the vault did not answer"

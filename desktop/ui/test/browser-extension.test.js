@@ -560,7 +560,10 @@ test('a refused fill says why, where the button is', async () => {
   quiet.click({ id: 7, url: 'https://bank.example/login' });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(quiet.action.badge, '!');
-  assert.equal(quiet.action.title, 'PhoneAuth: select the password field first');
+  assert.equal(
+    quiet.action.title,
+    'PhoneAuth: select the user or password field first'
+  );
 
   // A page the content scripts were never injected into. Told apart from the
   // silence above by the only thing that can tell them apart: the page's URL.

@@ -204,7 +204,7 @@ const startFill = ({ tabId, frameId, pageUrl }) => {
         report(response?.error ?? t("fillNoAnswer", "the vault did not answer"));
       }
     },
-    () => report(t("fillSelectField", "select the password field first")),
+    () => report(t("fillSelectField", "select the user or password field first")),
   );
 };
 
