@@ -58,6 +58,14 @@ android {
             all {
                 it.useJUnitPlatform()
 
+                // Mockito 5.0 ships a Byte Buddy that refuses Java 21 outright
+                // -- "not supported by the current version of Byte Buddy" --
+                // so every test that mocks a final class fails on a current
+                // local JDK while passing on the one CI happens to install.
+                // This is Byte Buddy's own escape hatch for a class file
+                // version it does not know yet.
+                it.systemProperty("net.bytebuddy.experimental", "true")
+
                 it.outputs.upToDateWhen { false }
 
                 it.testLogging {

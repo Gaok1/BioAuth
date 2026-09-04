@@ -30,20 +30,26 @@ Rules this log follows:
   three-argument version. `src/androidTest` is compiled by the emulator CI job
   and nothing else, so it passed every local check. Fixed in `725b568`.
 
+### Pass 2 — 2026-09-04
+
+- **The empty-vault unlock now has a test.** `VaultStoreChannelTest` drives the
+  channel directly with a storage that reports no file, and asserts that both
+  `list` and `listAll` reach `requireCryptoReady` instead of answering. Checked
+  the way a regression test has to be: reverted the fix, watched it fail,
+  restored it, watched it pass.
+- **Mockito could not mock a final class on a current JDK.** Mockito 5.0 ships a
+  Byte Buddy that refuses Java 21 outright, so the approach failed locally while
+  CI’s JDK was fine. Fixed with `net.bytebuddy.experimental` on the unit test
+  task rather than a dependency bump, which would have dragged the trust
+  snapshots along with it.
+
 ## Next
 
-1. **A test for the empty-vault unlock.** The fix above has none: the routing
-   lives in `VaultStoreChannel`, which needs a `FragmentActivity` and a
-   `MethodChannel.Result`, and neither instrumentation test goes through the
-   channel. Either make the routing testable or assert at the channel level
-   that `listAll` on a vault with no file fails with `biometric_unavailable`
-   on an emulator with nothing enrolled — which is exactly what the bug would
-   have turned into a silent empty list.
-2. **Browser extension protocol coverage.** The autofill bridge refuses
+1. **Browser extension protocol coverage.** The autofill bridge refuses
    anything that is not `https:`. Decide what else is legitimate — at minimum
    `http://localhost` and `http://127.0.0.1` for local development — and
    whether the native-messaging protocol version is negotiated or assumed.
-3. **Audit the rest of the vault channel for the same shape of bug**: an early
+2. **Audit the rest of the vault channel for the same shape of bug**: an early
    return that answers before `authenticate` runs. `export` on a missing file
    is the other one, and is currently deliberate.
 
