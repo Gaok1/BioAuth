@@ -138,16 +138,35 @@ Rules this log follows:
   the file, the line and the string.
 - Two Kotlin comments still quoted strings that had moved into resources.
 
+### Pass 9 — 2026-09-04
+
+- **The window's packs now have the check the phone gets from its compiler.**
+  `AppStrings` is an abstract class, so a string in one language and not the
+  other does not build. The window's packs are two object literals and nothing
+  fails: a missing key falls back to English, and a key the markup asks for that
+  no pack has renders as the word `undefined`. Three tests stand in — the packs
+  hold the same keys, a key is the same kind of thing in each (a sentence in one
+  and a function in the other is worse than a missing one), and every key the
+  markup asks for exists. Checked by deleting a key: all three fail.
+- **One string in the markup was never translated.** The connection pill was
+  written `>offline<`, which is text no pack can reach; it showed in English
+  until the first status answered. Now `data-i18n="connectionOffline"`. A fourth
+  test walks the markup for any other text left outside a `data-i18n` element,
+  with an allowlist of exactly one entry: the product's name.
+- `applyLanguage` redraws what the agent's answers produced, rather than leaving
+  it to the round trip the picker asks for. Smaller than it first looked — the
+  picker already calls `refresh()`, so the text was never permanently stale.
+  What it removes is a visible moment of the old language, and the requirement
+  that every future caller of `applyLanguage` remember to refresh.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
-2. **The desktop window has no equivalent guard.** `renderer.js` carries its
-   packs inline, so a sentence written straight into the markup or into a JS
-   string would not be caught the way pass 8 now catches one on the phone.
-3. **The installer cannot tell a stale host binary from a current one.** It
-   already refuses a path that is not an executable named
-   `phone-auth-webauthn-host`; what it cannot do is notice the binary is older
-   than the extension that will talk to it.
+2. **The extension has no language test at all.** `_locales/en` and
+   `_locales/pt_BR` are two JSON files with nothing comparing their keys, and
+   every `t("key", "fallback")` call carries an English fallback that no test
+   checks against the pack. Pass 9's shape, one component over.
+3. **The installer cannot tell a stale host binary from a current one.**
 
 ## Ruled out
 

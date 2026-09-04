@@ -281,6 +281,20 @@ function t(key, ...args) {
 }
 
 /// Writes every `data-i18n` in the markup, and re-writes them on a switch.
+/// The last thing the window drew, ready to be drawn again in another language.
+///
+/// `applyLanguage` rewrites the elements carrying `data-i18n`, and everything
+/// the agent's answers produce is not among them: the connection pill, the
+/// device rows, the transports and the history are written by the renderers,
+/// from `t()`, at the moment the answer arrives.
+///
+/// The picker already asks for a fresh `refresh()` after a switch, so this is
+/// not what stops that text going stale -- the answer does. What it stops is
+/// the wait: the round trip is a visible moment of the old language, and
+/// anything else that ever calls `applyLanguage` gets the redraw without having
+/// to know it must ask for one.
+let repaint = () => {};
+
 function applyLanguage() {
   try {
     document.documentElement.lang = language;
@@ -298,6 +312,10 @@ function applyLanguage() {
     const [attribute, key] = element.dataset.i18nAttr.split(':');
     element.setAttribute?.(attribute, t(key));
   }
+  // After the markup, because the markup holds the starting text for elements
+  // the renderers take over -- the connection pill among them -- and what the
+  // agent last said is more recent than what the file was written with.
+  repaint();
 }
 
 /// The picker, built from whatever languages the pack holds.
@@ -677,12 +695,17 @@ async function refresh() {
 
     const history = await api.call('audit.recent', { limit: 25 });
     renderHistory(history.entries || []);
+    repaint = () => {
+      renderStatus(status);
+      renderHistory(history.entries || []);
+    };
   } catch (error) {
     showOffline(error.message);
   }
 }
 
 async function showOffline(reason) {
+  repaint = () => showOffline(reason);
   el('offline-banner').hidden = false;
   el('offline-detail').textContent = reason || t('offlineDefault');
   const connection = el('connection');
