@@ -18,7 +18,7 @@
 }:
 rustPlatform.buildRustPackage ({
   pname = "phone-auth";
-  version = "0.2.3";
+  version = "0.3.0";
 
   src = lib.cleanSource ../.;
 

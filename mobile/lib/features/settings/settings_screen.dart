@@ -56,7 +56,7 @@ class SettingsScreen extends ConsumerWidget {
 }
 
 /// Bumped with `pubspec.yaml` at each release.
-const String _version = '0.2.3';
+const String _version = '0.3.0';
 
 class _LanguageTile extends ConsumerWidget {
   const _LanguageTile();

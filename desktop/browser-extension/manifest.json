@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PhoneAuth Passkeys",
   "default_locale": "en",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Relays WebAuthn requests to a paired PhoneAuth device.",
   "permissions": [
     "nativeMessaging",

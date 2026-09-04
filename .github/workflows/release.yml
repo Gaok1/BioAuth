@@ -67,11 +67,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Five files carry the version independently. They are all read by
+      # Seven files carry the version independently. They are all read by
       # something a user sees — the installer filename, the APK's versionName,
-      # the Nix package, the version a browser shows on its extensions page —
-      # so a release where they disagree ships artifacts that claim to be
-      # different versions of each other.
+      # the Nix package, the version a browser shows on its extensions page,
+      # the number on the phone's own Settings screen — so a release where they
+      # disagree ships artifacts that claim to be different versions of each
+      # other.
+      #
+      # The Settings screen and the npm lockfile were the two nobody checked.
+      # The screen is the version a person reads when asked which build they
+      # are running, and it had been sitting at the previous one; the lockfile
+      # is what `npm ci` compares against `package.json`, and a mismatch there
+      # fails the desktop build rather than shipping a wrong number.
       - name: Check the declared versions agree
         id: version
         run: |
@@ -95,6 +102,11 @@ jobs:
             "$(sed -n 's/.*version = "\(.*\)".*/\1/p' desktop/nixos/package.nix | head -1)"
           check desktop/browser-extension/manifest.json \
             "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/browser-extension/manifest.json | head -1)"
+          check desktop/ui/package-lock.json \
+            "$(sed -n 's/.*"version": "\(.*\)".*/\1/p' desktop/ui/package-lock.json | head -1)"
+          check mobile/lib/features/settings/settings_screen.dart \
+            "$(sed -n "s/^const String _version = '\(.*\)';/\1/p" \
+              mobile/lib/features/settings/settings_screen.dart | head -1)"
           [ "$fail" = 0 ] || exit 1
 
           # The sixth thing carrying a version, and the only one no user ever

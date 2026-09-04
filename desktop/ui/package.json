@@ -1,7 +1,7 @@
 {
   "name": "phone-auth-tray",
   "productName": "PhoneAuth",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Tray UI for the PhoneAuth background agent",
   "author": "Luis Phillip Lemos Martins <107713925+Gaok1@users.noreply.github.com>",
   "homepage": "https://github.com/Gaok1/BioAuth",
