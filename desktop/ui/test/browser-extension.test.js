@@ -572,7 +572,18 @@ test('a refused fill says why, where the button is', async () => {
   insecure.click({ id: 7, url: 'http://bank.example/login' });
   assert.equal(asked, false, 'no tab was messaged');
   assert.equal(insecure.action.badge, '!');
-  assert.equal(insecure.action.title, 'PhoneAuth: only https pages can be filled');
+  assert.equal(
+    insecure.action.title,
+    'PhoneAuth: only https pages and localhost can be filled'
+  );
+
+  // And the page the content scripts *are* injected into over plain http. The
+  // manifest matches loopback, so a refusal here would be the button reporting
+  // a rule the rest of the extension does not follow.
+  const local = boot({ answer: { ok: true } });
+  local.click({ id: 7, url: 'http://localhost:3000/login' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(local.action.badge, '');
 });
 
 test('a bridge that cannot reach the extension says which way it failed', async () => {

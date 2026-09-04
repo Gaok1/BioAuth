@@ -41,7 +41,10 @@
     },
     {
       "matches": [
-        "https://*/*"
+        "https://*/*",
+        "http://localhost/*",
+        "http://*.localhost/*",
+        "http://127.0.0.1/*"
       ],
       "js": [
         "autofill-bridge.js"

@@ -3,8 +3,8 @@
     "message": "Fill password from vault",
     "description": "The toolbar button and the context-menu entry."
   },
-  "fillHttpsOnly": {
-    "message": "only https pages can be filled"
+  "fillInsecurePage": {
+    "message": "only https pages and localhost can be filled"
   },
   "fillSelectField": {
     "message": "select the password field first"
@@ -15,8 +15,8 @@
   "fillFrameRefused": {
     "message": "This frame cannot be filled"
   },
-  "fillHttpsOnlyCapitalized": {
-    "message": "Only https pages can be filled"
+  "fillInsecurePageCapitalized": {
+    "message": "Only https pages and localhost can be filled"
   },
   "fillSelectFieldCapitalized": {
     "message": "Select the user or password field first"

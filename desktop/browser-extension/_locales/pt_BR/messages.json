@@ -3,8 +3,8 @@
     "message": "Preencher senha do cofre",
     "description": "The toolbar button and the context-menu entry."
   },
-  "fillHttpsOnly": {
-    "message": "só páginas https podem ser preenchidas"
+  "fillInsecurePage": {
+    "message": "só páginas https e localhost podem ser preenchidas"
   },
   "fillSelectField": {
     "message": "selecione o campo de senha primeiro"
@@ -15,8 +15,8 @@
   "fillFrameRefused": {
     "message": "Este quadro não pode ser preenchido"
   },
-  "fillHttpsOnlyCapitalized": {
-    "message": "Só páginas https podem ser preenchidas"
+  "fillInsecurePageCapitalized": {
+    "message": "Só páginas https e localhost podem ser preenchidas"
   },
   "fillSelectFieldCapitalized": {
     "message": "Selecione o campo de usuário ou de senha primeiro"

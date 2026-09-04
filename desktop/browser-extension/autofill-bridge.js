@@ -72,12 +72,30 @@
     }
   }
 
+  /// Whether a host names this machine and nothing else.
+  ///
+  /// `localhost` and everything under it are reserved for loopback by RFC 6761,
+  /// and the literal address is the rest of it. Nothing is resolved: a name
+  /// that points at 127.0.0.1 today can point elsewhere tomorrow, and that
+  /// would hand the decision to whoever answers the lookup.
+  function isLoopbackHost(hostname) {
+    return hostname === "localhost"
+      || hostname.endsWith(".localhost")
+      || hostname === "127.0.0.1";
+  }
+
   /// The origin sent to the host, or null when there is not one worth sending.
   ///
-  /// Only `https:`. A password typed over plain HTTP is a password on the wire,
-  /// and filling one automatically would make that this extension's doing.
+  /// `https:`, plus `http:` on a loopback host. The reason for the https rule
+  /// is that a password typed over plain HTTP is a password on the wire, and a
+  /// request to this machine never reaches one -- which is why browsers call
+  /// localhost a secure context too. Without the exception a vault cannot fill
+  /// the app you are writing on your own machine, which is most of what a
+  /// developer would ask it for.
   function fillableOrigin(location) {
-    if (location.protocol !== "https:") return null;
+    const secure = location.protocol === "https:"
+      || (location.protocol === "http:" && isLoopbackHost(location.hostname ?? ""));
+    if (!secure) return null;
     const origin = location.origin;
     if (!origin || origin === "null") return null;
     return origin;
@@ -199,7 +217,7 @@
     }
     const origin = fillableOrigin(view.location);
     if (!origin) {
-      return { ok: false, error: t("fillHttpsOnlyCapitalized", "Only https pages can be filled") };
+      return { ok: false, error: t("fillInsecurePageCapitalized", "Only https pages and localhost can be filled") };
     }
     const focused = fillTarget(document);
     const password = passwordFieldFor(focused);

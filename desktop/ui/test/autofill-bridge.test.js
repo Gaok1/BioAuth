@@ -161,9 +161,52 @@ test('the origin sent to the host is exact', () => {
 test('plain http and an opaque origin are refused', () => {
   const { fillableOrigin } = boot();
 
-  assert.equal(fillableOrigin({ protocol: 'http:', origin: 'http://bank.example' }), null);
+  assert.equal(
+    fillableOrigin({
+      protocol: 'http:',
+      hostname: 'bank.example',
+      origin: 'http://bank.example',
+    }),
+    null
+  );
   assert.equal(fillableOrigin({ protocol: 'https:', origin: 'null' }), null);
   assert.equal(fillableOrigin({ protocol: 'file:', origin: 'null' }), null);
+});
+
+/// The exception to the rule above, and the reason it is narrow: a password
+/// sent to a loopback name never reaches a wire, which is the whole basis of
+/// the https rule. Browsers call localhost a secure context for the same
+/// reason.
+test('plain http is fillable on a loopback host', () => {
+  const { fillableOrigin } = boot();
+
+  for (const [hostname, origin] of [
+    ['localhost', 'http://localhost:3000'],
+    ['127.0.0.1', 'http://127.0.0.1:8080'],
+    ['app.localhost', 'http://app.localhost'],
+  ]) {
+    assert.equal(fillableOrigin({ protocol: 'http:', hostname, origin }), origin);
+  }
+});
+
+/// A name that merely reads as loopback belongs to whoever registered it.
+/// `localhost.evil.example` resolves wherever evil.example says, and a
+/// password filled there is a password on the wire.
+test('a host that only looks like loopback is still refused over http', () => {
+  const { fillableOrigin } = boot();
+
+  for (const hostname of [
+    'localhost.evil.example',
+    'notlocalhost',
+    '127.0.0.1.evil.example',
+    '127.0.0.2',
+  ]) {
+    assert.equal(
+      fillableOrigin({ protocol: 'http:', hostname, origin: `http://${hostname}` }),
+      null,
+      hostname
+    );
+  }
 });
 
 /// The focused field, not the first password box on the page. Guessing is how

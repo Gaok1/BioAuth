@@ -12,6 +12,60 @@ const runtime = globalThis.browser?.runtime ?? chrome.runtime;
 
 const HOST = "com.bioauth.webauthn";
 
+// The pages this extension will fill: https anywhere, and http on this
+// machine.
+//
+// The https rule is that a password typed over plain HTTP is a password on the
+// wire. A request to localhost never reaches one, which is why browsers count
+// it as a secure context too, and why a vault that refused it could not fill
+// the app you are writing on your own machine.
+//
+// Filling only. The two passkey bridges stay on https, because they replace
+// `navigator.credentials` and the agent refuses a WebAuthn origin that is not
+// https: injecting them on localhost would take away the browser's own
+// implementation, which works there, and put nothing in its place.
+//
+// Kept as patterns because the manifest needs the same list on the autofill
+// `content_scripts` entry and the context menu needs it again: a page the
+// content script is not injected into cannot answer, and a menu entry offered
+// there would report "the vault did not answer" for a page that was never
+// asked.
+const FILLABLE_PATTERNS = [
+  "https://*/*",
+  "http://localhost/*",
+  "http://*.localhost/*",
+  "http://127.0.0.1/*",
+];
+
+// Nothing is resolved: a name that points at 127.0.0.1 today can point
+// elsewhere tomorrow, and that would hand the decision to whoever answers the
+// lookup. `localhost` and everything under it are reserved for loopback by RFC
+// 6761, so the names are enough on their own.
+const isLoopbackHost = (hostname) =>
+  hostname === "localhost"
+  || hostname.endsWith(".localhost")
+  || hostname === "127.0.0.1";
+
+// The origin of a URL this extension will fill, or null.
+//
+// Takes a parsed URL rather than a string so a caller cannot hand it something
+// that only looks like one: `https://bank.example@evil.example/` is a page on
+// evil.example, and `new URL` is what says so.
+const fillableOrigin = (url) => {
+  const secure = url.protocol === "https:"
+    || (url.protocol === "http:" && isLoopbackHost(url.hostname));
+  if (!secure) return null;
+  return url.origin && url.origin !== "null" ? url.origin : null;
+};
+
+const fillableUrl = (value) => {
+  try {
+    return fillableOrigin(new URL(value)) !== null;
+  } catch {
+    return false;
+  }
+};
+
 // The two engines disagree on both halves of this exchange.
 //
 // Sending: Firefox's `browser.*` API returns a promise and rejects a callback;
@@ -57,9 +111,8 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   let origin;
   try {
-    const url = new URL(sender.url);
-    if (url.protocol !== "https:") throw new Error("HTTPS is required");
-    origin = url.origin;
+    origin = fillableOrigin(new URL(sender.url));
+    if (!origin) throw new Error("the page is not a secure context");
   } catch {
     sendResponse({ ok: false, error: "Invalid browser origin" });
     return true;
@@ -133,11 +186,12 @@ const askFrameToFill = (tabId, frameId) => {
 const startFill = ({ tabId, frameId, pageUrl }) => {
   if (typeof tabId !== "number" || !globalThis.chrome?.tabs) return;
   report(null);
-  // Content scripts only match `https://*/*`, so anywhere else there is nobody
-  // to answer, and that silence would otherwise be read as "no field is
-  // focused". The page's own URL is the only thing that tells those apart.
-  if (typeof pageUrl === "string" && !pageUrl.startsWith("https://")) {
-    report(t("fillHttpsOnly", "only https pages can be filled"));
+  // Content scripts only match the patterns in the manifest, so anywhere else
+  // there is nobody to answer, and that silence would otherwise be read as "no
+  // field is focused". The page's own URL is the only thing that tells those
+  // apart.
+  if (typeof pageUrl === "string" && !fillableUrl(pageUrl)) {
+    report(t("fillInsecurePage", "only https pages and localhost can be filled"));
     return;
   }
   // The context menu names the frame the click was in. The toolbar button
@@ -167,7 +221,7 @@ if (globalThis.chrome?.contextMenus) {
       id: AUTOFILL_MENU,
       title: AUTOFILL_TITLE,
       contexts: ["editable"],
-      documentUrlPatterns: ["https://*/*"],
+      documentUrlPatterns: FILLABLE_PATTERNS,
     });
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -187,9 +241,8 @@ runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   let origin;
   try {
-    const url = new URL(sender.url);
-    if (url.protocol !== "https:") throw new Error("HTTPS is required");
-    origin = url.origin;
+    origin = fillableOrigin(new URL(sender.url));
+    if (!origin) throw new Error("the page is not a secure context");
   } catch {
     sendResponse({ ok: false, error: "Invalid browser origin" });
     return true;

@@ -43,15 +43,38 @@ Rules this log follows:
   task rather than a dependency bump, which would have dragged the trust
   snapshots along with it.
 
+### Pass 3 — 2026-09-04
+
+- **The vault can now fill on localhost.** The extension refused anything that
+  was not `https:`, which meant a personal vault could not fill the app you are
+  writing on your own machine. The rule behind https is that a password typed
+  over plain HTTP is a password on the wire, and a request to a loopback name
+  never reaches one — the same reason browsers count localhost as a secure
+  context. Widened end to end: `origin_host` in the agent, `fillableOrigin` in
+  the content script and the service worker, and the manifest's match patterns.
+  Loopback is decided by name (`localhost`, `*.localhost`, `127.0.0.1`) and
+  never resolved, because a name that points at 127.0.0.1 today can point
+  elsewhere tomorrow.
+- **Filling only — and that scoping is the point.** Widening the match patterns
+  for all three content scripts would have injected `page-bridge.js` on
+  localhost, where it replaces `navigator.credentials` with a relay the agent
+  refuses for any non-https origin. Passkeys on localhost work today through
+  the browser's own implementation; that change would have taken them away and
+  put nothing in their place. Caught before commit, not after.
+
 ## Next
 
-1. **Browser extension protocol coverage.** The autofill bridge refuses
-   anything that is not `https:`. Decide what else is legitimate — at minimum
-   `http://localhost` and `http://127.0.0.1` for local development — and
-   whether the native-messaging protocol version is negotiated or assumed.
-2. **Audit the rest of the vault channel for the same shape of bug**: an early
-   return that answers before `authenticate` runs. `export` on a missing file
-   is the other one, and is currently deliberate.
+1. **Passkeys on localhost.** The other half of the pass above, and a longer
+   chain: `perform_webauthn` and `phone-auth-webauthn-host.rs` both test for
+   `https://`, and the phone validates the RP ID against the public suffix list,
+   where `localhost` does not appear. Worth checking what Android's own
+   credential provider does with it before deciding.
+2. **Audit the rest of the vault channel for the same shape of bug** as pass 1:
+   an early return that answers before `authenticate` runs. `export` on a
+   missing file is the other one, and is currently deliberate.
+3. **The extension's other protocol question**: whether the native-messaging
+   payload carries a version at all, and what happens when a host older than
+   the extension answers it.
 
 ## Ruled out
 

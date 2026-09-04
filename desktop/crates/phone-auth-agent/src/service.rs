@@ -1461,7 +1461,7 @@ impl Service {
         params: &VaultFillParams,
     ) -> Result<VaultFillResult, ServiceError> {
         let host = origin_host(&params.origin)
-            .ok_or_else(|| ServiceError::new("bad-params", "origin is not an https origin"))?;
+            .ok_or_else(|| ServiceError::new("bad-params", "origin is not a fillable origin"))?;
 
         let (device_id, credential_id) =
             self.select_vault_credential(params.credential_id.as_deref())?;
@@ -2027,15 +2027,36 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
 /// [`Declined`](VaultError::Declined) and all leave as `declined`, so a caller
 /// that is not entitled to a secret cannot use the error to learn which item
 /// IDs exist.
-/// The host of an https origin or URI, lowercased, or None.
+/// The host of a fillable origin, lowercased, or None.
 ///
 /// Written by hand rather than pulled from a URL crate because the rules
-/// wanted here are narrower than a general parser's: only `https`, a
+/// wanted here are narrower than a general parser's: two schemes, a
 /// scheme-less string is not an origin, a port is not part of a host, and
 /// userinfo — the classic way to make a host read as one thing and resolve as
 /// another — is discarded rather than parsed.
+///
+/// `https` anywhere, and `http` only on this machine. The https rule is that a
+/// password typed over plain HTTP is a password on the wire; a request to
+/// localhost never reaches one, which is why browsers count it as a secure
+/// context too. The extension draws the same line, and has to: a page it will
+/// not inject into cannot ask, and an origin it does ask with has to be one
+/// this side will accept.
 fn origin_host(value: &str) -> Option<String> {
-    authority_host(value.strip_prefix("https://")?)
+    if let Some(rest) = value.strip_prefix("https://") {
+        return authority_host(rest);
+    }
+    let host = authority_host(value.strip_prefix("http://")?)?;
+    is_loopback_host(&host).then_some(host)
+}
+
+/// Whether a host names this machine and nothing else.
+///
+/// `localhost` and everything under it are reserved for loopback by RFC 6761,
+/// and the literal address is the rest of it. Nothing is resolved: a name that
+/// points at 127.0.0.1 today can point elsewhere tomorrow, and resolving would
+/// hand this decision to whoever answers the lookup.
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host.ends_with(".localhost") || host == "127.0.0.1"
 }
 
 /// The host in the address field of a stored item.
@@ -2048,8 +2069,8 @@ fn origin_host(value: &str) -> Option<String> {
 /// only thing the person had to go on.
 ///
 /// This widens nothing about which site a password can reach. The page's own
-/// origin is still parsed strictly, https only, and the two are compared by
-/// exact host equality: a scheme that never belonged to a browser tab cannot
+/// origin is still parsed strictly by [`origin_host`], and the two are compared
+/// by exact host equality: a scheme that never belonged to a browser tab cannot
 /// produce a host that matches one.
 fn item_host(value: &str) -> Option<String> {
     let value = value.trim();
@@ -2767,5 +2788,39 @@ mod subscriber_tests {
         assert_eq!(origin_host("bank.example"), None);
         assert_eq!(origin_host("https://"), None);
         assert_eq!(origin_host(""), None);
+    }
+
+    /// The exception, and only for names that cannot leave this machine. A
+    /// password sent to `http://localhost:3000` never reaches a wire; one sent
+    /// to `http://bank.example` does, which is what the test above pins.
+    #[test]
+    fn plain_http_is_fillable_only_on_loopback() {
+        assert_eq!(
+            origin_host("http://localhost:3000"),
+            Some("localhost".into())
+        );
+        assert_eq!(
+            origin_host("http://127.0.0.1:8080/"),
+            Some("127.0.0.1".into())
+        );
+        assert_eq!(
+            origin_host("http://app.localhost/login"),
+            Some("app.localhost".into())
+        );
+        assert_eq!(origin_host("http://LOCALHOST"), Some("localhost".into()));
+    }
+
+    /// A host that merely reads as loopback is not loopback. `localhost.evil`
+    /// is a name evil owns, `notlocalhost` is somebody else's machine, and
+    /// userinfo is the classic way to make the left of an `@` look like the
+    /// host -- all of them resolve off this machine and none may be filled
+    /// over plain http.
+    #[test]
+    fn a_host_that_only_looks_like_loopback_is_not_fillable_over_http() {
+        assert_eq!(origin_host("http://localhost.evil.example"), None);
+        assert_eq!(origin_host("http://notlocalhost"), None);
+        assert_eq!(origin_host("http://localhost@evil.example/"), None);
+        assert_eq!(origin_host("http://127.0.0.1.evil.example"), None);
+        assert_eq!(origin_host("http://127.0.0.2"), None);
     }
 }
