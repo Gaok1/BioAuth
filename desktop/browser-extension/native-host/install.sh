@@ -74,8 +74,13 @@ host_path="$(cd -- "$(dirname -- "$host_path")" && pwd -P)/$(basename -- "$host_
 # The mode bits say a file may be executed, not that it can be. A binary built
 # for another architecture, or half-copied, satisfies `-x` and then fails
 # silently at every launch the browser makes -- and a browser reports that as
-# nothing at all. `--version` is the cheapest way to find out now.
-"$host_path" --version >/dev/null 2>&1 || { echo "host will not run: $host_path" >&2; exit 2; }
+# nothing at all.
+#
+# Launched the way a browser launches it, with nothing on stdin: the host reads
+# end-of-stream and stops. Asking it `--version` instead would test that it
+# parses a flag, which is not the question and is not something every stand-in
+# for it answers.
+"$host_path" </dev/null >/dev/null 2>&1 || { echo "host will not run: $host_path" >&2; exit 2; }
 
 for browser in "${selected[@]}"; do
   case $browser in

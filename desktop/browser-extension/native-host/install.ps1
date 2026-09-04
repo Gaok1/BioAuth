@@ -75,8 +75,12 @@ if ($Action -eq 'Install') {
     # A file that exists is not a file that runs. A binary built for another
     # architecture, or half-copied, passes every check above and then fails at
     # each launch the browser makes -- which a browser reports as nothing at
-    # all. `--version` answers now instead.
-    & $executable --version *> $null
+    # all.
+    #
+    # Launched the way a browser launches it, with nothing on stdin: the host
+    # reads end-of-stream and stops. `cmd /c` because the redirection is the
+    # point and PowerShell has no operator for standard input.
+    & cmd.exe /c "`"$executable`" >NUL 2>&1 <NUL"
     if ($LASTEXITCODE -ne 0) { throw "HostPath will not run: $executable" }
 
     foreach ($browser in $Browsers) {

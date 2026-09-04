@@ -24,9 +24,9 @@ fn the_host_says_which_build_it_is() {
     assert!(said.contains(env!("CARGO_PKG_VERSION")), "{said}");
 }
 
-/// The installer asks this question to find out whether the binary it is about
-/// to point a browser at will actually run: mode bits say a file may be
-/// executed, not that it can be.
+/// The installers do not ask this question -- they launch the host the way a
+/// browser does, with nothing on stdin -- but the same property is what makes
+/// that probe safe: whatever the launcher passes, the host runs and stops.
 #[test]
 fn an_argument_a_browser_passes_is_not_a_usage_error() {
     for argument in [

@@ -9,6 +9,26 @@ $ids = @{ Chrome = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; Edge = 'bbbbbbbbbbbbbbbbb
 try {
     New-Item -ItemType Directory -Path $temporary | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSHOME 'powershell.exe') -Destination $hostPath
+
+    # A file with the right name and the wrong contents: half a copy, or a
+    # build for another architecture. Every check the installer makes on the
+    # path itself passes, and every launch the browser makes would fail with
+    # nothing said, so the installer has to refuse it here.
+    $brokenDirectory = Join-Path $temporary 'broken'
+    New-Item -ItemType Directory -Path $brokenDirectory | Out-Null
+    $brokenHost = Join-Path $brokenDirectory 'phone-auth-webauthn-host.exe'
+    Set-Content -LiteralPath $brokenHost -Value 'not a program' -Encoding utf8
+    $refused = $false
+    try {
+        & $installer -Action Install -HostPath $brokenHost -ChromeExtensionId $ids.Chrome `
+            -EdgeExtensionId $ids.Edge -ManifestDirectory $manifestDirectory -RegistryRoot $registryRoot
+    } catch {
+        $refused = $true
+    }
+    if (-not $refused) { throw 'The installer accepted a host that will not run.' }
+    if (Test-Path -LiteralPath (Join-Path $manifestDirectory 'com.bioauth.webauthn.chrome.json')) {
+        throw 'The installer left a manifest pointing at a host that will not run.'
+    }
     & $installer -Action Install -HostPath $hostPath -ChromeExtensionId $ids.Chrome `
         -EdgeExtensionId $ids.Edge -ManifestDirectory $manifestDirectory -RegistryRoot $registryRoot
 

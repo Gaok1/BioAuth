@@ -198,15 +198,33 @@ Rules this log follows:
   `install.test.sh` fails, saying the installer accepted a host that will not
   run.
 
+### Pass 12 — 2026-09-04
+
+- **Pass 11 broke the Windows job, and this is the fix.** The probe asked the
+  host `--version` and required exit 0. `install.test.ps1` stands its host in
+  with a copy of `powershell.exe`, which does not answer that flag, so the
+  installer refused it and the job went red. Caught by CI, not by me — the
+  Linux test passed and I did not run the Windows one.
+- **The probe was asking the wrong question.** What matters is whether a
+  browser can launch the binary, not whether it parses a flag. Both installers
+  now launch it the way a browser does, with nothing on stdin: the host reads
+  end-of-stream and stops. That works for the real binary, for a stand-in, and
+  fails for a file that cannot be executed — which is the case the check is for.
+- **Both platforms now have the negative case**, and both were verified by
+  removing the guard and watching the test fail. On Windows the broken host is
+  a file with the right name and the wrong contents, which is what half a copy
+  looks like.
+- `--version` stays. It is still what a person runs to find out which build is
+  installed, and `host_arguments.rs` still pins it.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
 2. **Nothing checks the capitalised/uncapitalised message pairs against each
-   other.** Pass 10 found one that had drifted; the pairing is a convention and
-   a test could hold it.
-3. **`install.ps1` has the same new check and no test proving it fires.**
-   `install.test.ps1` runs on the Windows job; the Linux case is covered and
-   the Windows one is not.
+   other.** Pass 10 found one that had drifted.
+3. **The Windows installer test never ran locally until this pass.** Worth a
+   note in the log for whoever works on `install.ps1` next: it runs under
+   Windows PowerShell here, and CI is the only other place it runs.
 
 ## Ruled out
 
