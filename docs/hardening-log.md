@@ -69,13 +69,16 @@ Rules this log follows:
    `https://`, and the phone validates the RP ID against the public suffix list,
    where `localhost` does not appear. Worth checking what Android's own
    credential provider does with it before deciding.
-2. **Audit the rest of the vault channel for the same shape of bug** as pass 1:
-   an early return that answers before `authenticate` runs. `export` on a
-   missing file is the other one, and is currently deliberate.
-3. **The extension's other protocol question**: whether the native-messaging
+2. **The extension's other protocol question**: whether the native-messaging
    payload carries a version at all, and what happens when a host older than
    the extension answers it.
 
 ## Ruled out
 
-Nothing yet.
+- **The rest of the vault channel does not have pass 1's bug.** Everything in
+  `process` runs after a successful decrypt, so it is already behind a prompt.
+  The two answers that still come out of the `!storage.exists()` branch without
+  one are `export`, which returns no items, and a `restore` that adds nothing,
+  which returns an empty listing — neither reveals anything a locked vault was
+  holding. `VaultCredentialActivity` fails rather than answers when the vault
+  file is missing.
