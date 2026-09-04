@@ -2041,7 +2041,7 @@ fn locker_error(error: phone_auth_locker::LockerError) -> ServiceError {
 /// context too. The extension draws the same line, and has to: a page it will
 /// not inject into cannot ask, and an origin it does ask with has to be one
 /// this side will accept.
-fn origin_host(value: &str) -> Option<String> {
+pub fn origin_host(value: &str) -> Option<String> {
     if let Some(rest) = value.strip_prefix("https://") {
         return authority_host(rest);
     }

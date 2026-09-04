@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write};
 
+use phone_auth_agent::service::origin_host;
 use phone_auth_agent::{AgentClient, Paths};
 use serde_json::{json, Value};
 
@@ -33,6 +34,21 @@ fn run() -> Result<(), String> {
     }
 }
 
+/// The origin of a `vault-fill` request, or None when it is not one to act on.
+///
+/// The rule is the agent's, imported rather than restated. This binary is a
+/// second gate on the same request, and a gate that disagrees with the one
+/// behind it silently refuses what the agent would have allowed -- which is
+/// what a copy of the rule here did the moment the extension learned to fill
+/// on localhost: the agent took the loopback origin, this file still tested
+/// for `https://`, and the feature was dead before it reached the socket.
+fn fill_origin(message: &Value) -> Option<&str> {
+    message
+        .get("origin")
+        .and_then(Value::as_str)
+        .filter(|origin| origin.len() <= 255 && origin_host(origin).is_some())
+}
+
 fn handle(message: Value) -> Value {
     let operation = message.get("operation").and_then(Value::as_str);
     let request_id = message.get("requestId").and_then(Value::as_str);
@@ -58,11 +74,7 @@ fn handle(message: Value) -> Value {
     // one origin in, at most one secret out, and the phone approves it with
     // the full context sheet before anything is released.
     if operation == Some("vault-fill") {
-        let Some(origin) = message
-            .get("origin")
-            .and_then(Value::as_str)
-            .filter(|origin| origin.starts_with("https://") && origin.len() <= 255)
-        else {
+        let Some(origin) = fill_origin(&message) else {
             return json!({"ok": false, "error": "invalid browser origin"});
         };
         let mut client = match AgentClient::connect(&Paths::resolve(None)) {
@@ -158,6 +170,39 @@ mod tests {
             read_message(&mut bytes.as_slice()).unwrap(),
             Some(json!({"hello": "world"}))
         );
+    }
+
+    /// The gate this binary puts in front of `vault.fill`, which has to agree
+    /// with the agent's or it refuses requests the agent would have served.
+    #[test]
+    fn a_fill_origin_is_what_the_agent_would_accept() {
+        for origin in [
+            "https://bank.example",
+            "https://bank.example:8443/login",
+            "http://localhost:3000",
+            "http://127.0.0.1:8080/",
+            "http://app.localhost",
+        ] {
+            assert_eq!(
+                fill_origin(&json!({ "origin": origin })),
+                Some(origin),
+                "{origin}"
+            );
+        }
+
+        for origin in [
+            "http://bank.example",
+            "http://localhost.evil.example",
+            "file:///etc/passwd",
+            "bank.example",
+            "",
+        ] {
+            assert_eq!(fill_origin(&json!({ "origin": origin })), None, "{origin}");
+        }
+
+        assert_eq!(fill_origin(&json!({})), None);
+        let long = format!("https://{}.example", "a".repeat(250));
+        assert_eq!(fill_origin(&json!({ "origin": long })), None);
     }
 
     #[test]

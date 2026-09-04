@@ -62,16 +62,44 @@ Rules this log follows:
   the browser's own implementation; that change would have taken them away and
   put nothing in their place. Caught before commit, not after.
 
+### Pass 4 — 2026-09-04
+
+- Audited the vault channel for more of pass 1's bug. None found; see
+  *Ruled out*.
+
+### Pass 5 — 2026-09-04
+
+- **Pass 3 did not actually work, and this found it.** The native-messaging
+  host is a second gate in front of `vault.fill`, and it carried its own copy
+  of the https rule: `origin.starts_with("https://")`. So the extension sent a
+  loopback origin, the agent would have accepted it, and this binary refused it
+  first — the localhost fill was dead before it reached the socket. Shipped
+  green because nothing tested that filter.
+- **Fixed by deleting the copy, not by updating it.** The host now calls the
+  agent's `origin_host`, so there is one definition of a fillable origin and a
+  future change to it cannot leave a second gate behind. Tested at the host's
+  own boundary, which is what was missing.
+- **Passkeys on localhost deferred, with reasons.** It is not the same size of
+  job as the fill: the phone binds an origin to an RP ID and requires `https`
+  in `requireOriginMatchesRpId`, asset links are fetched over https, and the
+  agent and the host each test the origin again. That is the WebAuthn phishing
+  binding, and a rushed relaxation of it is the one mistake in this repo that
+  would matter. Browsers already do WebAuthn on localhost with their built-in
+  authenticator, so nothing is broken today — what is missing is using the
+  phone there. Worth a designed pass, not a loop tick.
+
 ## Next
 
-1. **Passkeys on localhost.** The other half of the pass above, and a longer
-   chain: `perform_webauthn` and `phone-auth-webauthn-host.rs` both test for
-   `https://`, and the phone validates the RP ID against the public suffix list,
-   where `localhost` does not appear. Worth checking what Android's own
-   credential provider does with it before deciding.
-2. **The extension's other protocol question**: whether the native-messaging
-   payload carries a version at all, and what happens when a host older than
-   the extension answers it.
+1. **A test that the two gates cannot drift apart again.** Pass 5 fixed one
+   copy of the origin rule. Nothing stops a third appearing — the extension
+   holds its own in JavaScript, necessarily, and it is checked only by its own
+   tests. A shared table of cases, or at least a comment at each site pointing
+   at the others.
+2. **The native-messaging payload has no version field.** Nothing negotiates:
+   an extension newer than the installed host sends an operation the host does
+   not know and gets `invalid browser request`, which says nothing about the
+   real cause. Decide whether a version belongs in the handshake.
+3. **Passkeys on localhost**, as scoped above.
 
 ## Ruled out
 
