@@ -71,6 +71,11 @@ fi
 [[ -f $host_path && -x $host_path ]] || { echo "host is not an executable file: $host_path" >&2; exit 2; }
 host_path="$(cd -- "$(dirname -- "$host_path")" && pwd -P)/$(basename -- "$host_path")"
 [[ $(basename -- "$host_path") == phone-auth-webauthn-host ]] || { echo 'host must be named phone-auth-webauthn-host' >&2; exit 2; }
+# The mode bits say a file may be executed, not that it can be. A binary built
+# for another architecture, or half-copied, satisfies `-x` and then fails
+# silently at every launch the browser makes -- and a browser reports that as
+# nothing at all. `--version` is the cheapest way to find out now.
+"$host_path" --version >/dev/null 2>&1 || { echo "host will not run: $host_path" >&2; exit 2; }
 
 for browser in "${selected[@]}"; do
   case $browser in

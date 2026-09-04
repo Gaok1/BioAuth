@@ -177,16 +177,36 @@ Rules this log follows:
   in `fillTarget` — so the toolbar button was telling people to pick the one
   field when either would have done. Both variants now agree with the code.
 
+### Pass 11 — 2026-09-04
+
+- **The host binary can say which build it is.** `--version` prints and exits.
+  Before it, running the host by hand blocked on stdin and looked like a hang,
+  and there was no way to ask a machine which build a browser was about to
+  launch.
+- **Both installers now use it as a "does this run at all" check.** Mode bits
+  say a file may be executed, not that it can be: a binary built for another
+  architecture, or half-copied, satisfies `-x`, and then every launch the
+  browser makes fails silently — which a browser reports as nothing at all.
+  The installer refuses it now instead of leaving a manifest pointing at it.
+- **Unrecognised arguments stay ignored, and that is the delicate part.**
+  Chrome passes the calling extension's origin, Firefox adds the manifest path
+  and the extension id. A host that treated an unknown argument as a usage
+  error would refuse every launch a browser makes. `tests/host_arguments.rs`
+  runs the real binary with four arguments a browser actually sends and
+  requires each to succeed.
+- Checked the installer guard by removing it: the new case in
+  `install.test.sh` fails, saying the installer accepted a host that will not
+  run.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
-2. **The installer cannot tell a stale host binary from a current one.** It
-   refuses a path that is not an executable named `phone-auth-webauthn-host`;
-   what it cannot do is notice the binary predates the extension that will talk
-   to it. Pass 7 made that legible after the fact.
-3. **Nothing checks the two capitalised/uncapitalised message pairs against
-   each other.** Pass 10 found one that had drifted; the pairing is a
-   convention, and a test could hold it.
+2. **Nothing checks the capitalised/uncapitalised message pairs against each
+   other.** Pass 10 found one that had drifted; the pairing is a convention and
+   a test could hold it.
+3. **`install.ps1` has the same new check and no test proving it fires.**
+   `install.test.ps1` runs on the Windows job; the Linux case is covered and
+   the Windows one is not.
 
 ## Ruled out
 

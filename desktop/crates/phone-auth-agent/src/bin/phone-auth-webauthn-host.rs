@@ -9,6 +9,23 @@ use serde_json::{json, Value};
 const MAX_MESSAGE: usize = 128 * 1024;
 
 fn main() -> std::process::ExitCode {
+    // Only `--version`, and everything else is ignored on purpose. Browsers
+    // launch this with arguments of their own -- Chrome passes the calling
+    // extension's origin, Firefox adds the manifest path and the extension id
+    // -- so an unrecognised argument is the ordinary case. Rejecting one would
+    // refuse every launch a browser makes.
+    //
+    // It exists so the installer can find out whether the binary it is about
+    // to point a browser at will actually run, and so somebody debugging a
+    // silent bridge can ask which build is installed. Without it, running this
+    // by hand blocks on stdin and looks like a hang.
+    if std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--version")
+    {
+        println!("phone-auth-webauthn-host {}", env!("CARGO_PKG_VERSION"));
+        return std::process::ExitCode::SUCCESS;
+    }
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {

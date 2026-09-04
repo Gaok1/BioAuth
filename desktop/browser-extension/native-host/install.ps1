@@ -72,6 +72,12 @@ if ($Action -eq 'Install') {
     if ([IO.Path]::GetFileName($executable) -notin @('phone-auth-webauthn-host', 'phone-auth-webauthn-host.exe')) {
         throw 'HostPath must point to phone-auth-webauthn-host(.exe).'
     }
+    # A file that exists is not a file that runs. A binary built for another
+    # architecture, or half-copied, passes every check above and then fails at
+    # each launch the browser makes -- which a browser reports as nothing at
+    # all. `--version` answers now instead.
+    & $executable --version *> $null
+    if ($LASTEXITCODE -ne 0) { throw "HostPath will not run: $executable" }
 
     foreach ($browser in $Browsers) {
         $info = $browserInfo[$browser]
