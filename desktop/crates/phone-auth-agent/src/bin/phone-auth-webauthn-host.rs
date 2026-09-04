@@ -95,13 +95,30 @@ fn handle(message: Value) -> Value {
         };
     }
 
+    // An operation this build does not know is told apart from a request it
+    // does know and cannot read. They are different problems with different
+    // answers, and they used to share one sentence.
+    //
+    // The extension is loaded from the repository and changes the moment it is
+    // rebuilt; this binary is a copy an installer made, and changes only when
+    // it is reinstalled. So the two do drift apart, and "invalid browser
+    // request" is what that drift looked like -- a sentence with nothing in it
+    // about the cause or the fix.
+    // A message with no operation at all is malformed, not old: nothing was
+    // asked for, so there is nothing this build could be missing.
+    if let Some(unknown) = operation.filter(|name| !matches!(*name, "create" | "get")) {
+        return json!({
+            "ok": false,
+            "error": format!(
+                "PhoneAuth host {} does not know the operation {}; reinstall the native host",
+                env!("CARGO_PKG_VERSION"),
+                name_of(Some(unknown)),
+            ),
+        });
+    }
     let origin = message.get("origin").and_then(Value::as_str);
     let options = message.get("options").filter(|value| value.is_object());
-    if !matches!(operation, Some("create" | "get"))
-        || request_id.is_none()
-        || origin.is_none()
-        || options.is_none()
-    {
+    if operation.is_none() || request_id.is_none() || origin.is_none() || options.is_none() {
         return json!({"ok": false, "error": "invalid browser request"});
     }
     let mut client = match AgentClient::connect(&Paths::resolve(None)) {
@@ -119,6 +136,28 @@ fn handle(message: Value) -> Value {
     ) {
         Ok(value) => json!({"ok": true, "response": value.get("response")}),
         Err(error) => json!({"ok": false, "error": error.to_string()}),
+    }
+}
+
+/// An operation name as it is safe to repeat back.
+///
+/// It arrives from the browser and is quoted into a sentence that ends up in a
+/// badge tooltip and in whatever reads this host's output. Anything that is not
+/// a plain name is not worth repeating, so what survives is a short run of the
+/// characters an operation can actually contain.
+fn name_of(operation: Option<&str>) -> String {
+    let name: String = operation
+        .unwrap_or_default()
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '.' | '_')
+        })
+        .take(32)
+        .collect();
+    if name.is_empty() {
+        "(none)".into()
+    } else {
+        format!("`{name}`")
     }
 }
 
@@ -203,6 +242,62 @@ mod tests {
         assert_eq!(fill_origin(&json!({})), None);
         let long = format!("https://{}.example", "a".repeat(250));
         assert_eq!(fill_origin(&json!({ "origin": long })), None);
+    }
+
+    /// Version skew has its own answer now. The extension updates when the
+    /// repository is rebuilt and this binary updates when it is reinstalled, so
+    /// an extension that knows an operation this build does not is the ordinary
+    /// way the two come apart -- and the reply has to say which half is behind.
+    #[test]
+    fn an_operation_this_build_does_not_know_names_the_host_and_the_fix() {
+        let reply = handle(json!({"operation": "vault-store", "requestId": "abc"}));
+        let error = reply["error"].as_str().unwrap();
+
+        assert_eq!(reply["ok"], json!(false));
+        assert!(error.contains(env!("CARGO_PKG_VERSION")), "{error}");
+        assert!(error.contains("`vault-store`"), "{error}");
+        assert!(error.contains("reinstall"), "{error}");
+    }
+
+    /// The other half of the split: an operation this build does know, in a
+    /// message it cannot read, is not a version problem and must not send
+    /// somebody reinstalling.
+    #[test]
+    fn a_known_operation_with_a_broken_body_is_not_reported_as_version_skew() {
+        let reply = handle(json!({"operation": "get", "requestId": "abc"}));
+
+        assert_eq!(reply["ok"], json!(false));
+        assert_eq!(reply["error"], json!("invalid browser request"));
+    }
+
+    /// The name is quoted into a sentence that leaves this process, so what can
+    /// be quoted is a short plain name and nothing else.
+    #[test]
+    fn an_operation_name_is_trimmed_before_it_is_repeated() {
+        assert_eq!(name_of(Some("vault-fill")), "`vault-fill`");
+        assert_eq!(name_of(None), "(none)");
+        assert_eq!(name_of(Some("  ")), "(none)");
+        assert_eq!(
+            name_of(Some(
+                "a
+b <script>"
+            )),
+            "`abscript`"
+        );
+        assert_eq!(
+            name_of(Some(&"x".repeat(64))),
+            format!("`{}`", "x".repeat(32))
+        );
+    }
+
+    /// A message with no operation asked for nothing, so nothing is missing
+    /// from this build and the reply must not send anybody reinstalling.
+    #[test]
+    fn a_message_with_no_operation_is_malformed_rather_than_old() {
+        let reply = handle(json!({"requestId": "abc"}));
+
+        assert_eq!(reply["ok"], json!(false));
+        assert_eq!(reply["error"], json!("invalid browser request"));
     }
 
     #[test]

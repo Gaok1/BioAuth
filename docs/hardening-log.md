@@ -106,17 +106,33 @@ Rules this log follows:
   pattern fails that test and leaves the other three passing, which is what a
   drift guard has to do.
 
+### Pass 7 — 2026-09-04
+
+- **Version skew now says so.** The native-messaging host answered both "I do
+  not know this operation" and "I know it and cannot read this message" with
+  `invalid browser request`. They are different problems with different fixes.
+  An unknown operation now names the host's version and says to reinstall it;
+  a known one with a broken body keeps the old sentence. A message with no
+  operation at all is malformed rather than old, and does not send anybody
+  reinstalling.
+- **No version field, and none needed.** The skew is real — the extension is
+  loaded from the repository and changes when it is rebuilt, while the host is
+  a copy an installer made — but it shows up as exactly one symptom, an
+  operation the host does not have. Naming that costs nothing and negotiates
+  nothing. A handshake would be ceremony around a message the host already has
+  in hand.
+- The operation name is filtered and truncated before it is quoted back: it
+  comes from the browser and ends up in a badge tooltip and in logs.
+
 ## Next
 
-1. **The native-messaging payload has no version field.** Nothing negotiates:
-   an extension newer than the installed host sends an operation the host does
-   not know and gets `invalid browser request`, which says nothing about the
-   real cause. Decide whether a version belongs in the handshake, and what a
-   mismatch should tell the user.
-2. **Passkeys on localhost**, as scoped in pass 5.
-3. **The phone has no equivalent of the shared table.** `RpIdValidator` and the
+1. **Passkeys on localhost**, as scoped in pass 5.
+2. **The phone has no equivalent of the shared table.** `RpIdValidator` and the
    agent both decide what an origin may claim, in different languages, with no
-   shared cases — the same shape of risk pass 6 just closed on the fill side.
+   shared cases — the same shape of risk pass 6 closed on the fill side.
+3. **Nothing checks the installed host against the extension at install time.**
+   Pass 7 makes the drift legible once somebody hits it; the installer scripts
+   could refuse to leave a stale binary in place instead.
 
 ## Ruled out
 
