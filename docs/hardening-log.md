@@ -217,14 +217,32 @@ Rules this log follows:
 - `--version` stays. It is still what a person runs to find out which build is
   installed, and `host_arguments.rs` still pins it.
 
+### Pass 13 — 2026-09-04
+
+- **The capitalised message pairs are held together now.** Several messages
+  exist twice — once mid-sentence for a badge tooltip, once as a whole sentence
+  handed back to the page — and pass 10 found the pair that had drifted. The
+  test requires the twin to be the plain message with its first letter
+  capitalised, in every language, since a pack can drift on one side alone.
+  Checked by restoring the old wording: it fails, and so does the fallback test.
+- **The loopback match patterns are valid, confirmed by a real validator.** An
+  invalid pattern makes a browser reject the whole extension at load, and
+  nothing in this repository parses Chrome's grammar. Mozilla's `addons-linter`
+  does, it runs over the packaged extension in CI, and it accepts them.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
-2. **Nothing checks the capitalised/uncapitalised message pairs against each
-   other.** Pass 10 found one that had drifted.
-3. **The Windows installer test never ran locally until this pass.** Worth a
-   note in the log for whoever works on `install.ps1` next: it runs under
-   Windows PowerShell here, and CI is the only other place it runs.
+2. **A password saved for `localhost` is offered to every port.** `item_host`
+   and `origin_host` compare hosts and drop the port on purpose, which is right
+   for the web and loose on loopback, where the port is the only thing telling
+   two apps apart. Two saved items refuse rather than choose, and the phone
+   shows the origin before releasing anything, so nothing leaks silently — but
+   the matching is wider there than it reads. Introduced with the localhost
+   fill in pass 3, not before it.
+3. **Nothing exercises the phone.** Twelve passes of tests have not run the
+   app once; the two real bugs this session found — the vault unlock and the
+   dead-on-arrival localhost fill — were both invisible to the suite.
 
 ## Ruled out
 

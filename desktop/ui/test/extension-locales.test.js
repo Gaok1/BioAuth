@@ -84,3 +84,35 @@ test('every message in the packs is asked for somewhere', () => {
     assert.ok(asked.has(key), `\`${key}\` is in the packs and nothing asks for it`);
   }
 });
+
+/// Several messages exist twice: once mid-sentence, once as a sentence of its
+/// own. `fillSelectField` is reported after "PhoneAuth:" in a badge tooltip;
+/// `fillSelectFieldCapitalized` is handed back to the page as a whole answer.
+///
+/// They are the same sentence and they drifted: one said "select the password
+/// field first" while the other said "Select the user or password field
+/// first", and only the second was true. Nothing held them together, so this
+/// does -- in every language, since a pack could drift on one side alone.
+test('a message and its capitalised twin say the same thing', () => {
+  const suffix = 'Capitalized';
+  const pairs = Object.keys(packs[defaultLocale])
+    .filter((key) => key.endsWith(suffix))
+    .map((capitalised) => [capitalised.slice(0, -suffix.length), capitalised]);
+
+  assert.ok(pairs.length > 0, 'there are pairs to compare');
+
+  for (const [plain, capitalised] of pairs) {
+    for (const [language, pack] of Object.entries(packs)) {
+      assert.ok(pack[plain], `\`${capitalised}\` has no \`${plain}\` in \`${language}\``);
+
+      const said = pack[plain].message;
+      const twin = pack[capitalised].message;
+      assert.equal(
+        twin,
+        said.charAt(0).toUpperCase() + said.slice(1),
+        `\`${plain}\` and \`${capitalised}\` differ by more than the first ` +
+          `letter in \`${language}\``
+      );
+    }
+  }
+});
