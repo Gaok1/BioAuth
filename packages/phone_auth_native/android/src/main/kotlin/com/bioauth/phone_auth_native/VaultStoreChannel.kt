@@ -70,8 +70,17 @@ internal class VaultStoreChannel(
         }
         if (!storage.exists()) {
             when (request) {
-                is Request.List -> succeed(VaultStoreData.page(emptyList(), request.cursor))
-                is Request.ListAll -> succeed(VaultStoreData.all(emptyList()))
+                // An empty vault has no blob to decrypt, but the user still
+                // pressed "unlock", and that word promises a prompt. So this
+                // authenticates against the key the first write will use.
+                // Without it a vault with no file yet -- which is every fresh
+                // install, and every vault whose contents were discarded --
+                // opened with no prompt at all, and "unlock" meant nothing
+                // until the first item existed.
+                is Request.List, is Request.ListAll -> {
+                    requireCryptoReady()
+                    authenticate(keyStore.encryptCipher()) { process(request, emptyList()) }
+                }
                 is Request.Create -> write(emptyList(), request)
                 // A vault with no file is an empty vault, not a broken one.
                 // Exporting it yields nothing and restoring into it is the
