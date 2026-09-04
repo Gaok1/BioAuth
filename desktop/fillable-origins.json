@@ -1,0 +1,38 @@
+{
+  "//": [
+    "The origins the vault will and will not fill, as one table.",
+    "",
+    "The rule lives in three places and cannot be made to live in one: the",
+    "agent decides it in Rust, the service worker and the content script each",
+    "decide it again in JavaScript because an extension cannot call into the",
+    "agent to ask, and the manifest decides a fourth time by choosing which",
+    "pages the content script is injected into at all. A gate that disagrees",
+    "with the one behind it refuses what the others would have allowed, and",
+    "that has already happened once: the native host kept testing for `https:`",
+    "after the agent had learned to accept loopback, and the localhost fill was",
+    "dead before it reached the socket.",
+    "",
+    "So the cases are shared even though the code cannot be. Every gate is",
+    "tested against this file, in its own language.",
+    "",
+    "`fillable` is whether a password may be filled on that origin. `why` is",
+    "for whoever reads a failure."
+  ],
+  "cases": [
+    { "origin": "https://bank.example", "fillable": true, "why": "the ordinary case" },
+    { "origin": "https://bank.example:8443", "fillable": true, "why": "a port is not part of a host" },
+    { "origin": "https://login.bank.example", "fillable": true, "why": "a subdomain is its own origin, and https" },
+    { "origin": "http://localhost", "fillable": true, "why": "loopback never reaches a wire" },
+    { "origin": "http://localhost:3000", "fillable": true, "why": "the usual dev server" },
+    { "origin": "http://127.0.0.1", "fillable": true, "why": "the literal loopback address" },
+    { "origin": "http://127.0.0.1:8080", "fillable": true, "why": "the literal address, with a port" },
+    { "origin": "http://app.localhost", "fillable": true, "why": "RFC 6761 reserves everything under localhost" },
+    { "origin": "http://bank.example", "fillable": false, "why": "a password over plain http is a password on the wire" },
+    { "origin": "http://localhost.evil.example", "fillable": false, "why": "a name evil.example owns and resolves" },
+    { "origin": "http://notlocalhost", "fillable": false, "why": "somebody else's machine" },
+    { "origin": "http://127.0.0.1.evil.example", "fillable": false, "why": "the address is a label here, not the host" },
+    { "origin": "http://127.0.0.2", "fillable": false, "why": "only the one literal address is spelled out" },
+    { "origin": "file:///etc/passwd", "fillable": false, "why": "not a page a browser tab was served" },
+    { "origin": "ftp://bank.example", "fillable": false, "why": "not a scheme a browser tab was served" }
+  ]
+}

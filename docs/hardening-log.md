@@ -88,18 +88,35 @@ Rules this log follows:
   authenticator, so nothing is broken today — what is missing is using the
   phone there. Worth a designed pass, not a loop tick.
 
+### Pass 6 — 2026-09-04
+
+- **The origin rule now has one table and four gates tested against it.**
+  `desktop/fillable-origins.json` holds the cases; the agent checks them in
+  `tests/fillable_origins.rs`, and the service worker, the content script and
+  the manifest's match patterns check the same cases in
+  `desktop/ui/test/fillable-origins.test.js`. The rule cannot live in one place
+  — an extension cannot call the agent to ask — so what is shared is the
+  answer, not the code.
+- **The manifest is a gate too, and now it is treated as one.** It decides a
+  page's fate before any of the code runs, by choosing where the content script
+  is injected; an origin the agent would fill but the manifest does not cover
+  reports that nobody answered, which reads as "no field is focused". Same
+  disagreement as pass 5, one level up.
+- Checked the guard by breaking the manifest on purpose: dropping one loopback
+  pattern fails that test and leaves the other three passing, which is what a
+  drift guard has to do.
+
 ## Next
 
-1. **A test that the two gates cannot drift apart again.** Pass 5 fixed one
-   copy of the origin rule. Nothing stops a third appearing — the extension
-   holds its own in JavaScript, necessarily, and it is checked only by its own
-   tests. A shared table of cases, or at least a comment at each site pointing
-   at the others.
-2. **The native-messaging payload has no version field.** Nothing negotiates:
+1. **The native-messaging payload has no version field.** Nothing negotiates:
    an extension newer than the installed host sends an operation the host does
    not know and gets `invalid browser request`, which says nothing about the
-   real cause. Decide whether a version belongs in the handshake.
-3. **Passkeys on localhost**, as scoped above.
+   real cause. Decide whether a version belongs in the handshake, and what a
+   mismatch should tell the user.
+2. **Passkeys on localhost**, as scoped in pass 5.
+3. **The phone has no equivalent of the shared table.** `RpIdValidator` and the
+   agent both decide what an origin may claim, in different languages, with no
+   shared cases — the same shape of risk pass 6 just closed on the fill side.
 
 ## Ruled out
 
