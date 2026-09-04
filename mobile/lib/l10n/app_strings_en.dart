@@ -640,6 +640,8 @@ class EnglishStrings extends AppStrings {
   @override
   String get importAction => 'Import';
   @override
+  String get importFileType => 'Password manager export';
+  @override
   String importProblem(ImportProblem problem) => switch (problem) {
     ImportProblem.notUtf8 => 'The file is not UTF-8 text. Export it again.',
     ImportProblem.malformedJson => 'The JSON in this file is malformed.',

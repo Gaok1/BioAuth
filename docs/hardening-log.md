@@ -124,18 +124,38 @@ Rules this log follows:
 - The operation name is filtered and truncated before it is quoted back: it
   comes from the browser and ends up in a badge tooltip and in logs.
 
+### Pass 8 — 2026-09-04
+
+- **One Portuguese string survived the language pack**, and it was in the worst
+  possible place to notice: `XTypeGroup(label: 'Exportação de gerenciador')`,
+  inside a `const` list, drawn by the platform's own file dialog. A const list
+  is exactly where a string hides from a pack. Moved to `importFileType` and the
+  list is no longer const.
+- **A guard for the whole class.** `mobile/test/language_pack_test.dart` scans
+  `lib/` for quoted literals carrying Portuguese accents, skipping `l10n/` and
+  dropping comments with a scan rather than a pattern, since most comments in
+  this repository contain quotes. Checked by putting the literal back: it names
+  the file, the line and the string.
+- Two Kotlin comments still quoted strings that had moved into resources.
+
 ## Next
 
 1. **Passkeys on localhost**, as scoped in pass 5.
-2. **The phone has no equivalent of the shared table.** `RpIdValidator` and the
-   agent both decide what an origin may claim, in different languages, with no
-   shared cases — the same shape of risk pass 6 closed on the fill side.
-3. **Nothing checks the installed host against the extension at install time.**
-   Pass 7 makes the drift legible once somebody hits it; the installer scripts
-   could refuse to leave a stale binary in place instead.
+2. **The desktop window has no equivalent guard.** `renderer.js` carries its
+   packs inline, so a sentence written straight into the markup or into a JS
+   string would not be caught the way pass 8 now catches one on the phone.
+3. **The installer cannot tell a stale host binary from a current one.** It
+   already refuses a path that is not an executable named
+   `phone-auth-webauthn-host`; what it cannot do is notice the binary is older
+   than the extension that will talk to it.
 
 ## Ruled out
 
+- **The phone and the agent share no origin rule.** Pass 6's shape does not
+  repeat on the WebAuthn side: the agent never looks at an RP ID, it relays.
+  Only `RpIdValidator` on the phone binds an origin to one, so there is nothing
+  to keep in agreement and no table to share. The earlier queue entry that said
+  otherwise was wrong.
 - **The rest of the vault channel does not have pass 1's bug.** Everything in
   `process` runs after a successful decrypt, so it is already behind a prompt.
   The two answers that still come out of the `!storage.exists()` branch without

@@ -662,6 +662,8 @@ class PortugueseStrings extends AppStrings {
   @override
   String get importAction => 'Importar';
   @override
+  String get importFileType => 'Exportação de gerenciador';
+  @override
   String importProblem(ImportProblem problem) => switch (problem) {
     ImportProblem.notUtf8 =>
       'O arquivo não é texto UTF-8. Exporte de novo em UTF-8.',

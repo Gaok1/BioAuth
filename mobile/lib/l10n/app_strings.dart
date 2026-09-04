@@ -342,6 +342,13 @@ abstract class AppStrings {
   String importRejectedRow(int row, String name, String reason);
   String importAndMore(int rows);
   String get importAction;
+
+  /// The kind of file the picker offers, drawn by the platform's own dialog.
+  ///
+  /// It reached the file dialog in Portuguese on an English phone: the label
+  /// sat inside a `const` list, which is exactly where a string hides from a
+  /// language pack.
+  String get importFileType;
   String importProblem(ImportProblem problem);
   String rowProblem(RowProblem problem);
 }

@@ -237,10 +237,12 @@ class _VaultBackupScreenState extends State<VaultBackupScreen> {
 
   Future<void> _import() async {
     final file = await openFile(
-      acceptedTypeGroups: const [
+      // Not `const`: the label is drawn by the platform's file dialog and has
+      // to come from the pack, which a const list cannot reach.
+      acceptedTypeGroups: [
         XTypeGroup(
-          label: 'Exportação de gerenciador',
-          extensions: ['json', 'csv', 'txt'],
+          label: _strings.importFileType,
+          extensions: const ['json', 'csv', 'txt'],
         ),
       ],
     );

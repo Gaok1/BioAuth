@@ -44,7 +44,7 @@ class BackgroundSessionService : Service() {
         // Not sticky, because nothing in this process would come back with
         // it. The sessions are Dart, running in the app's Flutter engine;
         // there is no headless entrypoint. Restarted after the process was
-        // killed, this service would put "PhoneAuth está disponível" back on
+        // killed, this service would put the availability notice back on
         // screen over a process with no engine, no runner and no connection to
         // any desktop -- a notification promising exactly the thing that had
         // just stopped being true. The app coming back is what brings the

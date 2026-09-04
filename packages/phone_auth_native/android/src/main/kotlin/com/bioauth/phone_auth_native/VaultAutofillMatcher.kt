@@ -85,7 +85,7 @@ internal object VaultAutofillMatcher {
         val value = uri.trim()
         if (value.isEmpty() || value.startsWith(APP_SCHEME)) return null
         // The scheme is optional, and that is not a relaxation of the match.
-        // Somebody filling in "endereço" writes `github.com`; `https://` is not
+        // Somebody filling in "Address" writes `github.com`; `https://` is not
         // part of what they think they are saying. Requiring it meant an item
         // saved that way was offered for no site at all -- silently, since a
         // matcher that finds nothing looks exactly like a vault that holds
