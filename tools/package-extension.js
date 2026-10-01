@@ -52,17 +52,11 @@ const TARGETS = {
   chrome: (manifest) => {
     delete manifest.browser_specific_settings;
     delete manifest.background.scripts;
-    // A store assigns the identity itself, and an upload carrying someone
-    // else's key is either rejected or quietly ignored. `key` exists for the
-    // copy a person loads unpacked, which is the only copy whose ID would
-    // otherwise be a hash of the folder it happens to sit in.
-    delete manifest.key;
     return manifest;
   },
   edge: (manifest) => {
     delete manifest.browser_specific_settings;
     delete manifest.background.scripts;
-    delete manifest.key;
     return manifest;
   },
   firefox: (manifest) => {
@@ -152,9 +146,20 @@ function readManifest() {
   return JSON.parse(fs.readFileSync(path.join(source, 'manifest.json'), 'utf8'));
 }
 
-/** The file set one browser gets, manifest already adjusted for it. */
-function filesFor(target, manifestSource) {
+/**
+ * The file set one browser gets, manifest already adjusted for it.
+ *
+ * `store` is what decides the extension's identity, so it is not a detail.
+ * On Chromium, `key` pins the ID; without it the ID is a hash of whatever
+ * directory the extension was loaded from. The native-host allowlist is
+ * registered for the pinned ID, so the copy a person loads from disk has to
+ * keep `key` or the host it talks to has never heard of it. A store, by
+ * contrast, assigns the identity itself and rejects -- or silently ignores --
+ * an upload carrying someone else's key, so the zips drop it.
+ */
+function filesFor(target, manifestSource, { store }) {
   const manifest = TARGETS[target](JSON.parse(JSON.stringify(manifestSource)));
+  if (store) delete manifest.key;
   return [
     ['manifest.json', Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8')],
     ...INCLUDED.filter((name) => name !== 'manifest.json').map((name) => [
@@ -174,7 +179,10 @@ function build(outDir) {
       outDir,
       `phoneauth-passkeys-${target}-${manifestSource.version}.zip`
     );
-    fs.writeFileSync(file, zip(filesFor(target, manifestSource)));
+    fs.writeFileSync(
+      file,
+      zip(filesFor(target, manifestSource, { store: true }))
+    );
     built.push({ file, version: manifestSource.version });
   }
   return built;
@@ -196,6 +204,10 @@ function build(outDir) {
  * on Chromium is a hash of the directory it was loaded from. Unzipping to
  * Downloads is how a person ends up with an ID the allowlist has never heard
  * of -- a native host that hangs up, with nothing in the browser to say why.
+ *
+ * Which is why these directories keep `manifest.key` while the store zips drop
+ * it: the key is the only thing that makes the ID the same on every machine,
+ * and the installer registers the native host for exactly that ID.
  */
 function buildUnpacked(outDir) {
   const manifestSource = readManifest();
@@ -207,7 +219,9 @@ function buildUnpacked(outDir) {
     // one the browser still loads.
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
-    for (const [name, contents] of filesFor(target, manifestSource)) {
+    for (const [name, contents] of filesFor(target, manifestSource, {
+      store: false,
+    })) {
       const file = path.join(dir, name);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, contents);

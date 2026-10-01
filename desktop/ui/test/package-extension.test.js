@@ -200,6 +200,53 @@ test('the shipped directories are per-browser, not the developer source', () => 
   }
 });
 
+/// `key` is what makes the Chromium extension ID the same on every machine.
+/// Without it the ID is a hash of the directory the extension was loaded from,
+/// and the native-host allowlist -- registered by the installer for the pinned
+/// ID -- has never heard of it. The failure is a host that hangs up mid-request
+/// with nothing in the browser to say why, so the two halves are asserted
+/// rather than left to the next person to rediscover.
+test('the shipped directories keep the key that pins the chromium id', () => {
+  const source = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'browser-extension', 'manifest.json'),
+      'utf8'
+    )
+  );
+  assert.ok(source.key, 'the source manifest has no key to pin the ID with');
+
+  for (const { dir } of tool.buildUnpacked(sandbox())) {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')
+    );
+    const browser = path.basename(dir);
+
+    if (browser === 'firefox') {
+      // Gecko reads its id from `browser_specific_settings` and would only
+      // warn about `key`, so dropping it there costs nothing.
+      assert.equal(manifest.key, undefined);
+      continue;
+    }
+    assert.equal(
+      manifest.key,
+      source.key,
+      `${browser} would load with a path-derived ID the native host rejects`
+    );
+  }
+});
+
+/// The mirror image: a store assigns the identity itself, and an upload
+/// carrying someone else's key is either rejected on review or quietly
+/// ignored.
+test('no store upload carries the key', () => {
+  for (const { file } of tool.build(sandbox())) {
+    const manifest = JSON.parse(
+      readZip(fs.readFileSync(file)).get('manifest.json')
+    );
+    assert.equal(manifest.key, undefined, `${path.basename(file)} carries a key`);
+  }
+});
+
 /// A file dropped from `INCLUDED` has to leave a directory that already
 /// exists. Merging into it leaves a script the browser still loads, from a
 /// version of the extension nobody built.
