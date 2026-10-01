@@ -52,15 +52,24 @@ const TARGETS = {
   chrome: (manifest) => {
     delete manifest.browser_specific_settings;
     delete manifest.background.scripts;
+    // A store assigns the identity itself, and an upload carrying someone
+    // else's key is either rejected or quietly ignored. `key` exists for the
+    // copy a person loads unpacked, which is the only copy whose ID would
+    // otherwise be a hash of the folder it happens to sit in.
+    delete manifest.key;
     return manifest;
   },
   edge: (manifest) => {
     delete manifest.browser_specific_settings;
     delete manifest.background.scripts;
+    delete manifest.key;
     return manifest;
   },
   firefox: (manifest) => {
     delete manifest.background.service_worker;
+    // Gecko reads its id from `browser_specific_settings`, and treats `key` as
+    // an unknown property worth a warning on submission.
+    delete manifest.key;
     return manifest;
   },
 };

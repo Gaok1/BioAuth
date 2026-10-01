@@ -3,8 +3,13 @@ param(
     [ValidateSet('Install', 'Uninstall')]
     [string]$Action = 'Install',
     [string]$HostPath,
-    [string]$ChromeExtensionId,
-    [string]$EdgeExtensionId,
+    # The IDs the extension actually has, so the common case needs no argument.
+    # Both are fixed by the extension itself rather than by where it was loaded
+    # from: Chromium derives this one from the `key` in the manifest, Gecko
+    # reads its own from `browser_specific_settings`. A store listing assigns a
+    # different Chromium ID, and that is what these parameters are for.
+    [string]$ChromeExtensionId = 'kiekpmjnpdkhpaanjefbmojlgmbdkdcg',
+    [string]$EdgeExtensionId = 'kiekpmjnpdkhpaanjefbmojlgmbdkdcg',
     [string]$FirefoxExtensionId = 'webauthn@bioauth.local',
     [ValidateSet('Chrome', 'Edge', 'Firefox')]
     [string[]]$Browsers = @('Chrome', 'Edge', 'Firefox'),

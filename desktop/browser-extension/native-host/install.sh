@@ -4,8 +4,12 @@ set -euo pipefail
 host_name=com.bioauth.webauthn
 action=install
 host_path=
-chrome_id=
-edge_id=
+# Fixed by the extension, not by where it was loaded from: Chromium derives
+# this from the `key` in the manifest, Gecko reads its own id from
+# `browser_specific_settings`. A store listing assigns a different Chromium id,
+# which is what --chrome-extension-id is for.
+chrome_id=kiekpmjnpdkhpaanjefbmojlgmbdkdcg
+edge_id=kiekpmjnpdkhpaanjefbmojlgmbdkdcg
 firefox_id=webauthn@bioauth.local
 browsers=chrome,edge,firefox
 firefox_id_pattern='^[^[:space:]"\\]{1,255}$'

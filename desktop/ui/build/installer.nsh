@@ -20,6 +20,16 @@
   ; remains available for browsers.
   nsExec::ExecToLog '"$INSTDIR\resources\bin\phone-auth-windows-webauthn-plugin.exe" --register'
 
+  ; Register the native messaging host for all three browsers. Browsers reach
+  ; the host only through a manifest naming the extension by id, and until now
+  ; that registration was a command the person had to find and run by hand —
+  ; with an id they had to read off chrome://extensions first. The extension
+  ; now carries a fixed id, so the installer can write the allowlist before the
+  ; extension is even loaded. Browsers the person does not have are written for
+  ; anyway: the manifest is a file and a HKCU key, and it costs nothing until a
+  ; browser reads it.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\browser-extension\native-host\install.ps1" -HostPath "$INSTDIR\resources\bin\phone-auth-webauthn-host.exe"'
+
   ; Keep the extension's existing default handler intact. PhoneAuth appears in
   ; Open With and adds explicit verbs; installing a security tool must not
   ; silently seize a file type another program already owns.
@@ -37,6 +47,7 @@
 
 !macro customUnInstall
   nsExec::ExecToLog '"$INSTDIR\resources\bin\phone-auth-windows-webauthn-plugin.exe" --unregister'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\browser-extension\native-host\install.ps1" -Action Uninstall'
   Delete "$SMSTARTUP\PhoneAuth.lnk"
   Delete "$SMPROGRAMS\PhoneAuth File Locker.lnk"
   Delete "$DESKTOP\PhoneAuth File Locker.lnk"

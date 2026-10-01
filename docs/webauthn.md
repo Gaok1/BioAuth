@@ -296,10 +296,19 @@ given. This is the recommended path for an organisation.
 (unlisted). The signed `.xpi` is then installable from anywhere, and
 `browser_specific_settings.gecko.id` already pins the ID the installers use.
 
-**One machine, unmanaged:** load unpacked. A Chromium unpacked extension's ID
-is a hash of the absolute directory it was loaded from, so the native-host
-manifest has to be rewritten whenever that directory changes — which is why
-this is documented as a development path and not a way to run the thing.
+**One machine, unmanaged:** load unpacked, and that is now all. A Chromium
+unpacked extension's ID is a hash of the absolute directory it was loaded
+from — unless the manifest carries a `key`, which this one does, and then the
+ID is derived from that key instead and never moves. Both installers default to
+it, so the Windows installer registers the native-messaging allowlist before
+the extension is even loaded, and moving the folder no longer breaks anything.
+
+Without that key the failure was quietly awful: the browser answers an
+unlisted ID with "Specified native messaging host not found", which is what it
+also says when nothing was ever installed. The private half of the key is
+needed only to pack a `.crx`, which this project does not do; a store listing
+replaces the ID anyway, and the packaging script drops `key` from every store
+zip.
 
 The failure it produces is worth recognising, because nothing announces it.
 Unzip a release package into `Downloads` and load it there and the browser is
