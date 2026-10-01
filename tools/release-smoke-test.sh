@@ -141,6 +141,17 @@ elif [ -n "$TARBALL" ]; then
   check "the headless tarball extracts" tar -xzf "$TARBALL" -C "$WORK"
   BIN="$WORK/phone-auth"
   EXTENSIONS="$BIN/browser-extension"
+  # Releases up to 1.0.1 copied the development source directory in here,
+  # which is the one directory deliberately not loadable: both engines'
+  # manifest shapes at once, and no per-browser subdirectory to point a
+  # browser at. Worth naming, rather than failing the checks below on the
+  # absence of directories this artefact never had.
+  if [ -f "$EXTENSIONS/manifest.json" ] && [ ! -d "$EXTENSIONS/chrome" ]; then
+    say "FAIL  the tarball ships the unloadable source directory, not the"
+    say "      per-browser ones every other package ships"
+    FAIL=$((FAIL + 1))
+    EXTENSIONS=
+  fi
 else
   say "SKIP  no artefact for this platform, so the desktop half cannot run"
   SKIP=$((SKIP + 1))
@@ -176,7 +187,7 @@ if [ -n "$BIN" ] && [ -d "$BIN" ]; then
   }
 
   PINNED_ID=kiekpmjnpdkhpaanjefbmojlgmbdkdcg
-  for browser in chrome edge; do
+  for browser in ${EXTENSIONS:+chrome edge}; do
     manifest="$EXTENSIONS/$browser/manifest.json"
     if [ ! -f "$manifest" ]; then
       say "FAIL  the $browser directory to load is missing"
@@ -196,8 +207,10 @@ if [ -n "$BIN" ] && [ -d "$BIN" ]; then
 
   # Gecko never derives an ID from a key, so Firefox is a different question
   # with a different answer in the same place.
-  check "the firefox directory pins its own id" \
-    grep -q 'webauthn@bioauth.local' "$EXTENSIONS/firefox/manifest.json"
+  if [ -n "$EXTENSIONS" ]; then
+    check "the firefox directory pins its own id" \
+      grep -q 'webauthn@bioauth.local' "$EXTENSIONS/firefox/manifest.json"
+  fi
 
   # And the other half of the same fact: what the host was actually registered
   # for. Registered for one ID and loading another is the whole failure, and it

@@ -481,7 +481,17 @@ jobs:
              desktop/target/release/phone-auth-webauthn-host \
              desktop/target/release/phone-auth-initrd \
              staging/phone-auth/
-          cp -r desktop/browser-extension staging/phone-auth/
+          # The loadable directories, not the source one. `desktop/browser-extension`
+          # carries both engines' manifest shapes at once so a developer can point
+          # either browser at it, and copying it verbatim hands a user half a
+          # manifest written for the other engine. `--unpacked` writes one
+          # directory per browser, each keeping the `key` that pins the Chromium
+          # ID `native-host/install.sh` registers by default. The same layout the
+          # .deb, the AppImage and the Windows installer already ship, so one set
+          # of instructions covers all four.
+          node tools/package-extension.js --unpacked staging/phone-auth/browser-extension
+          cp -r desktop/browser-extension/native-host \r
+             staging/phone-auth/browser-extension/
           mkdir -p staging/phone-auth/file-manager
           cp desktop/file-manager/phone-auth-file-manager.* \
              desktop/file-manager/install-nautilus.sh \
