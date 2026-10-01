@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PhoneAuth Passkeys",
   "default_locale": "en",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Relays WebAuthn requests to a paired PhoneAuth device.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuUMwg5lMBro7qsCBI4I4yF/LlKLvsZzOJEaHAU6BCztHBwiljxtama++eHCs58IimyVFq+hB3Gr1q6Nnt9DSTqV2nLZYdeuih+qUEholGwb+wTjL5DEpHPtKiN8PudluJLQ7v40G+ewHd66IroXxk6Plrcg/s1xu0y8pm/ewn7u2CdL8GzNpRdbtSD29M0ndmxG2GmUW7d6hXQXxky6/APChVK0287Ffjkm6R5TeIArrcDi58uk+efAEMXy8dmbwewVxWoWmu6wcScxs1spJrlwqd84n82Pe0/sshvW0692k5ciee+v6xjnGgKriF2yCGhZIdnTxthdUsqK1j088mwIDAQAB",
   "permissions": [
