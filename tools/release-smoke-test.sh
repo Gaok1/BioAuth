@@ -84,12 +84,22 @@ fi
 # every Keystore-bound pairing, passkey and vault item.
 APK="$(ls "$ARTIFACTS"/PhoneAuth-android*.apk 2>/dev/null | head -1 || true)"
 if [ -n "$APK" ]; then
-  case "$APK" in
-    *-debug.apk)
-      say "WARN  the APK is debug-signed: it cannot be upgraded in place, and"
-      say "      uninstalling it destroys the pairings and vault created here" ;;
-    *) say "note  release-signed APK: $(basename "$APK")" ;;
-  esac
+  # Asked of the signature rather than of the filename. The release workflow
+  # falls back to Android's debug key when the signing secrets are absent and
+  # names the file exactly the same either way, so the filename is the one
+  # thing that cannot answer this.
+  # python3 on a distribution, python on a Windows install; either runs it.
+  PYTHON="$(command -v python3 || command -v python || true)"
+  if [ -n "$PYTHON" ]; then
+    check "the APK is signed with the project key" \
+      "$PYTHON" "$(dirname "$0")/apk-signing-cert.py" "$APK" --expect project
+  else
+    say "SKIP  no python, so the APK signing key was not checked -- and the"
+    say "      filename cannot tell you: a debug-signed release is named the"
+    say "      same, cannot be installed over an existing copy, and the"
+    say "      uninstall that unblocks it destroys pairings and vault"
+    SKIP=$((SKIP + 1))
+  fi
 else
   say "FAIL  no APK among the artefacts"
   FAIL=$((FAIL + 1))
