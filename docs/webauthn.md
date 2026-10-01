@@ -303,6 +303,26 @@ ID is derived from that key instead and never moves. Both installers default to
 it, so the Windows installer registers the native-messaging allowlist before
 the extension is even loaded, and moving the folder no longer breaks anything.
 
+Which directory, specifically. The installer lays down one per browser, already
+adjusted for that engine:
+
+```
+<install dir>\resources\browser-extension\chrome     (Chrome)
+<install dir>\resources\browser-extension\edge       (Edge)
+<install dir>\resources\browser-extension\firefox    (Firefox)
+```
+
+On Windows `<install dir>` is `%LOCALAPPDATA%\Programs\PhoneAuth`. Those are
+the copies that carry `key`, and so the only ones whose ID is the one the
+installer registered: `kiekpmjnpdkhpaanjefbmojlgmbdkdcg` on Chromium.
+
+Not `desktop/browser-extension/` from a checkout, which carries both engines'
+manifest shapes at once and loads in neither cleanly, and **not** the
+`phoneauth-passkeys-*.zip` from the releases page. Those are store uploads: a
+store assigns the identity itself and rejects an upload carrying somebody
+else's key, so they ship without it — and an extension loaded from one of them
+gets an ID back from the hash, which is the failure described next.
+
 Without that key the failure was quietly awful: the browser answers an
 unlisted ID with "Specified native messaging host not found", which is what it
 also says when nothing was ever installed. The private half of the key is
@@ -318,8 +338,8 @@ pipe, and the only symptom is that nothing happens. Pick a directory that will
 not move, register that one, and it does not recur:
 
 ```powershell
-desktop\\browser-extension\\native-host\\install.ps1 `
-  -HostPath "<install dir>\\resources\\bin\\phone-auth-webauthn-host.exe" `
+desktop\browser-extension\native-host\install.ps1 `
+  -HostPath "<install dir>\resources\bin\phone-auth-webauthn-host.exe" `
   -Browsers Chrome -ChromeExtensionId <the id chrome://extensions shows>
 ```
 
