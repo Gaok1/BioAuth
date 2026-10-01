@@ -51,7 +51,15 @@ ask() {
   local instruction="$2"
   say ""
   say "-- $instruction"
-  read -r -p "   did it work? [y/n/s(kip)] " answer
+  if ! read -r -p "   did it work? [y/n/s(kip)] " answer; then
+    # No terminal to answer on. Unanswered is not the same as answered no,
+    # and treating it as no would invent a defect per question out of a run
+    # nobody was sitting at -- in a transcript meant to be attached to a
+    # release, where the invented ones are indistinguishable from the real.
+    say "SKIP  $name (no terminal to answer on)"
+    SKIP=$((SKIP + 1))
+    return
+  fi
   case "$answer" in
     y|Y) say "PASS  $name"; PASS=$((PASS + 1)) ;;
     s|S) say "SKIP  $name"; SKIP=$((SKIP + 1)) ;;
@@ -141,7 +149,10 @@ if [ "$PLATFORM" = windows ] && [ -n "$SETUP" ]; then
   ask "the Windows installer installs and the tray starts" \
     "run $(basename "$SETUP"), then confirm the tray icon appears and shows a verifier name"
 
-  ROOT_DIR="${LOCALAPPDATA:-$HOME/AppData/Local}/Programs/PhoneAuth"
+  # LOCALAPPDATA arrives with backslashes, and gluing forward slashes onto it
+  # produces a path that works but that nobody can retype -- and this one is
+  # printed for a person to paste into a browser's "load unpacked".
+  ROOT_DIR="$(printf '%s' "${LOCALAPPDATA:-$HOME/AppData/Local}" | tr '\\' '/')/Programs/PhoneAuth"
   BIN="$ROOT_DIR/resources/bin"
   SUFFIX=.exe
   EXTENSIONS="$ROOT_DIR/resources/browser-extension"
@@ -332,4 +343,13 @@ say ""
 say "Attach this file to the release. A smoke test with no record is a smoke"
 say "test nobody can point at later."
 
-[ "$FAIL" -eq 0 ]
+# Skips count against it, the way they do in the pairing drill. The item this
+# closes is "someone ran all of it against real artefacts", so exiting zero on
+# a run with skips would close it on the strength of exactly the checks that
+# needed nobody present.
+if [ "$FAIL" -gt 0 ] || [ "$SKIP" -gt 0 ]; then
+  say ""
+  say "not a clean run: $FAIL failed, $SKIP not done."
+  exit 1
+fi
+exit 0
