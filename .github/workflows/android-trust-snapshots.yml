@@ -19,6 +19,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # The module under test is a Flutter plugin, so Gradle cannot configure
+      # it from Java and Gradle alone: `flutter-plugin-loader` reads the SDK
+      # path and the plugin list that `pub get` writes, and without them the
+      # build fails while settling settings.gradle, before a single test runs.
+      # That is why every scheduled run of this workflow since it was added has
+      # failed, and why the snapshots it exists to refresh were never refreshed.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.1
+          channel: stable
+          cache: true
       - uses: gradle/actions/setup-gradle@v4
       - name: Download and validate canonical snapshots
         run: python3 scripts/update_android_trust_snapshots.py --update
@@ -26,6 +37,7 @@ jobs:
         working-directory: mobile/android
         run: |
           chmod +x gradlew
+          (cd .. && flutter pub get)
           ./gradlew :phone_auth_native:testDebugUnitTest
       - name: Open reviewed update
         env:
