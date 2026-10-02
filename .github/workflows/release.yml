@@ -490,8 +490,7 @@ jobs:
           # .deb, the AppImage and the Windows installer already ship, so one set
           # of instructions covers all four.
           node tools/package-extension.js --unpacked staging/phone-auth/browser-extension
-          cp -r desktop/browser-extension/native-host \r
-             staging/phone-auth/browser-extension/
+          cp -r desktop/browser-extension/native-host staging/phone-auth/browser-extension/
           mkdir -p staging/phone-auth/file-manager
           cp desktop/file-manager/phone-auth-file-manager.* \
              desktop/file-manager/install-nautilus.sh \
