@@ -733,7 +733,7 @@ jobs:
             | Debian / Ubuntu x64 | `*.deb` |
             | Headless Linux x64 | `phone-auth-linux-x86_64.tar.gz` |
             | NixOS | `nix build github:${{ github.repository }}#default` |
-            | Browser extension | `phoneauth-passkeys-*-*.zip` |
+            | Browser extension | ships inside the desktop app — see below |
 
             `sbom.cyclonedx.json` lists every dependency this release was built
             from, so a future advisory can be checked against what actually
@@ -761,9 +761,41 @@ jobs:
             says which of the two happened. Provenance above does not depend on
             any of it.
 
-            The extension zips are **store uploads, not installable files**.
-            Chrome, Edge and Firefox each sign on their side. To install one
-            without a store, see the enterprise channel in `docs/webauthn.md`.
+            ### The browser extension
+
+            Installing the desktop app installs the extension too, one
+            directory per browser. Load the one for yours unpacked:
+
+            | Installed from | Load unpacked from |
+            |---|---|
+            | Windows installer | `%LOCALAPPDATA%\Programs\PhoneAuth\resources\browser-extension\chrome` |
+            | `.deb` | `/opt/PhoneAuth/resources/browser-extension/chrome` |
+            | headless tarball | `phone-auth/browser-extension/chrome` |
+
+            …and `edge` or `firefox` beside it. Firefox needs
+            `about:debugging` → **Load Temporary Add-on**, because an
+            unpacked build is unsigned there.
+
+            **Do not load `phoneauth-passkeys-*.zip`.** Those are store
+            uploads, and a store assigns the extension its own identity, so
+            the zips ship without the key that pins it. Loaded by hand they
+            come up under an identity the native host is not configured to
+            talk to, and passkeys then fail with nothing in the UI to say
+            why — which is what 1.0.0 shipped. The directories above carry
+            the key and match what the installer registered.
+
+            Chrome, Edge and Firefox each sign their own store copy; nothing
+            here does.
+
+            ### If Windows calls the publisher unknown
+
+            That is what an unsigned installer looks like, and the signing
+            note above says whether this one is: **More info → Run anyway**.
+            The warning is correct and you should not wave it away for just
+            any download. Wave it away for this one only after checking it —
+            `SHA256SUMS.txt` plus the `gh attestation verify` above tie the
+            bytes to a commit in this repository, which is the assurance an
+            Authenticode signature would have given you at the click.
 
             ## Pairing
 
@@ -822,10 +854,13 @@ jobs:
             | Linux x64 (portable) | `PhoneAuth-*-debug.AppImage` |
             | Debian / Ubuntu x64 | `*-debug.deb` |
             | Headless Linux x64 | `phone-auth-linux-x86_64-debug.tar.gz` |
-            | Browser extension | `phoneauth-passkeys-*-debug.zip` |
+            | Browser extension | ships inside the desktop app |
 
-            The extension zips are store uploads, not installable files — load
-            one unpacked to try it.
+            The extension zips here are store uploads. Do **not** load one
+            unpacked: a store assigns the extension its identity, so these
+            ship without the key that pins it, and by hand they load under an
+            identity the native host will not talk to. Load the per-browser
+            directory the desktop app installs instead.
 
             ## Pairing
 
